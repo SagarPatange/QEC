@@ -10,32 +10,6 @@ from remote_cnot import RemoteCNOT
 import logging 
 import math
 
-import numpy as np
-from qutip import Qobj, ptrace
-
-
-def extract_pure_state(rho, tol=1e-6):
-    """
-    Extracts the pure state from a density matrix if possible.
-    
-    Args:
-        rho (np.ndarray): Density matrix.
-        tol (float): Tolerance for numerical precision (default: 1e-6).
-
-    Returns:
-        np.ndarray or None: The pure state vector if rho is pure, otherwise None.
-    """
-    eigenvalues, eigenvectors = np.linalg.eigh(rho)
-
-    # Identify the largest eigenvalue
-    max_eigenval_index = np.argmax(eigenvalues)
-    max_eigenval = eigenvalues[max_eigenval_index]
-
-    # Check if the density matrix represents a pure state (one dominant eigenvalue close to 1)
-    if np.isclose(max_eigenval, 1.0, atol=tol) and np.allclose(np.sum(eigenvalues), 1.0, atol=tol):
-        return eigenvectors[:, max_eigenval_index]  # Extract pure state vector
-    return None  # Mixed state, no unique pure state
-
 
 class SimpleManager:
     def __init__(self, owner, memo_name):
@@ -204,12 +178,6 @@ print(f"Node1 Communication Qubit Measurement Result:: {state1}")
 print(f"Node2 Communication Qubit Measurement Result:: {state2}")
 
 final_state = np.array(node1.get_qubits()[1])
-
-
-psi_qobj = Qobj(final_state, dims=[[2, 2], [1, 1]])  # Define as a 2-qubit system   ### TODO: check this 
-rho = psi_qobj * psi_qobj.dag()
-s1_final_dm = ptrace(rho, 0).full()
-s2_final_dm = ptrace(rho, 1).full()
 
 state_vector1 = extract_pure_state(s1_final_dm)
 state_vector2 = extract_pure_state(s2_final_dm)
