@@ -9,6 +9,8 @@ from sequence.message import Message
 from remote_cnot import RemoteCNOT
 import logging 
 import math
+import numpy as np
+from density_matrix import get_state_dm, extract_pure_state, measurement_result
 
 
 class SimpleManager:
@@ -169,16 +171,18 @@ node2.protocols[0].start()
 tl.run()
 
 print("\n#################### Final State vs Original State ####################")
-state1 = int(np.allclose(node1.get_qubits()[0], [0.+0.j, 1.+0.j]))
-state2 = int(np.allclose(node2.get_qubits()[0], [0.+0.j, 1.+0.j]))
+communication1_qubit_measurement_result = measurement_result(node1.get_qubits()[0])
+communication2_qubit_measurement_result = measurement_result(node2.get_qubits()[0])
+
 print(f"Original Node1 Storage Qubit State :: {node1.original_storage_qubit_state}")
 print(f"Original Node2 Storage Qubit State :: {node2.original_storage_qubit_state}")
 
-print(f"Node1 Communication Qubit Measurement Result:: {state1}")
-print(f"Node2 Communication Qubit Measurement Result:: {state2}")
+print(f"Node1 Communication Qubit Measurement Result:: {communication1_qubit_measurement_result}")
+print(f"Node2 Communication Qubit Measurement Result:: {communication2_qubit_measurement_result}")
 
 final_state = np.array(node1.get_qubits()[1])
 
+s1_final_dm, s2_final_dm = get_state_dm(final_state)
 state_vector1 = extract_pure_state(s1_final_dm)
 state_vector2 = extract_pure_state(s2_final_dm)
 

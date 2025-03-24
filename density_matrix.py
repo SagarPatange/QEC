@@ -1,11 +1,12 @@
 import numpy as np
 from qutip import Qobj, ptrace
 
-
-psi_qobj = Qobj(final_state, dims=[[2, 2], [1, 1]])  # Define as a 2-qubit system   ### TODO: check this 
-rho = psi_qobj * psi_qobj.dag()
-s1_final_dm = ptrace(rho, 0).full()
-s2_final_dm = ptrace(rho, 1).full()
+def get_state_dm(state):
+    psi_qobj = Qobj(state, dims=[[2, 2], [1, 1]])  # Define as a 2-qubit system   ### TODO: check this 
+    rho = psi_qobj * psi_qobj.dag()
+    s1_final_dm = ptrace(rho, 0).full()
+    s2_final_dm = ptrace(rho, 1).full()
+    return s1_final_dm, s2_final_dm
 
 
 def partial_trace_manual(rho, measured_qubits, total_qubits=4):
@@ -58,3 +59,6 @@ def extract_pure_state(rho, tol=1e-6):
     if np.isclose(max_eigenval, 1.0, atol=tol) and np.allclose(np.sum(eigenvalues), 1.0, atol=tol):
         return eigenvectors[:, max_eigenval_index]  # Extract pure state vector
     return None  # Mixed state, no unique pure state
+
+def measurement_result(state):
+    return int(np.allclose(state, [0.+0.j, 1.+0.j]))
