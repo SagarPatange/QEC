@@ -8,7 +8,24 @@ def get_state_dm(state):
     s2_final_dm = ptrace(rho, 1).full()
     return s1_final_dm, s2_final_dm
 
-
+def partial_trace_2q(rho, trace_out):
+    """
+    Computes the partial trace of a 2-qubit density matrix.
+    
+    Parameters:
+    - rho: 4x4 NumPy array (density matrix of 2 qubits)
+    - trace_out: The qubit to trace out (0 for first, 1 for second).
+    
+    Returns:
+    - Reduced 2x2 density matrix after tracing out the specified qubit.
+    """
+    return np.array([
+        [rho[0, 0] + rho[2, 2], rho[0, 1] + rho[2, 3]],
+        [rho[1, 0] + rho[3, 2], rho[1, 1] + rho[3, 3]]
+    ]) if trace_out == 0 else np.array([
+        [rho[0, 0] + rho[1, 1], rho[0, 2] + rho[1, 3]],
+        [rho[2, 0] + rho[3, 1], rho[2, 2] + rho[3, 3]]
+    ])
 def partial_trace_manual(rho, measured_qubits, total_qubits=4):
     """
     Computes the reduced density matrix by tracing out the measured qubits manually using NumPy.
@@ -62,3 +79,32 @@ def extract_pure_state(rho, tol=1e-6):
 
 def measurement_result(state):
     return int(np.allclose(state, [0.+0.j, 1.+0.j]))
+
+import numpy as np
+
+def quantum_xor(state1, state2):
+    """
+    Computes the element-wise XOR of two quantum states in vector representation.
+    
+    Parameters:
+    - state1: NumPy array representing the first quantum state.
+    - state2: NumPy array representing the second quantum state.
+
+    Returns:
+    - NumPy array representing the XORed quantum state.
+    """
+    # Ensure both states are NumPy arrays
+    state1 = np.array(state1, dtype=int)
+    state2 = np.array(state2, dtype=int)
+
+    # Compute element-wise XOR (modulo 2 addition)
+    xor_state = np.bitwise_xor(state1, state2)
+
+    return xor_state
+
+# Example usage:
+state_a = np.array([1, 0])  # |0⟩ in vector form
+state_b = np.array([0, 1])  # |1⟩ in vector form
+
+xor_result = quantum_xor(state_a, state_b)
+print(xor_result)  # Output: [1 1] (represents |1⟩ ⊕ |0⟩)
