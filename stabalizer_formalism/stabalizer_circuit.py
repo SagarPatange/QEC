@@ -166,31 +166,6 @@ class StabilizerCircuit:
         """Access measured qubit indices in order."""
         return list(self._measured_qubits)
 
-    def pauli_channel(self, qubits: Union[int, List[int], Tuple[int, int]], probs: Tuple[float, float, float]) -> None:
-        """
-        Apply a correlated Pauli error channel on one or two qubits.
-
-        Implements:
-          - PAULI_CHANNEL_1 for a single qubit
-          - PAULI_CHANNEL_2 for two qubits
-
-        Args:
-          qubits: int or iterable of 1 or 2 qubit indices.
-          probs: (pX, pY, pZ) error probabilities in [0,1].
-        Raises:
-          StabilizerCircuitError: If count of qubits not 1 or 2.
-        Returns:
-          None
-        """
-        qs = [qubits] if isinstance(qubits, int) else list(qubits)
-        if len(qs) not in (1, 2):
-            raise StabilizerCircuitError(f"pauli_channel supports only 1 or 2 qubits, got {len(qs)}")
-        for q in qs:
-            self._validate_qubit(q)
-        gate = "PAULI_CHANNEL_1" if len(qs) == 1 else "PAULI_CHANNEL_2"
-        self.circuit.append(gate, qs, arg_values=list(probs))
-        log.logger.debug(f"Applied {gate} on qubits {qs} with probs {probs}")
-
     def depolarize(self, qubits: Union[int, List[int], Tuple[int, int]], p: float) -> None:
         """
         Apply a depolarizing channel on one or two qubits.
@@ -214,7 +189,7 @@ class StabilizerCircuit:
         for q in qs:
             self._validate_qubit(q)
         gate = "DEPOLARIZE1" if len(qs) == 1 else "DEPOLARIZE2"
-        self.circuit.append(gate, qs, arg_values=[p])
+        self.circuit.append(gate, qs, [p])
         log.logger.debug(f"Applied {gate} on qubits {qs} with p={p}")
 
     def idle(self, qubits: Union[int, List[int], Tuple[int, int]], time: float, T1: Optional[float] = None, T2: Optional[float] = None) -> None:
@@ -326,3 +301,14 @@ class StabilizerCircuit:
         sim.do(self.circuit)
         vec = sim.state_vector()
         return np.asarray(vec, dtype=complex)
+
+    def pauli_channel(self, qubits, probs):
+        qs = [qubits] if isinstance(qubits, int) else list(qubits)
+        if len(qs) not in (1, 2):
+            raise StabilizerCircuitError(f"pauli_channel supports 1 or 2 qubits, got {len(qs)}")
+        for q in qs:
+            self._validate_qubit(q)
+        gate = "PAULI_CHANNEL_1" if len(qs) == 1 else "PAULI_CHANNEL_2"
+        # <-- pass the probability tuple as the `arg` parameter:
+        self.circuit.append(gate, qs, tuple(probs))
+        log.logger.debug(f"Applied {gate} on qubits {qs} with probs {probs}")
