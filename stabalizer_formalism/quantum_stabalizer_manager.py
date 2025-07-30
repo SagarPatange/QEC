@@ -2,6 +2,8 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from stabalizer_circuit import StabilizerCircuit
 
+STABALIZER_FORMALISM = "stabalizer"
+
 class StabilizerManager:
     """
     A thin wrapper around StabilizerCircuit that mimics the QuantumManager API.
@@ -16,6 +18,8 @@ class StabilizerManager:
         self.num_qubits = num_qubits
         self.sc = StabilizerCircuit(num_qubits)
         self.nodes: Dict[Any, List[int]] = {}
+        self.formalism: str = STABALIZER_FORMALISM
+
 
     def add_node(self, node_id: Any, qubits: List[int]) -> None:
         for q in qubits:
@@ -24,6 +28,17 @@ class StabilizerManager:
 
     @property
     def circuit(self):
+        """
+        Returns the circuit associated with the quantum stabilizer manager.
+
+        This method retrieves the circuit object from the stabilizer manager's 
+        internal state, allowing access to the quantum circuit for further 
+        manipulation or analysis. You can apply gates and functionalities to 
+        the circuit using this class.
+
+        Returns:
+            Circuit: The circuit object managed by the stabilizer manager.
+        """
         return self.sc.circuit
 
     @property
