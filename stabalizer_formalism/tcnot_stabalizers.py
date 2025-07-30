@@ -1,4 +1,4 @@
-from stabalizer_circuit import StabilizerCircuit, StabilizerCircuitError
+from stabalizer_formalism.stabalizer_circuit import StabilizerCircuit, StabilizerCircuitError
 import numpy as np
 
 def pretty_print(arr):

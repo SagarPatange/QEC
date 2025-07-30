@@ -1,10 +1,12 @@
 # Add below existing FORMALISM constants in quantum_manager.py
 STABILIZER_FORMALISM = "stabilizer"
 
-from stabalizer_circuit import StabilizerCircuit
+from stabalizer_formalism.stabalizer_circuit import StabilizerCircuit
 from sequence.kernel.quantum_state import StabilizerState
 from sequence.kernel.quantum_manager import QuantumManager
 from sequence.kernel.quantum_state import State
+
+
 
 class StabilizerState(State):
     """
@@ -100,9 +102,7 @@ class QuantumManagerStabilizer(QuantumManager):
         st.state.x(0)
         self.states[key] = st
 
-    def _measure(self,
-                 state: StabilizerCircuit,
-                 keys: list[int],
+    def _measure(self, state: StabilizerCircuit, keys: list[int],
                  all_keys: list[int],
                  meas_samp: float) -> dict[int, bool]:
         """
