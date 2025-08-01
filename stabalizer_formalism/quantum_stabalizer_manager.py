@@ -1,85 +1,91 @@
-from typing import Any, Dict, List, Optional
+from typing import List, Dict, Any
 import numpy as np
+import stim
+from sequence.kernel.quantum_state import State
+# from sequence.stabalizer_circuit import StabilizerCircuit
+from sequence.kernel.quantum_manager import QuantumManager
 from stabalizer_circuit import StabilizerCircuit
 
-STABALIZER_FORMALISM = "stabalizer"
-
-class StabilizerManager:
+class StimStabilizerState(State):
     """
-    A thin wrapper around StabilizerCircuit that mimics the QuantumManager API.
-
-    Attributes:
-      num_qubits (int): Total number of qubits.
-      sc (StabilizerCircuit): Underlying Stim-backed stabilizer circuit.
-      nodes (Dict[Any,List[int]]): Logical node→qubit mapping.
+    Wrap a StabilizerCircuit with explicit qubit key labels.
+    Keys length must equal circuit.num_qubits.
     """
+    def __init__(self, keys: List[int], circuit: StabilizerCircuit):
+        if len(keys) != circuit.num_qubits:
+            raise ValueError(f"keys length {len(keys)} != circuit.num_qubits {circuit.num_qubits}")
+        self.keys = keys
+        self.circuit = circuit
 
-    def __init__(self, num_qubits: int):
-        self.num_qubits = num_qubits
-        self.sc = StabilizerCircuit(num_qubits)
-        self.nodes: Dict[Any, List[int]] = {}
-        self.formalism: str = STABALIZER_FORMALISM
+    def __repr__(self) -> str:
+        return f"<StimStabilizerState keys={self.keys} gates={len(self.circuit.circuit)}>"
 
+    def state_vector(self) -> np.ndarray:
+        """Simulate full statevector on demand via Stim."""
+        return self.circuit.state_vector()
 
-    def add_node(self, node_id: Any, qubits: List[int]) -> None:
-        for q in qubits:
-            self.sc._validate_qubit(q)
-        self.nodes[node_id] = qubits
-
-    @property
-    def circuit(self):
+    @staticmethod
+    def tensor(a: 'StimStabilizerState', b: 'StimStabilizerState') -> 'StimStabilizerState':
         """
-        Returns the circuit associated with the quantum stabilizer manager.
-
-        This method retrieves the circuit object from the stabilizer manager's 
-        internal state, allowing access to the quantum circuit for further 
-        manipulation or analysis. You can apply gates and functionalities to 
-        the circuit using this class.
-
-        Returns:
-            Circuit: The circuit object managed by the stabilizer manager.
+        Tensor-product of two states: concatenates qubit wires.
         """
-        return self.sc.circuit
+        n1, n2 = a.circuit.num_qubits, b.circuit.num_qubits
+        new_keys = a.keys + [k + n1 for k in b.keys]
+        new_circ = StabilizerCircuit(n1 + n2)
+        new_circ.circuit += a.circuit.circuit
+        for op in b.circuit.circuit:
+            targets = []
+            for t in op.targets:
+                if isinstance(t, stim.QuantumTarget):
+                    targets.append(stim.target_qubit(t.value + n1))
+                else:
+                    targets.append(t)
+            new_circ.circuit.append(op.gate_name, targets, arg_values=op.args)
+        return StimStabilizerState(new_keys, new_circ)
 
-    @property
-    def measured(self) -> List[int]:
-        return self.sc.measured
+class QuantumManagerStabilizer(QuantumManager):
+    """
+    Stores and evolves StimStabilizerState objects under a shared key mapping.
+    """
+    def __init__(self, keys: List[int], base_circuit: StabilizerCircuit):
+        super().__init__(formalism="stim_stabilizer")
+        if len(keys) != base_circuit.num_qubits:
+            raise ValueError("keys length must match base_circuit.num_qubits")
+        self.keys = keys
+        self.base_circuit = base_circuit
 
-    def sample(self, shots: int = 1) -> np.ndarray:
-        """
-        Append a Stim circuit (gates, noise, measurements) and sample it.
+    def new(self) -> int:
+        """Create a new state by cloning the base circuit."""
+        idx = self._least_available
+        self._least_available += 1
+        circ_copy = StabilizerCircuit(self.base_circuit.num_qubits)
+        circ_copy.circuit = self.base_circuit.circuit.copy()
+        self.states[idx] = StimStabilizerState(self.keys, circ_copy)
+        return idx
 
-        Returns an array of shape (shots, num_measurements) of raw bits.
-        """
-        # compile & sample
-        sampler = self.sc.circuit.compile_sampler()
-        return sampler.sample(shots=shots)
+    def run_circuit(self, circuit: StabilizerCircuit, indices: List[int], meas_samp: Any = None) -> Dict:
+        """Append operations to each state's circuit."""
+        if circuit.num_qubits != len(self.keys):
+            raise ValueError("Circuit qubits != keys length")
+        for i in indices:
+            self.states[i].circuit.circuit += circuit.circuit
+        return {}
 
-    def reset(self) -> None:
-        """
-        Clear out the current circuit and measurement history,
-        but keep the same num_qubits and nodes mapping.
-        """
-        self.sc = StabilizerCircuit(self.num_qubits)
+    def set(self, indices: List[int], circuit: StabilizerCircuit) -> None:
+        """Replace each state's circuit entirely."""
+        if circuit.num_qubits != len(self.keys):
+            raise ValueError("Circuit qubits != keys length")
+        for i in indices:
+            self.states[i].circuit = circuit
 
-    def statevector(self) -> np.ndarray:
-        """Extract the exact stabilizer statevector (ignores measurements)."""
-        return self.sc.state_vector()
+    def get_state(self, idx: int) -> StimStabilizerState:
+        """Direct access to a stored state."""
+        return self.states[idx]
 
-    def sample_density_matrix( self, qubits: Optional[List[int]] = None, shots: int = 1_000) -> np.ndarray:
-        """
-        Reconstruct the reduced density matrix via Pauli tomography
-        on a specified subset of qubits.
+    def state_vector(self, idx: int) -> np.ndarray:
+        """Simulate and return the statevector of a stored state."""
+        return self.get_state(idx).state_vector()
 
-        Args:
-          qubits: List of qubit indices to reconstruct. If None,
-                  defaults to all qubits [0..num_qubits-1].
-          shots:   Number of samples per Pauli setting.
-
-        Returns:
-          A (2^k x 2^k) complex numpy array for the specified qubits.
-        """
-        if qubits is None:
-            qubits = list(range(self.num_qubits))
-        # delegate to the StabilizerCircuit helper
-        return self.sc.tomography_dm(qubits, shots=shots)
+    def remove(self, idx: int) -> None:
+        """Delete the stored state."""
+        del self.states[idx]
