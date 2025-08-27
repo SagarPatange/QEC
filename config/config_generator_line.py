@@ -23,8 +23,8 @@ Optional Args:
 """
 
 
-# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2.json -s 10
-# python config/config_generator_line.py 5 20 1 0.0002 1 -d config -o line_5.json -s 10
+# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2.json -s 1
+# python config/config_generator_line.py 5 20 1 0.0002 1 -d config -o line_5.json -s 1
 
 import argparse
 import json

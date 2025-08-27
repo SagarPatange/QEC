@@ -50,38 +50,38 @@
             "source": "BSM_0_1",
             "destination": "router_0",
             "distance": 500.0,
-            "delay": 500000000.0
+            "delay": 1000000000.0
         },
         {
             "source": "router_0",
             "destination": "BSM_0_1",
             "distance": 500.0,
-            "delay": 500000000.0
+            "delay": 1000000000.0
         },
         {
             "source": "BSM_0_1",
             "destination": "router_1",
             "distance": 500.0,
-            "delay": 500000000.0
+            "delay": 1000000000.0
         },
         {
             "source": "router_1",
             "destination": "BSM_0_1",
             "distance": 500.0,
-            "delay": 500000000.0
+            "delay": 1000000000.0
         },
         {
             "source": "router_0",
             "destination": "router_1",
-            "delay": 500000000.0
+            "delay": 1000000000.0
         },
         {
             "source": "router_1",
             "destination": "router_0",
-            "delay": 500000000.0
+            "delay": 1000000000.0
         }
     ],
-    "stop_time": 10000000000000,
+    "stop_time": 1000000000000,
     "formalism": "ket_vector",
     "is_parallel": false
 }
