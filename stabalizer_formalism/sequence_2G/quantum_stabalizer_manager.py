@@ -4,7 +4,7 @@ import stim
 from sequence.kernel.quantum_state import State
 # from sequence.stabalizer_circuit import StabilizerCircuit
 from sequence.kernel.quantum_manager import QuantumManager
-from stabalizer_circuit import StabilizerCircuit
+from stabalizer_formalism.sequence_2G.stabalizer_circuit import StabilizerCircuit
 
 class StimStabilizerState(State):
     """
@@ -23,25 +23,6 @@ class StimStabilizerState(State):
     def state_vector(self) -> np.ndarray:
         """Simulate full statevector on demand via Stim."""
         return self.circuit.state_vector()
-
-    @staticmethod
-    def tensor(a: 'StimStabilizerState', b: 'StimStabilizerState') -> 'StimStabilizerState':
-        """
-        Tensor-product of two states: concatenates qubit wires.
-        """
-        n1, n2 = a.circuit.num_qubits, b.circuit.num_qubits
-        new_keys = a.keys + [k + n1 for k in b.keys]
-        new_circ = StabilizerCircuit(n1 + n2)
-        new_circ.circuit += a.circuit.circuit
-        for op in b.circuit.circuit:
-            targets = []
-            for t in op.targets:
-                if isinstance(t, stim.QuantumTarget):
-                    targets.append(stim.target_qubit(t.value + n1))
-                else:
-                    targets.append(t)
-            new_circ.circuit.append(op.gate_name, targets, arg_values=op.args)
-        return StimStabilizerState(new_keys, new_circ)
 
 class QuantumManagerStabilizer(QuantumManager):
     """

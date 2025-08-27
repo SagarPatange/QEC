@@ -49,8 +49,31 @@ class StabilizerCircuit:
         self.num_qubits = num_qubits
         self.circuit = stim.Circuit()
         self._measured_qubits: List[int] = []
+        self._key2q = {}
         log.logger.debug(f"Initialized StabilizerCircuit with {self.num_qubits} qubits")
 
+
+    def bind_key(self, key, qubit_index: int) -> None:
+        """Associate a resource-manager key with a concrete circuit qubit index."""
+        self._key2q[key] = int(qubit_index)
+
+    def unbind_key(self, key) -> None:
+        """Remove the key→qubit mapping when the RM frees a key for good."""
+        self._key2q.pop(key, None)
+
+    def qubit_for(self, key) -> int:
+        """Resolve the circuit qubit index for a given key label."""
+        return self._key2q[key]
+
+    def measure_keys(self, keys):
+        """
+        Measure by high-level keys. Returns mapping {key: bit}.
+        Uses your existing measure([...]) under the hood.
+        """
+        qs = [self.qubit_for(k) for k in keys]
+        bits = self.measure(qs)  # your existing method that returns bits in order
+        return {k: b for k, b in zip(keys, bits)}
+    
     def _validate_qubit(self, qubit: Union[int, stim.GateTarget]) -> None:
         if isinstance(qubit, stim.GateTarget):
             return
