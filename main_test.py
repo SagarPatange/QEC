@@ -7,13 +7,13 @@ from sequence.constants import MILLISECOND
 import sequence.utils.log as log
 
 # Two node topology, 20 memories generating entanglements in parallel
-# see how many entanglement pairs are generated in 1 seconds
+# see how many entanglement pairs are generated in 10 seconds with 
 def two_node_physical(verbose=False):
 
 
     print('\nPhysical Entagled Pairs/s:')
 
-    log_filename = 'log/linear_entanglement_generation'
+    # log_filename = 'log/linear_entanglement_generation'
     # level = logging.DEBUG
     # logging.basicConfig(level=level, filename='', filemode='w')
     
@@ -22,8 +22,8 @@ def two_node_physical(verbose=False):
     network_topo = RouterNetTopo(network_config)
     tl = network_topo.get_timeline()
 
-    log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level('DEBUG')
+    # log.set_logger(__name__, tl, log_filename)
+    # log.set_logger_level('DEBUG')
     modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm']
     for module in modules:
         log.track_module(module)
@@ -73,4 +73,4 @@ def three_node_logical_vs_physical():
 
 if __name__ == "__main__":
     
-    two_node_physical()
+    two_node_physical(verbose=True)
