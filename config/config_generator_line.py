@@ -23,13 +23,13 @@ Optional Args:
 """
 
 
-# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2.json -s 1
+# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2.json -s 10
 # python config/config_generator_line.py 5 20 1 0.0002 1 -d config -o line_5.json -s 1
 
 import argparse
 import json
 import os
-from sequence.utils.config_generator import add_default_args, get_node_csv, generate_node_procs, generate_nodes, generate_classical, final_config, router_name_func
+from config_generator import add_default_args, get_node_csv, generate_node_procs, generate_nodes, generate_classical, final_config, router_name_func, generate_stim_nodes
 from sequence.topology.topology import Topology
 from sequence.topology.router_net_topo import RouterNetTopo
 
@@ -62,7 +62,17 @@ else:
 router_names = list(node_procs.keys())
 # nodes = generate_nodes(node_procs, router_names, args.memo_size)
 template = 'qec'
-nodes = generate_nodes(node_procs, router_names, args.memo_size, template)
+
+#=========================== Changes ============================
+# nodes = generate_nodes(node_procs, router_names, args.memo_size, template)
+
+if args.stim:  # Add --stim flag
+    nodes = generate_stim_nodes(node_procs, router_names, args.memo_size, template)
+else:
+    nodes = generate_nodes(node_procs, router_names, args.memo_size, template)
+
+#=========================== ======= ============================
+
 
 # generate bsm nodes
 bsm_names = ["BSM_{}_{}".format(i, i + 1) for i in range(args.linear_size - 1)]
