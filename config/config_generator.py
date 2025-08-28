@@ -83,11 +83,11 @@ def generate_nodes(node_procs: dict, router_names: str, memo_size: int, template
 def generate_stim_nodes(node_procs, router_names, memo_size, template=None):
     nodes = generate_nodes(node_procs, router_names, memo_size, template)
     for node in nodes:
-        node[Topology.TYPE] = "StimQuantumRouter"  # New type
+        node[Topology.TYPE] = "StimQuantumRouter"  
         node["stim_enabled"] = True
         node["qec_block_size"] = 20  # Memories per node
     return nodes
-#=========================== ======= ============================
+#================================================================
 
 def generate_quantum_dqc_nodes(node_procs: dict, router_names: str, memo_size: int, data_memo_size: int, template: str = None, gate_fidelity: float = None, measurement_fidelity: float = None) -> list:
     """generate a list of node configs for quantum nodes

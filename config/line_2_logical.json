@@ -1,0 +1,91 @@
+{
+    "templates": {
+        "qec": {
+            "MemoryArray": {
+                "fidelity": 1.0,
+                "efficiency": 0.9
+            }
+        }
+    },
+    "nodes": [
+        {
+            "name": "router_0",
+            "type": "StimQuantumRouter",
+            "seed": 0,
+            "memo_size": 20,
+            "group": 0,
+            "template": "qec",
+            "stim_enabled": true,
+            "qec_block_size": 20
+        },
+        {
+            "name": "router_1",
+            "type": "StimQuantumRouter",
+            "seed": 1,
+            "memo_size": 20,
+            "group": 0,
+            "template": "qec",
+            "stim_enabled": true,
+            "qec_block_size": 20
+        },
+        {
+            "name": "BSM_0_1",
+            "type": "BSMNode",
+            "seed": 0,
+            "template": "qec"
+        }
+    ],
+    "qchannels": [
+        {
+            "source": "router_0",
+            "destination": "BSM_0_1",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_1",
+            "destination": "BSM_0_1",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        }
+    ],
+    "cchannels": [
+        {
+            "source": "BSM_0_1",
+            "destination": "router_0",
+            "distance": 500.0,
+            "delay": 1000000000.0
+        },
+        {
+            "source": "router_0",
+            "destination": "BSM_0_1",
+            "distance": 500.0,
+            "delay": 1000000000.0
+        },
+        {
+            "source": "BSM_0_1",
+            "destination": "router_1",
+            "distance": 500.0,
+            "delay": 1000000000.0
+        },
+        {
+            "source": "router_1",
+            "destination": "BSM_0_1",
+            "distance": 500.0,
+            "delay": 1000000000.0
+        },
+        {
+            "source": "router_0",
+            "destination": "router_1",
+            "delay": 1000000000.0
+        },
+        {
+            "source": "router_1",
+            "destination": "router_0",
+            "delay": 1000000000.0
+        }
+    ],
+    "stop_time": 10000000000000,
+    "formalism": "ket_vector",
+    "is_parallel": false
+}

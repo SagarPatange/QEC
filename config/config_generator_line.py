@@ -22,9 +22,11 @@ Optional Args:
     -n --nodes (str): path to csv file providing process information for nodes.
 """
 
+# For generating a 2-node linear network with 20 memories per node, 1 km distance between nodes, for 1G networks
+# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2_physical.json -s 10
 
-# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2.json -s 10
-# python config/config_generator_line.py 5 20 1 0.0002 1 -d config -o line_5.json -s 1
+# For generating a 2-node linear network with 20 memories per node, 1 km distance between nodes, for 2G networks that are stim-enabled
+# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2_logical.json -s 10 --stim
 
 import argparse
 import json
@@ -37,6 +39,11 @@ from sequence.topology.router_net_topo import RouterNetTopo
 parser = argparse.ArgumentParser()
 parser.add_argument('linear_size', type=int, help='number of network nodes')
 parser = add_default_args(parser)
+
+#=========================== Changes ============================
+parser.add_argument('--stim', action='store_true', help='Use Stim-enabled quantum nodes')  
+#================================================================
+
 args = parser.parse_args()
 
 output_dict = {}
@@ -71,7 +78,7 @@ if args.stim:  # Add --stim flag
 else:
     nodes = generate_nodes(node_procs, router_names, args.memo_size, template)
 
-#=========================== ======= ============================
+#================================================================
 
 
 # generate bsm nodes
