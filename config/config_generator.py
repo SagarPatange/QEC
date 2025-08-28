@@ -79,13 +79,38 @@ def generate_nodes(node_procs: dict, router_names: str, memo_size: int, template
     return nodes
 
 #=========================== Changes ============================
-# New function to generate StimQuantumRouter nodes
+# # New function to generate StimQuantumRouter nodes
+# def generate_stim_nodes(node_procs, router_names, memo_size, template=None):
+#     nodes = generate_nodes(node_procs, router_names, memo_size, template)
+#     for node in nodes:
+#         node[Topology.TYPE] = "StimQuantumRouter"  
+#         node["stim_enabled"] = True
+#         node["qec_block_size"] = 20  # Memories per node
+#     return nodes
+
 def generate_stim_nodes(node_procs, router_names, memo_size, template=None):
+    """
+    Generate fully generalized Stim-enabled nodes.
+    
+    Creates QuantumRouter nodes with Stim capabilities enabled.
+    All protocols, block sizes, and operations are determined at runtime
+    based on actual network conditions and requirements.
+    
+    Args:
+        node_procs: Process mapping for parallel simulation
+        router_names: List of router names  
+        memo_size: Number of memories per node (no constraints)
+        template: Component template name
+        
+    Returns:
+        List of node configurations with Stim enabled
+    """
     nodes = generate_nodes(node_procs, router_names, memo_size, template)
+    
     for node in nodes:
-        node[Topology.TYPE] = "StimQuantumRouter"  
+        node[Topology.TYPE] = "QuantumRouter"
         node["stim_enabled"] = True
-        node["qec_block_size"] = 20  # Memories per node
+    
     return nodes
 #================================================================
 

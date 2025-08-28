@@ -27,6 +27,7 @@ Optional Args:
 
 # For generating a 2-node linear network with 20 memories per node, 1 km distance between nodes, for 2G networks that are stim-enabled
 # python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2_logical.json -s 10 --stim
+# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2_logical_v2.json -s 10 --stim
 
 import argparse
 import json
@@ -41,7 +42,7 @@ parser.add_argument('linear_size', type=int, help='number of network nodes')
 parser = add_default_args(parser)
 
 #=========================== Changes ============================
-parser.add_argument('--stim', action='store_true', help='Use Stim-enabled quantum nodes')  
+# parser.add_argument('--stim', action='store_true', help='Use Stim-enabled quantum nodes')  
 #================================================================
 
 args = parser.parse_args()

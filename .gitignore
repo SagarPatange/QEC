@@ -16,3 +16,6 @@ algo_cooling.py
 **/stim_sequence_v2/
 .claude
 .vscode
+log/
+
+
