@@ -6,13 +6,13 @@ from sequence.components.memory import Memory
 from sequence.components.optical_channel import QuantumChannel, ClassicalChannel
 from sequence.entanglement_management.generation import EntanglementGenerationA
 from sequence.message import Message
-from remote_cnot import RemoteCNOT
+from density_matrix_error_model.remote_cnot import RemoteCNOT
 import logging
 import math
 import numpy as np
 from sequence.kernel.quantum_manager import (DENSITY_MATRIX_FORMALISM)
 from sequence.components.circuit import Circuit
-from dm_operations import DM_Operations
+from density_matrix_error_model.dm_operations import DM_Operations
 
 
 class SimpleManager:
