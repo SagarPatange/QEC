@@ -109,7 +109,7 @@ def generate_stim_nodes(node_procs, router_names, memo_size, template=None):
     
     for node in nodes:
         node[Topology.TYPE] = "QuantumRouter"
-        node["stim_enabled"] = True
+        # Removed: node["stim_enabled"] = True
     
     return nodes
 #================================================================

@@ -77,7 +77,7 @@ def two_node_physical_one_memory(verbose=False):
     tl = network_topo.get_timeline()
 
     log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level('INFO')
+    log.set_logger_level('DEBUG')
     modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm']
     for module in modules:
         log.track_module(module)

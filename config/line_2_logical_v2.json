@@ -14,8 +14,7 @@
             "seed": 0,
             "memo_size": 20,
             "group": 0,
-            "template": "qec",
-            "stim_enabled": true
+            "template": "qec"
         },
         {
             "name": "router_1",
@@ -23,8 +22,7 @@
             "seed": 1,
             "memo_size": 20,
             "group": 0,
-            "template": "qec",
-            "stim_enabled": true
+            "template": "qec"
         },
         {
             "name": "BSM_0_1",
@@ -84,6 +82,6 @@
         }
     ],
     "stop_time": 10000000000000,
-    "formalism": "ket_vector",
+    "formalism": "stabilizer",
     "is_parallel": false
 }

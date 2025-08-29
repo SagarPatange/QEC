@@ -42,7 +42,7 @@ parser.add_argument('linear_size', type=int, help='number of network nodes')
 parser = add_default_args(parser)
 
 #=========================== Changes ============================
-# parser.add_argument('--stim', action='store_true', help='Use Stim-enabled quantum nodes')  
+parser.add_argument('--stim', action='store_true', help='Use Stim-enabled quantum nodes')  
 #================================================================
 
 args = parser.parse_args()
@@ -73,8 +73,8 @@ template = 'qec'
 
 #=========================== Changes ============================
 # nodes = generate_nodes(node_procs, router_names, args.memo_size, template)
-
-if args.stim:  # Add --stim flag
+if args.stim:
+    args.formalism = 'stabilizer'  # Override formalism for Stim mode
     nodes = generate_stim_nodes(node_procs, router_names, args.memo_size, template)
 else:
     nodes = generate_nodes(node_procs, router_names, args.memo_size, template)
