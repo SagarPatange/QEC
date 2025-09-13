@@ -5,8 +5,6 @@ import numpy as np
 from sequence.topology.router_net_topo import RouterNetTopo
 from sequence.constants import MILLISECOND
 import sequence.utils.log as log
-from sequence.entanglement_management.generation import EntanglementGenerationA
-from sequence.components.bsm import BSM 
 
 # Two node topology, 20 memories generating entanglements in parallel
 # see how many entanglement pairs are generated in 10 seconds with 1.0 fidelity and 0.9 efficiency
@@ -65,12 +63,12 @@ def two_node_physical(verbose=False):
 
 # Two node topology, 1 memory generating entanglements 
 # see how many entanglement pairs are generated in 10 seconds with 1.0 fidelity and 0.9 efficiency
-def two_node_physical_one_memory(verbose=False):
+def two_node_physical_one_memory_ketState(verbose=False):
 
 
     print('\nPhysical Entagled Pairs/s:')
 
-    log_filename = 'log/linear_entanglement_generation'
+    log_filename = 'log/ketstate_entanglement_generation'  
     network_config = 'config/line_2_physical_single_memory.json'
 
     network_topo = RouterNetTopo(network_config)
@@ -115,20 +113,32 @@ def two_node_physical_one_memory(verbose=False):
 
     pass
 
-def two_node_logical(verbose=True):
-    print('\nLogical Entagled Pairs/s:')
 
-    # log_filename = 'log/linear_entanglement_generation'
-    # level = logging.DEBUG
-    # logging.basicConfig(level=level, filename='', filemode='w')
+def two_node_physical_one_memory_stabilizer(verbose=True):
+    print('\nLogical Entangled Pairs/s:')
+
+    # ADD THESE LINES - Set up for stabilizer formalism
+    from sequence.kernel.quantum_manager import QuantumManager
+    from sequence.constants import STABILIZER_FORMALISM
+    from sequence.entanglement_management.generation import EntanglementGenerationA, EntanglementGenerationB
     
-    network_config = 'config/line_2_logical_v2.json'
+    # Set quantum manager to use stabilizer formalism
+    QuantumManager.set_global_manager_formalism(STABILIZER_FORMALISM)
+    
+    # Set protocols to use stabilizer versions
+    EntanglementGenerationA.set_global_type('barret_kok_stabilizer')
+    EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
+    log_filename = 'log/stabilizer_entanglement_generation'
+    level = logging.DEBUG
+    logging.basicConfig(level=level, filename='', filemode='w')
+    
+    network_config = 'config/line_2_logical.json'
     # network_config = 'config/random_5.json'
     network_topo = RouterNetTopo(network_config)
     tl = network_topo.get_timeline()
 
-    # log.set_logger(__name__, tl, log_filename)
-    # log.set_logger_level('DEBUG')
+    log.set_logger(__name__, tl, log_filename)
+    log.set_logger_level('DEBUG')
     modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm']
     for module in modules:
         log.track_module(module)
@@ -143,7 +153,7 @@ def two_node_logical(verbose=True):
     
     start_time = 1e12
     end_time   = 10e12
-    entanglement_number = 7
+    entanglement_number = 1
     nm = src_node.network_manager
     nm.request(dest_node_name, start_time=start_time, end_time=end_time, memory_size=entanglement_number, target_fidelity=0.8)
 
@@ -172,7 +182,10 @@ def three_node_logical_vs_physical():
 
 
 if __name__ == "__main__":
-    
+
     # two_node_physical(verbose=True)
-    # two_node_logical(verbose=True)
-    two_node_physical_one_memory()
+    print("\n=== STABILIZER ===")
+    two_node_physical_one_memory_stabilizer(verbose=False)
+    print("\n=== KET STATE ===")
+    two_node_physical_one_memory_ketState(verbose=False)
+

@@ -335,3 +335,36 @@ class StabilizerCircuit:
         # <-- pass the probability tuple as the `arg` parameter:
         self.circuit.append(gate, qs, tuple(probs))
         log.logger.debug(f"Applied {gate} on qubits {qs} with probs {probs}")
+
+
+    def s(self, qubit: int) -> None:
+        """Apply S gate."""
+        self._validate_qubit(qubit)
+        self.circuit.append("S", [qubit])
+        log.logger.debug(f"Applied S on qubit {qubit}")
+
+    def s_dag(self, qubit: int) -> None:
+        """Apply S† gate."""
+        self._validate_qubit(qubit)
+        self.circuit.append("S_DAG", [qubit])
+        log.logger.debug(f"Applied S_DAG on qubit {qubit}")
+
+    def reset(self, qubit: int) -> None:
+        """Reset qubit to |0⟩."""
+        self._validate_qubit(qubit)
+        self.circuit.append("R", [qubit])
+        log.logger.debug(f"Reset qubit {qubit}")
+
+    def sample_measurements(self, shots: int = 1) -> np.ndarray:
+        """Sample measurement outcomes from accumulated circuit."""
+        if self.circuit.num_measurements == 0:
+            return np.array([]).reshape(shots, 0)
+        
+        sampler = self.circuit.compile_sampler()
+        return sampler.sample(shots=shots)
+
+    def clear_circuit(self) -> None:
+        """Clear the circuit but keep qubit bindings."""
+        self.circuit = stim.Circuit()
+        self._measured_qubits = []
+        log.logger.debug("Cleared circuit while preserving key bindings")

@@ -4,7 +4,7 @@ import stim
 from sequence.kernel.quantum_state import State
 # from sequence.stabalizer_circuit import StabilizerCircuit
 from sequence.kernel.quantum_manager import QuantumManager
-from stabalizer_formalism.sequence_2G.stabalizer_circuit import StabilizerCircuit
+from stabalizer_circuit import StabilizerCircuit
 
 class StimStabilizerState(State):
     """

@@ -10,23 +10,19 @@
     "nodes": [
         {
             "name": "router_0",
-            "type": "StimQuantumRouter",
+            "type": "QuantumRouter",
             "seed": 0,
             "memo_size": 20,
             "group": 0,
-            "template": "qec",
-            "stim_enabled": true,
-            "qec_block_size": 20
+            "template": "qec"
         },
         {
             "name": "router_1",
-            "type": "StimQuantumRouter",
+            "type": "QuantumRouter",
             "seed": 1,
             "memo_size": 20,
             "group": 0,
-            "template": "qec",
-            "stim_enabled": true,
-            "qec_block_size": 20
+            "template": "qec"
         },
         {
             "name": "BSM_0_1",
@@ -86,6 +82,6 @@
         }
     ],
     "stop_time": 10000000000000,
-    "formalism": "ket_vector",
+    "formalism": "stabilizer",
     "is_parallel": false
 }
