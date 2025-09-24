@@ -12,7 +12,7 @@
             "name": "router_0",
             "type": "QuantumRouter",
             "seed": 0,
-            "memo_size": 1,
+            "memo_size": 100,
             "group": 0,
             "template": "qec"
         },
@@ -20,7 +20,7 @@
             "name": "router_1",
             "type": "QuantumRouter",
             "seed": 1,
-            "memo_size": 1,
+            "memo_size": 100,
             "group": 0,
             "template": "qec"
         },

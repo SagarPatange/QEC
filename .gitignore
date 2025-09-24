@@ -17,5 +17,10 @@ algo_cooling.py
 .claude
 .vscode
 log/
+test.py
+test.ipynb
+QEC_713.py
+qec_protocols.py
+test_QEC_713.py
 
 
