@@ -208,3 +208,38 @@ def router_name_func(i) -> str:
 def bsm_name_func(i, j) -> str:
     """a function that returns the name of the BSM node"""
     return f"BSM_{i}_{j}"
+
+
+def generate_2g_nodes(node_procs: dict, router_names: list, memo_size: int, 
+                      data_memo_size: int = 7, ancilla_memo_size: int = 6,
+                      template: str = None, gate_fidelity: float = None, 
+                      measurement_fidelity: float = None) -> list:
+    """Generate node configs for 2nd generation quantum routers.
+    
+    Creates standard QuantumRouter nodes with "generation": 2 flag.
+    This triggers RouterNetTopo2G to create QuantumRouter2ndGeneration instances.
+    
+    Args:
+        node_procs: Process mapping for nodes
+        router_names: List of router names
+        memo_size: Number of communication memories
+        data_memo_size: Number of data memories (default 7 for [[7,1,3]])
+        ancilla_memo_size: Number of ancilla memories (default 6 for [[7,1,3]])
+        template: Component template name
+        gate_fidelity: Gate fidelity value
+        measurement_fidelity: Measurement fidelity value
+        
+    Returns:
+        List of node configurations with 2nd gen settings
+    """
+    # Start with standard nodes
+    nodes = generate_nodes(node_procs, router_names, memo_size, template, 
+                          gate_fidelity, measurement_fidelity)
+    
+    # Add 2nd generation specific fields
+    for node in nodes:
+        node["generation"] = 2  # This triggers 2nd gen creation in RouterNetTopo2G
+        node["data_memo_size"] = data_memo_size
+        node["ancilla_memo_size"] = ancilla_memo_size
+    
+    return nodes
