@@ -22,5 +22,6 @@ test.ipynb
 QEC_713.py
 qec_protocols.py
 test_QEC_713.py
-
+QEC_app.py
+QEC_protcol.py
 

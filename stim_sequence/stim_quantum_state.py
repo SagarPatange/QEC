@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Union, Tuple
 import logging
 
-from stabalizer_circuit import StabilizerCircuit
+from drafts.stabalizer_circuit import StabilizerCircuit
 
 
 class StimQuantumState:

@@ -16,7 +16,7 @@ import itertools
 import numpy as np
 import pytest
 from sequence.topology.router_net_topo import RouterNetTopo2G
-from QEC_app import QECApp
+from drafts.QEC_app import QECApp
 from sequence.constants import MILLISECOND, MICROSECOND
 from sequence.kernel.quantum_utils import verify_same_state_vector
 import sequence.utils.log as log  # ADD LOGGING

@@ -14,7 +14,7 @@ import itertools
 from typing import List, Union, Tuple, Optional, Dict
 
 # Import the original StabilizerCircuit and extend it
-from stabalizer_circuit import StabilizerCircuit as BaseStabilizerCircuit
+from drafts.stabalizer_circuit import StabilizerCircuit as BaseStabilizerCircuit
 
 
 class EnhancedStabilizerCircuit(BaseStabilizerCircuit):

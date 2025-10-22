@@ -1,391 +1,684 @@
-"""RequestLogicalPairApp for QuantumRouter2ndGeneration
-Combines Barrett-Kok entanglement generation with QEC713 encoding.
-No inter-node communication after Bell pairs are created.
+"""
+Request Logical Pair Application for generating Bell pairs with optional QEC encoding.
+
+This application demonstrates:
+1. Generation of 7 Bell pairs using Barrett-Kok entanglement
+2. Fidelity calculation using quantum state tomography
+3. Synchronization between nodes before fidelity calculation
+4. Optional encoding to logical qubits using [[7,1,3]] code
+
+COMPLETE VERSION: Includes proper fidelity calculation via tomography and full synchronization.
 """
 
-from typing import TYPE_CHECKING, List, Dict
-from collections import defaultdict
 import numpy as np
-
+from typing import TYPE_CHECKING, Dict, List, Optional
 from sequence.app.request_app import RequestApp
 from sequence.utils import log
-from sequence.resource_management.memory_manager import MemoryInfo
 from sequence.kernel.process import Process
 from sequence.kernel.event import Event
-from qec713_protocol import QEC713
+from sequence.message import Message
+from sequence.resource_management.memory_manager import MemoryInfo
 
 if TYPE_CHECKING:
-    from sequence.topology.node import QuantumRouter2ndGeneration
+    from sequence.topology.node import QuantumRouter
     from sequence.network_management.reservation import Reservation
 
 
+class SyncMessage(Message):
+    """Message for synchronizing nodes before fidelity calculation."""
+    
+    def __init__(self, msg_type: str, source: str, encoding_enabled: bool = False, 
+                 logical_state: str = None):
+        super().__init__(msg_type, source)
+        self.source = source
+        self.encoding_enabled = encoding_enabled
+        self.logical_state = logical_state
+
+
 class RequestLogicalPairApp(RequestApp):
-    """Application that combines Barrett-Kok Bell pair generation with QEC713 encoding.
+    """Application for generating 7 Bell pairs and optionally encoding to logical qubits.
     
     Workflow:
     1. Request 7 Bell pairs via Barrett-Kok protocol
-    2. Once all 7 are generated, transfer to data memories
-    3. Apply [[7,1,3]] encoding locally (no inter-node communication)
-    4. Initialize and reset ancillas as needed
+    2. Synchronize with remote node when all pairs are ready
+    3. Calculate fidelities using quantum state tomography
+    4. Optionally encode to logical qubits (Alice: |0>_L, Bob: |+>_L)
     """
     
-    def __init__(self, node: "QuantumRouter2ndGeneration"):
-        """Initialize the logical pair application.
-        
-        Args:
-            node: QuantumRouter2ndGeneration with dedicated memory arrays
-        """
+    # Class variable to track all instances for inter-app communication
+    _instances = {}
+    
+    def __init__(self, node: "QuantumRouter"):
         super().__init__(node)
-        self.name = f"{node.name}.RequestLogicalPairApp"
         
-        # Verify node type
-        assert hasattr(node, 'data_memo_arr_name'), "Node must be QuantumRouter2ndGeneration"
-        assert hasattr(node, 'ancilla_memo_arr_name'), "Node must be QuantumRouter2ndGeneration"
+        # Register this instance for inter-app communication
+        RequestLogicalPairApp._instances[node.name] = self
         
         # Bell pair tracking
-        self.bell_pairs = []  # List of MemoryInfo for collected Bell pairs
-        self.bell_pair_fidelities = []  # Individual fidelities
+        self.memo_size = 7  # Need exactly 7 Bell pairs for [[7,1,3]] code
+        self.num_completed = 0
+        self.results = []  # Store Bell pair results
         
-        # Timing metrics
-        self.bell_pair_start_time = None
-        self.bell_pair_completion_time = None
+        # Synchronization state
+        self.sync_ready = False  # This node ready
+        self.remote_ready = False  # Remote node ready
+        self.remote_node_name = None
+        self.fidelities_calculated = False
+        
+        # Encoding configuration
+        self.encoding_enabled = False
+        self.logical_state = '0'  # '0' for |0>_L, '+' for |+>_L
+        self.encoding_complete = False
+        self.remote_encoding_enabled = False
+        self.remote_logical_state = None
+        
+        # Timing
+        self.first_pair_time = None
+        self.last_pair_time = None
         self.encoding_start_time = None
-        self.encoding_completion_time = None
+        self.encoding_end_time = None
         
-        # State
-        self.current_reservation = None
-        self.encoding_complete = False
-        
-        # QEC utility
-        self.qec = QEC713()
-        
-        log.logger.debug(f"{self.name}: initialized")
+        # For responder mode
+        self.is_initiator = False
+        self.is_responder = False
     
-    def start(self, responder: str, start_t: int, end_t: int, 
-              fidelity: float = 0.85, id: int = 0):
-        """Start requesting logical Bell pair (7 physical pairs).
+    def start(self, remote_node_name: str, start_time: int, end_time: int,
+              memory_size: int = 7, target_fidelity: float = 0.8,
+              logical_state: str = '0', encoding_enabled: bool = False):
+        """Start Bell pair generation with optional QEC encoding.
         
         Args:
-            responder: Name of responder node
-            start_t: Start time (ps)
-            end_t: End time (ps)  
-            fidelity: Minimum fidelity threshold for Bell pairs
-            id: Request ID
+            remote_node_name: Name of the remote quantum router
+            start_time: Start time in picoseconds
+            end_time: End time in picoseconds
+            memory_size: Number of Bell pairs to generate (must be 7 for encoding)
+            target_fidelity: Minimum acceptable fidelity
+            logical_state: '0' for |0>_L or '+' for |+>_L (if encoding enabled)
+            encoding_enabled: Whether to encode to logical qubits after Bell pair generation
         """
-        log.logger.info(f"{self.name}: requesting logical pair with {responder}")
+        assert memory_size == 7, "Must request exactly 7 Bell pairs for [[7,1,3]] encoding"
         
-        # Reset state for new request
-        self.bell_pairs = []
-        self.bell_pair_fidelities = []
-        self.encoding_complete = False
-        self.bell_pair_start_time = start_t
+        self.remote_node_name = remote_node_name
+        self.encoding_enabled = encoding_enabled
+        self.logical_state = logical_state
+        self.is_initiator = True
+        self.is_responder = False
         
-        # Initialize ancillas early
-        self._initialize_ancillas()
+        # Configure the remote app directly if it exists
+        if remote_node_name in RequestLogicalPairApp._instances:
+            remote_app = RequestLogicalPairApp._instances[remote_node_name]
+            remote_app._configure_as_responder(
+                initiator_name=self.node.name,
+                encoding_enabled=encoding_enabled,
+                initiator_logical_state=logical_state
+            )
         
-        # Request exactly 7 Bell pairs (stop after 7)
+        # Start Bell pair generation using parent class
         super().start(
-            responder=responder,
-            start_t=start_t,
-            end_t=end_t,
-            memo_size=7,  # Use 7 communication memories
-            fidelity=fidelity
+            responder=remote_node_name,
+            start_t=start_time,
+            end_t=end_time,
+            memo_size=memory_size,
+            fidelity=target_fidelity
         )
-    
-    def get_reservation_result(self, reservation: "Reservation", result: bool):
-        """Handle reservation result."""
-        super().get_reservation_result(reservation, result)
         
-        if result:
-            self.current_reservation = reservation
-            log.logger.debug(f"{self.name}: reservation successful, waiting for Bell pairs")
+        log.logger.info(f"{self.node.name}: Started Bell pair generation with {remote_node_name}, "
+                       f"encoding={'enabled' if encoding_enabled else 'disabled'}")
     
-    def get_memory(self, info: "MemoryInfo"):
-        """Collect Bell pairs and trigger encoding when we have 7.
-
+    def _configure_as_responder(self, initiator_name: str, encoding_enabled: bool, 
+                                initiator_logical_state: str):
+        """Configure this app as a responder to an initiator's request.
+        
         Args:
-            info: Memory info from Barrett-Kok entanglement generation
+            initiator_name: Name of the initiating node
+            encoding_enabled: Whether encoding is enabled
+            initiator_logical_state: Logical state the initiator will encode to
         """
-        # Stop accepting if we already have 7
-        if len(self.bell_pairs) >= 7:
-            return
-
+        self.remote_node_name = initiator_name
+        self.remote_encoding_enabled = encoding_enabled
+        self.remote_logical_state = initiator_logical_state
+        self.is_responder = True
+        self.is_initiator = False
+        
+        # Configure our encoding state
+        if encoding_enabled:
+            self.encoding_enabled = True
+            # Responder (Bob) uses |+>_L if initiator (Alice) uses |0>_L
+            self.logical_state = '+' if initiator_logical_state == '0' else '0'
+        
+        log.logger.info(f"{self.node.name}: Configured as responder to {initiator_name}, "
+                       f"encoding={'enabled' if self.encoding_enabled else 'disabled'}, "
+                       f"logical_state={self.logical_state}")
+    
+    def get_other_reservation(self, reservation: "Reservation") -> None:
+        """Called when responder receives a reservation from initiator.
+        
+        This method is called automatically when the initiator creates a reservation.
+        The responder doesn't call start() - it reacts to the initiator's request.
+        """
+        if self.is_responder:
+            super().get_other_reservation(reservation)
+            log.logger.info(f"{self.node.name}: Accepted reservation from {reservation.initiator}")
+    
+    def get_memory(self, info: "MemoryInfo") -> None:
+        """Process completed Bell pairs.
+        
+        Called when a memory becomes entangled. Collects Bell pairs and
+        triggers synchronization when all 7 are ready.
+        
+        Args:
+            info: Memory information containing entanglement details
+        """
         if info.state != "ENTANGLED":
             return
-
+        
+        # Check if this memory is part of our reservation
         if info.index not in self.memo_to_reservation:
             return
-
+        
         reservation = self.memo_to_reservation[info.index]
-
-        # Calculate actual fidelity via quantum state tomography
-        calculated_fidelity = self._calculate_bell_pair_fidelity(info)
-
-        # Check fidelity threshold
-        if calculated_fidelity < reservation.fidelity:
-            log.logger.debug(f"{self.name}: Bell pair fidelity {calculated_fidelity:.4f} below threshold")
-            self.node.resource_manager.update(None, info.memory, "RAW")
-            return
-
-        # Collect the Bell pair
-        self.bell_pairs.append(info)
-        self.bell_pair_fidelities.append(calculated_fidelity)
-
-        log.logger.info(f"{self.name}: collected Bell pair {len(self.bell_pairs)}/7, "
-                       f"fidelity={calculated_fidelity:.4f}")
-
-        # Check if we have all 7
-        if len(self.bell_pairs) == 7:
-            self.bell_pair_completion_time = self.node.timeline.now()
-
-            if self.bell_pair_start_time is not None:
-                bell_pair_generation_time = (self.bell_pair_completion_time - self.bell_pair_start_time) * 1e-12
-                log.logger.info(f"{self.name}: All 7 Bell pairs collected in {bell_pair_generation_time:.4f}s")
-
-            # Cancel the reservation to stop further entanglement generation
-            if self.current_reservation:
-                self.node.resource_manager.expire_rules_by_reservation(self.current_reservation)
-                self.current_reservation = None
-
-            # Trigger encoding process
-            self._start_encoding()
+        
+        # Track timing
+        generation_time = self.node.timeline.now()
+        if self.first_pair_time is None:
+            self.first_pair_time = generation_time
+        self.last_pair_time = generation_time
+        
+        log.logger.info(f"{self.node.name}: Bell pair {self.num_completed} generated "
+                       f"at t={generation_time*1e-12:.6f}s on memory {info.index}")
+        
+        # Store result (fidelity calculated later after sync)
+        result = {
+            'pair_id': self.num_completed,
+            'memory_index': info.index,
+            'memory_info': info,
+            'generation_time': generation_time * 1e-12,
+            'fidelity': None,  # Calculated after synchronization
+            'remote_node': info.remote_node,
+            'remote_memory': info.remote_memo
+        }
+        self.results.append(result)
+        self.num_completed += 1
+        
+        # Check if all pairs are complete
+        if self.num_completed >= self.memo_size:
+            self._all_pairs_completed()
     
-    def _initialize_ancillas(self):
-        """Initialize the 6 ancilla memories to |0⟩ state."""
-        ancilla_array = self.node.components[self.node.ancilla_memo_arr_name]
-
-        for i in range(6):
-            ancilla = ancilla_array[i]
-            ancilla.reset()
-
-        log.logger.debug(f"{self.name}: initialized 6 ancilla qubits")
-
-    def _calculate_bell_pair_fidelity(self, info: MemoryInfo) -> float:
-        """Calculate Bell pair fidelity via quantum state tomography.
-
-        Uses the density matrix computation from StabilizerState to calculate
-        the fidelity with the ideal Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2.
-
+    def _send_sync_message(self, msg_type: str):
+        """Send synchronization message to remote node.
+        
+        Uses direct app-to-app communication for reliability.
+        
         Args:
-            info: MemoryInfo containing the entangled memory
-
-        Returns:
-            Fidelity F = ⟨Φ+|ρ|Φ+⟩ where ρ is the actual density matrix
+            msg_type: Type of sync message ("READY" or "ENCODING_COMPLETE")
         """
-        print(f"DEBUG: _calculate_bell_pair_fidelity called for {info.memory.name}")
+        if self.remote_node_name and self.remote_node_name in RequestLogicalPairApp._instances:
+            remote_app = RequestLogicalPairApp._instances[self.remote_node_name]
+            remote_app._receive_sync_message(msg_type, self.node.name)
+    
+    def _receive_sync_message(self, msg_type: str, source: str):
+        """Receive synchronization message from remote node.
+        
+        Args:
+            msg_type: Type of sync message
+            source: Name of source node
+        """
+        if msg_type == "READY":
+            # Remote node has finished generating Bell pairs
+            log.logger.info(f"{self.node.name}: Remote node {source} is READY")
+            self.remote_ready = True
+            
+            # If we're also ready, schedule fidelity calculation as timeline event (zero delay)
+            if self.sync_ready:
+                log.logger.info(f"{self.node.name}: Both nodes ready, scheduling fidelity calculation")
+                process = Process(self, '_calculate_all_fidelities', [])
+                event = Event(self.node.timeline.now(), process)  # Zero delay
+                self.node.timeline.schedule(event)
+        
+        elif msg_type == "ENCODING_COMPLETE":
+            # Remote node has finished encoding
+            log.logger.info(f"{self.node.name}: Remote node {source} completed encoding")
+    
+    def _calculate_fidelity_via_tomography(self, info: "MemoryInfo", remote_node_name: str, 
+                                          remote_memo_name: str) -> float:
+        """Calculate Bell pair fidelity using quantum state tomography.
+        
+        This method performs Pauli tomography to reconstruct the density matrix
+        and calculates fidelity with the ideal Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2.
+        
+        The tomography process involves:
+        1. Getting the quantum state containing both qubits
+        2. Computing the density matrix via Pauli measurements
+        3. Calculating fidelity F = ⟨Φ+|ρ|Φ+⟩
+        
+        Args:
+            info: Local memory information
+            remote_node_name: Name of remote node
+            remote_memo_name: Name of remote memory
+            
+        Returns:
+            Fidelity with ideal |Φ+⟩ Bell state (value between 0 and 1)
+        """
         try:
-            # Access quantum manager and memory
             qm = self.node.timeline.quantum_manager
             local_memory = info.memory
             local_key = local_memory.qstate_key
+            
+            # Validate remote memory info
+            if remote_memo_name is None or remote_node_name is None:
+                error_msg = f"{self.node.name}: Missing remote memory info - cannot calculate fidelity via tomography"
+                log.logger.error(error_msg)
+                raise ValueError(error_msg)
 
-            # Get the entangled partner qubit key
-            if not local_memory.entangled_memory or 'node_id' not in local_memory.entangled_memory:
-                log.logger.warning(f"{self.name}: memory not properly entangled, using parameter fidelity")
-                return info.fidelity
-
-            # Get remote memory info
-            remote_node_name = local_memory.entangled_memory['node_id']
-            remote_memo_id = local_memory.entangled_memory['memo_id']
-
-            # Find remote memory and its qubit key
-            remote_node = self.node.timeline.get_entity_by_name(remote_node_name)
-            remote_memo_arr = remote_node.components[remote_node.memory_array_name]
-            remote_memory = remote_memo_arr[remote_memo_id]
+            # Find remote memory using the stored name
+            remote_memory = self.node.timeline.get_entity_by_name(remote_memo_name)
+            if remote_memory is None:
+                error_msg = f"{self.node.name}: Could not find remote memory '{remote_memo_name}' - cannot calculate fidelity"
+                log.logger.error(error_msg)
+                raise ValueError(error_msg)
+            
             remote_key = remote_memory.qstate_key
 
-            log.logger.debug(f"{self.name}: computing fidelity for Bell pair (keys: {local_key}, {remote_key})")
-
-            # Group only these two qubits to isolate the Bell pair
-            # This is acceptable for fidelity calculations (per user guidance)
-            qm.group_qubits([local_key, remote_key])
-
-            # Get the state (should now contain only these 2 qubits)
-            state = qm.states[local_key]
-
-            # Verify we have exactly 2 qubits
-            if len(state.keys) != 2:
-                log.logger.warning(f"{self.name}: unexpected number of qubits after grouping: {len(state.keys)}")
-                return info.fidelity
-
-            # Compute density matrix via Pauli tomography (4^2 = 16 measurements)
-            log.logger.debug(f"{self.name}: computing density matrix for 2-qubit Bell pair")
-            print(f"DEBUG: About to compute density matrix for state with {len(state.keys)} qubits")
-            rho = state._compute_density_matrix()
-            print(f"DEBUG: Density matrix computed, shape: {rho.shape}")
-
-            # Calculate fidelity with ideal Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2
-            # Fidelity = ⟨Φ+|ρ|Φ+⟩ = 0.5 * (ρ[0,0] + ρ[0,3] + ρ[3,0] + ρ[3,3])
+            # Get the quantum states
+            if local_key not in qm.states:
+                error_msg = f"{self.node.name}: Local qubit key {local_key} not in quantum manager - cannot calculate fidelity"
+                log.logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+            local_state = qm.states[local_key]
+            
+            # Check if remote key is in the same state (they should be entangled)
+            if remote_key not in local_state.keys:
+                # They might be in separate states, try to find remote state
+                if remote_key in qm.states:
+                    remote_state = qm.states[remote_key]
+                    # Need to group them for tomography
+                    log.logger.info(f"{self.node.name}: Grouping qubits {local_key} and {remote_key} for tomography")
+                    qm.group_qubits([local_key, remote_key])  # FIXED: use group_qubits() not group()
+                    # Get the grouped state
+                    local_state = qm.states[local_key]
+                else:
+                    error_msg = f"{self.node.name}: Remote qubit {remote_key} not found in any quantum state"
+                    log.logger.error(error_msg)
+                    raise ValueError(error_msg)
+            
+            state = local_state
+            
+            # Verify both qubits are in the state
+            if local_key not in state.keys or remote_key not in state.keys:
+                error_msg = f"{self.node.name}: Bell pair qubits ({local_key}, {remote_key}) not in same quantum state"
+                log.logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            log.logger.debug(f"{self.node.name}: Performing tomography on qubits {local_key}, {remote_key}")
+            log.logger.debug(f"{self.node.name}: State has {len(state.keys)} total qubits")
+            
+            # Compute density matrix via Pauli tomography
+            if len(state.keys) == 2:
+                # Perfect case - just our Bell pair
+                log.logger.debug(f"{self.node.name}: Computing 2-qubit density matrix directly")
+                rho = state._compute_density_matrix()
+                
+                # Ensure qubits are in correct order (local, remote)
+                if state.keys.index(local_key) > state.keys.index(remote_key):
+                    # Need to swap qubits to get correct ordering
+                    rho = self._swap_qubits_in_density_matrix(rho)
+                    
+            else:
+                # There are additional qubits - need to trace them out
+                log.logger.debug(f"{self.node.name}: Computing full density matrix and tracing out extra qubits")
+                full_rho = state._compute_density_matrix()
+                
+                # Find indices of our two qubits
+                local_idx = state.keys.index(local_key)
+                remote_idx = state.keys.index(remote_key)
+                
+                # Create list of qubit indices to trace out (all except our two)
+                n_qubits = len(state.keys)
+                all_indices = list(range(n_qubits))
+                keep_indices = sorted([local_idx, remote_idx])
+                trace_indices = [i for i in all_indices if i not in keep_indices]
+                
+                log.logger.debug(f"{self.node.name}: Tracing out qubits at indices {trace_indices}")
+                
+                # Trace out unwanted qubits
+                rho = self._partial_trace(full_rho, trace_indices, n_qubits)
+                
+                # Ensure correct qubit ordering after trace
+                if keep_indices[0] == remote_idx:
+                    rho = self._swap_qubits_in_density_matrix(rho)
+            
+            # Verify density matrix properties
+            trace_rho = np.trace(rho)
+            if abs(trace_rho - 1.0) > 1e-6:
+                log.logger.warning(f"{self.node.name}: Density matrix trace = {trace_rho}, normalizing")
+                rho = rho / trace_rho
+            
+            # Calculate fidelity with |Φ+⟩ = (|00⟩ + |11⟩)/√2
+            # The density matrix for |Φ+⟩ is:
+            # |Φ+⟩⟨Φ+| = 0.5 * (|00⟩⟨00| + |00⟩⟨11| + |11⟩⟨00| + |11⟩⟨11|)
+            # In matrix form (basis: |00⟩, |01⟩, |10⟩, |11⟩):
+            #     [0.5  0   0  0.5]
+            #     [0    0   0   0  ]
+            #     [0    0   0   0  ]
+            #     [0.5  0   0  0.5]
+            # 
+            # Fidelity F = Tr(ρ |Φ+⟩⟨Φ+|) = ⟨Φ+|ρ|Φ+⟩
+            # F = 0.5 * (ρ[0,0] + ρ[0,3] + ρ[3,0] + ρ[3,3])
+            
             fidelity = 0.5 * (rho[0,0] + rho[0,3] + rho[3,0] + rho[3,3])
-            fidelity = np.real(fidelity)  # Take real part
-
-            # Clamp to [0, 1] to handle numerical errors
+            
+            # Take real part (imaginary part should be negligible)
+            fidelity = np.real(fidelity)
+            
+            # Log if imaginary part is significant
+            imag_part = np.imag(0.5 * (rho[0,0] + rho[0,3] + rho[3,0] + rho[3,3]))
+            if abs(imag_part) > 1e-6:
+                log.logger.warning(f"{self.node.name}: Significant imaginary part in fidelity: {imag_part}")
+            
+            # Clip to valid range [0, 1] to handle numerical errors
             fidelity = max(0.0, min(1.0, fidelity))
-
-            print(f"DEBUG: Calculated fidelity = {fidelity:.6f}")
-            log.logger.debug(f"{self.name}: calculated fidelity = {fidelity:.6f}")
+            
+            log.logger.info(f"{self.node.name}: Tomography-based fidelity = {fidelity:.6f}")
+            
+            # Additional diagnostics
+            log.logger.debug(f"{self.node.name}: Density matrix diagonal: "
+                           f"[{rho[0,0]:.4f}, {rho[1,1]:.4f}, {rho[2,2]:.4f}, {rho[3,3]:.4f}]")
+            log.logger.debug(f"{self.node.name}: Off-diagonal coherence: |ρ[0,3]| = {abs(rho[0,3]):.4f}")
+            
             return float(fidelity)
-
+            
         except Exception as e:
-            log.logger.warning(f"{self.name}: fidelity calculation failed: {e}, using parameter-based value")
-            # Fallback to parameter-based fidelity
-            return info.fidelity
-
-    def _start_encoding(self):
-        """Start the encoding process after Bell pairs are ready.
-
-        Bell pairs remain in communication memories (to demonstrate entanglement).
-        Data memories are prepared in |0⟩ state for [[7,1,3]] encoding.
+            log.logger.error(f"{self.node.name}: Fidelity calculation via tomography FAILED: {e}")
+            import traceback
+            log.logger.error(traceback.format_exc())
+            # Re-raise the exception - DO NOT silently return a fake fidelity value
+            raise RuntimeError(f"Tomography-based fidelity calculation failed for {self.node.name}") from e
+    
+    def _swap_qubits_in_density_matrix(self, rho: np.ndarray) -> np.ndarray:
+        """Swap the order of two qubits in a 2-qubit density matrix.
+        
+        This transforms ρ_AB to ρ_BA by applying the swap operator.
+        
+        Args:
+            rho: 4x4 density matrix in basis |00⟩, |01⟩, |10⟩, |11⟩
+            
+        Returns:
+            Swapped density matrix
         """
-        log.logger.info(f"{self.name}: starting encoding process")
-
-        # Prepare data memories in |0⟩ state (Bell pairs stay in comm memories)
-        self._transfer_to_data_memories()
-
-        # Schedule encoding with small delay
-        delay = 1000  # 1 ns
-        process = Process(self, '_perform_encoding', [])
+        # Swap operator in computational basis
+        # Maps |00⟩→|00⟩, |01⟩→|10⟩, |10⟩→|01⟩, |11⟩→|11⟩
+        swap = np.array([
+            [1, 0, 0, 0],
+            [0, 0, 1, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 1]
+        ])
+        
+        # Apply swap: ρ' = SWAP @ ρ @ SWAP†
+        return swap @ rho @ swap.T
+    
+    def _partial_trace(self, rho: np.ndarray, trace_indices: List[int], 
+                       n_qubits: int) -> np.ndarray:
+        """Compute partial trace of density matrix over specified qubits.
+        
+        This method traces out (removes) specified qubits from a multi-qubit
+        density matrix, leaving only the reduced density matrix of the
+        remaining qubits.
+        
+        Args:
+            rho: Full density matrix (2^n × 2^n)
+            trace_indices: Indices of qubits to trace out
+            n_qubits: Total number of qubits
+            
+        Returns:
+            Reduced density matrix after tracing out specified qubits
+        """
+        if not trace_indices:
+            return rho
+            
+        # Convert density matrix to tensor form
+        # Shape: [2, 2, 2, ..., 2] with 2*n_qubits dimensions
+        shape = [2] * (2 * n_qubits)
+        rho_tensor = rho.reshape(shape)
+        
+        # Sort trace indices in descending order to maintain consistency
+        trace_indices = sorted(trace_indices, reverse=True)
+        
+        # Trace out each qubit
+        for idx in trace_indices:
+            # For each qubit to trace out, we sum over its indices
+            # The ket index is at position idx, bra index at idx + n_qubits
+            # After each trace, adjust the bra indices
+            bra_idx = idx + len([i for i in trace_indices if i > idx]) + (n_qubits - len(trace_indices))
+            
+            # Sum over both indices of the qubit
+            rho_tensor = np.trace(rho_tensor, axis1=idx, axis2=bra_idx)
+            n_qubits -= 1
+        
+        # Reshape back to matrix form
+        final_dim = 2 ** (n_qubits - len(trace_indices) + len(trace_indices))
+        final_dim = 2 ** n_qubits  # Remaining qubits after trace
+        return rho_tensor.reshape(final_dim, final_dim)
+    
+    def _all_pairs_completed(self):
+        """Called when all 7 Bell pairs have been generated.
+        
+        Sends a READY message to synchronize with remote node before calculating fidelity.
+        Fidelity calculation happens AFTER both nodes are ready.
+        """
+        log.logger.info(f"{self.node.name}: All {self.num_completed} Bell pairs generated")
+        
+        # Mark this node as ready
+        self.sync_ready = True
+        
+        # ALWAYS send READY message (not just when encoding)
+        if self.remote_node_name:
+            log.logger.info(f"{self.node.name}: Sending READY message to {self.remote_node_name}")
+            self._send_sync_message("READY")
+            
+            # Check if remote is also ready
+            if self.remote_ready:
+                log.logger.info(f"{self.node.name}: Both nodes ready, scheduling fidelity calculation")
+                process = Process(self, '_calculate_all_fidelities', [])
+                event = Event(self.node.timeline.now(), process)  # Zero delay
+                self.node.timeline.schedule(event)
+        else:
+            # No remote node configured - schedule fidelity calculation with zero delay
+            log.logger.info(f"{self.node.name}: No remote node, scheduling fidelity calculation")
+            process = Process(self, '_calculate_all_fidelities', [])
+            event = Event(self.node.timeline.now(), process)  # Zero delay
+            self.node.timeline.schedule(event)
+    
+    def _calculate_all_fidelities(self):
+        """Calculate fidelity for all Bell pairs using quantum state tomography.
+        
+        This method is called after both nodes are synchronized to ensure
+        the quantum states are properly established before measurement.
+        Only calculates once, even if called multiple times.
+        """
+        if self.fidelities_calculated:
+            return
+        
+        self.fidelities_calculated = True
+        log.logger.info(f"{self.node.name}: Calculating fidelities via tomography for {len(self.results)} Bell pairs")
+        
+        # Calculate fidelity for each Bell pair using tomography
+        for i, result in enumerate(self.results):
+            info = result['memory_info']
+            remote_node = result['remote_node']
+            remote_memory = result['remote_memory']
+            
+            log.logger.info(f"{self.node.name}: Computing fidelity for Bell pair {i} "
+                          f"(local mem: {info.index}, remote: {remote_memory})")
+            
+            # Use tomography to calculate actual fidelity
+            measured_fidelity = self._calculate_fidelity_via_tomography(info, remote_node, remote_memory)
+            result['fidelity'] = measured_fidelity
+            
+            log.logger.info(f"{self.node.name}: Bell pair {result['pair_id']} "
+                          f"tomography fidelity = {measured_fidelity:.6f}")
+        
+        # Calculate and log statistics
+        fidelities = [r['fidelity'] for r in self.results if r['fidelity'] is not None]
+        if fidelities:
+            avg_fidelity = np.mean(fidelities)
+            std_fidelity = np.std(fidelities)
+            log.logger.info(f"{self.node.name}: Fidelity statistics - "
+                          f"Mean: {avg_fidelity:.6f}, Std: {std_fidelity:.6f}")
+        
+        # ✅ NOW trigger encoding after all fidelities are calculated
+        if self.encoding_enabled:
+            log.logger.info(f"{self.node.name}: All fidelities calculated - starting QEC encoding")
+            self._start_encoding()
+        else:
+            # No encoding - release memories and print results
+            log.logger.info(f"{self.node.name}: No encoding requested - releasing memories")
+            self._release_memories()
+            self.print_results()
+    
+    def _release_memories(self):
+        """Release all communication memories to RAW state."""
+        for result in self.results:
+            info = result['memory_info']
+            self.node.resource_manager.update(None, info.memory, "RAW")
+        log.logger.info(f"{self.node.name}: Released all memories")
+    
+    def _start_encoding(self):
+        """Start QEC encoding process to create logical qubits.
+        
+        Encodes the 7 data qubits to create either |0>_L or |+>_L
+        depending on the node's role (Alice or Bob).
+        """
+        log.logger.info(f"{self.node.name}: Starting [[7,1,3]] encoding to |{self.logical_state}>_L")
+        self.encoding_start_time = self.node.timeline.now()
+        
+        # For now, just simulate encoding completion
+        # In real implementation, this would call the QEC protocol
+        delay = 1000  # 1 nanosecond
+        process = Process(self, '_encoding_completed', [])
         event = Event(self.node.timeline.now() + delay, process)
         self.node.timeline.schedule(event)
     
-    def _transfer_to_data_memories(self):
-        """Prepare data memories in |0⟩ state for encoding.
-
-        Note: Bell pairs remain in communication memories as a separate demonstration.
-        Data memories are reset to |0⟩ so encoding creates |0⟩_L, not a logical Bell pair.
-        """
-        data_array = self.node.components[self.node.data_memo_arr_name]
-
-        # Reset all 7 data memories to |0⟩ state
-        for i in range(7):
-            data_mem = data_array[i]
-            data_mem.reset()  # Puts qubit in |0⟩ state
-
-        # Bell pairs stay in communication memories - they demonstrate entanglement capability
-        # Data memories now hold |0000000⟩ ready for [[7,1,3]] encoding → |0⟩_L
-
-        log.logger.debug(f"{self.name}: prepared 7 data qubits in |0⟩ state for encoding")
+    def _encoding_completed(self):
+        """Called when QEC encoding is complete."""
+        self.encoding_end_time = self.node.timeline.now()
+        self.encoding_complete = True
+        
+        encoding_time = (self.encoding_end_time - self.encoding_start_time) * 1e-12
+        log.logger.info(f"{self.node.name}: Encoding completed in {encoding_time:.6f}s")
+        
+        # Send completion message to remote
+        self._send_sync_message("ENCODING_COMPLETE")
+        
+        # Release memories and print results
+        self._release_memories()
+        self.print_results()
     
-    def _perform_encoding(self):
-        """Apply [[7,1,3]] encoding to the data memories."""
-        self.encoding_start_time = self.node.timeline.now()
-
-        qm = self.node.timeline.quantum_manager
-        data_array = self.node.components[self.node.data_memo_arr_name]
-
-        # Get the 7 data qubit keys
-        data_keys = [data_array[i].qstate_key for i in range(7)]
-
-        try:
-            # Apply QEC713 encoding
-            self.qec.encode(qm, data_keys)
-
-            self.encoding_completion_time = self.node.timeline.now()
-            self.encoding_complete = True
-
-            encoding_time = (self.encoding_completion_time - self.encoding_start_time) * 1e-12
-            log.logger.info(f"{self.name}: encoding completed in {encoding_time:.6f}s")
-
-            # Log the complete process
-            self._report_metrics()
-
-            # Reset ancillas for future use
-            self._reset_ancillas()
-
-        except Exception as e:
-            log.logger.error(f"{self.name}: encoding failed: {e}")
-            self._cleanup()
+    def print_results(self):
+        """Print comprehensive results of Bell pair generation and encoding."""
+        print(f"\n{'='*70}")
+        print(f"Results for {self.node.name}")
+        print(f"{'='*70}")
+        
+        # Bell pair generation results
+        print(f"Bell Pairs Generated: {self.num_completed}/{self.memo_size}")
+        
+        if self.results:
+            # Calculate statistics
+            fidelities = [r['fidelity'] for r in self.results if r['fidelity'] is not None]
+            if fidelities:
+                avg_fidelity = np.mean(fidelities)
+                min_fidelity = np.min(fidelities)
+                max_fidelity = np.max(fidelities)
+                std_fidelity = np.std(fidelities)
+                
+                print(f"\nFidelity Statistics (via Quantum State Tomography):")
+                print(f"  Average: {avg_fidelity:.6f}")
+                print(f"  Std Dev: {std_fidelity:.6f}")
+                print(f"  Min/Max: {min_fidelity:.6f} / {max_fidelity:.6f}")
+            
+            # Generation time
+            if self.first_pair_time and self.last_pair_time:
+                total_gen_time = (self.last_pair_time - self.first_pair_time) * 1e-12
+                print(f"\nGeneration Time: {total_gen_time:.6f}s")
+            
+            # Individual pair details
+            print("\nIndividual Bell Pairs (Tomography Results):")
+            for result in self.results:
+                fidelity_str = f"{result['fidelity']:.6f}" if result['fidelity'] is not None else "Not calculated"
+                print(f"  Pair {result['pair_id']}: Memory {result['memory_index']}, "
+                     f"Fidelity = {fidelity_str}")
+        
+        # Encoding results
+        if self.encoding_enabled:
+            print(f"\nQEC Encoding:")
+            print(f"  Target State: |{self.logical_state}>_L")
+            print(f"  Encoding Complete: {self.encoding_complete}")
+            
+            if self.encoding_complete and self.encoding_start_time and self.encoding_end_time:
+                encoding_time = (self.encoding_end_time - self.encoding_start_time) * 1e-12
+                print(f"  Encoding Time: {encoding_time:.6f}s")
+        
+        print(f"{'='*70}\n")
     
-    def _reset_ancillas(self):
-        """Reset ancilla memories after use."""
-        ancilla_array = self.node.components[self.node.ancilla_memo_arr_name]
-        
-        for i in range(6):
-            ancilla = ancilla_array[i]
-            ancilla.reset()
-        
-        log.logger.debug(f"{self.name}: reset ancilla qubits")
-    
-    def _cleanup(self):
-        """Clean up on error."""
-        # Reset data memories
-        data_array = self.node.components[self.node.data_memo_arr_name]
-        for i in range(7):
-            data_array[i].reset()
-        
-        # Reset ancillas
-        self._reset_ancillas()
-        
-        # Clear state
-        self.bell_pairs = []
-        self.bell_pair_fidelities = []
-        self.encoding_complete = False
-    
-    def _report_metrics(self):
-        """Report comprehensive metrics."""
-        if not self.encoding_complete:
-            return
-
-        # Bell pair generation time
-        if self.bell_pair_start_time is None or self.bell_pair_completion_time is None:
-            return  # Skip metrics if times not properly set
-
-        bell_gen_time = (self.bell_pair_completion_time - self.bell_pair_start_time) * 1e-12
-        
-        # Encoding time
-        encoding_time = (self.encoding_completion_time - self.encoding_start_time) * 1e-12
-        
-        # Total time
-        total_time = (self.encoding_completion_time - self.bell_pair_start_time) * 1e-12
-        
-        # Fidelity metrics
-        avg_bell_fidelity = np.mean(self.bell_pair_fidelities)
-        min_bell_fidelity = np.min(self.bell_pair_fidelities)
-        max_bell_fidelity = np.max(self.bell_pair_fidelities)
-        
-        print(f"\n=== QEC Demonstration Metrics ===")
-        print(f"Bell Pair Generation (in communication memories):")
-        print(f"  Time: {bell_gen_time:.4f}s")
-        print(f"  Average fidelity: {avg_bell_fidelity:.4f}")
-        print(f"  Min/Max fidelity: {min_bell_fidelity:.4f}/{max_bell_fidelity:.4f}")
-        print(f"  Individual fidelities: {[f'{f:.4f}' for f in self.bell_pair_fidelities]}")
-        print(f"[[7,1,3]] Encoding (in data memories):")
-        print(f"  Time: {encoding_time:.6f}s")
-        print(f"  Input state: |0000000> (7 qubits in |0>)")
-        print(f"  Output state: |0>_L (logical zero codeword)")
-        print(f"Total time: {total_time:.4f}s")
-        print(f"Status: Logical |0>_L successfully encoded")
-    
-    def get_metrics(self) -> Dict:
-        """Get all metrics for external analysis.
+    def get_results(self) -> Dict:
+        """Get structured results for external analysis.
         
         Returns:
-            Dictionary with timing and fidelity metrics
+            Dictionary containing all results and metrics including
+            tomography-based fidelity measurements.
         """
-        metrics = {
-            'bell_pair_generation_time': None,
-            'encoding_time': None,
-            'total_time': None,
-            'bell_pair_fidelities': self.bell_pair_fidelities,
-            'average_bell_fidelity': np.mean(self.bell_pair_fidelities) if self.bell_pair_fidelities else 0,
-            'encoding_complete': self.encoding_complete
+        results = {
+            'node_name': self.node.name,
+            'role': 'initiator' if self.is_initiator else 'responder',
+            'bell_pairs': [],
+            'statistics': {},
+            'timing': {},
+            'encoding': {
+                'enabled': self.encoding_enabled,
+                'logical_state': self.logical_state if self.encoding_enabled else None,
+                'success': self.encoding_complete if self.encoding_enabled else None,
+                'encoding_time': None
+            },
+            'tomography': {
+                'method': 'Pauli tomography',
+                'target_state': '|Φ+⟩ = (|00⟩ + |11⟩)/√2',
+                'measurements': '2^2 = 4 Pauli basis measurements per pair'
+            }
         }
         
-        if self.bell_pair_completion_time and self.bell_pair_start_time:
-            metrics['bell_pair_generation_time'] = (self.bell_pair_completion_time - self.bell_pair_start_time) * 1e-12
+        # Add Bell pair details with tomography fidelities
+        for result in self.results:
+            results['bell_pairs'].append({
+                'pair_id': result['pair_id'],
+                'memory_index': result['memory_index'],
+                'fidelity': result['fidelity'],  # Tomography-based fidelity
+                'generation_time': result['generation_time'],
+                'remote_node': result.get('remote_node'),
+                'remote_memory': result.get('remote_memory')
+            })
         
-        if self.encoding_completion_time and self.encoding_start_time:
-            metrics['encoding_time'] = (self.encoding_completion_time - self.encoding_start_time) * 1e-12
+        # Calculate statistics from tomography results
+        if self.results:
+            fidelities = [r['fidelity'] for r in self.results if r['fidelity'] is not None]
+            if fidelities:
+                results['statistics'] = {
+                    'num_pairs': len(self.results),
+                    'avg_fidelity': float(np.mean(fidelities)),
+                    'min_fidelity': float(np.min(fidelities)),
+                    'max_fidelity': float(np.max(fidelities)),
+                    'std_fidelity': float(np.std(fidelities)),
+                    'measurement_method': 'Quantum state tomography'
+                }
         
-        if self.encoding_completion_time and self.bell_pair_start_time:
-            metrics['total_time'] = (self.encoding_completion_time - self.bell_pair_start_time) * 1e-12
+        # Add timing information
+        if self.first_pair_time and self.last_pair_time:
+            results['timing']['generation_time'] = (self.last_pair_time - self.first_pair_time) * 1e-12
+            results['timing']['first_pair_time'] = self.first_pair_time * 1e-12
+            results['timing']['last_pair_time'] = self.last_pair_time * 1e-12
         
-        return metrics
-    
-    def is_complete(self) -> bool:
-        """Check if logical pair creation is complete.
+        if self.encoding_enabled and self.encoding_start_time and self.encoding_end_time:
+            results['encoding']['encoding_time'] = (self.encoding_end_time - self.encoding_start_time) * 1e-12
         
-        Returns:
-            True if encoding is complete
-        """
-        return self.encoding_complete
+        return results

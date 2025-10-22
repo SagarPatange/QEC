@@ -461,7 +461,7 @@ def two_node_physical_twenty_memories_ketState_with_app_2(verbose=False):
     # Configure request parameters
     start_time = 1e12  # 1 second
     end_time = 10e12   # 10 seconds
-    memory_size = 20   # Number of memories to use
+    memory_size = 1   # Number of memories to use
     target_fidelity = 0.8
     
     # Set maximum entanglements to prevent runaway
@@ -846,13 +846,13 @@ if __name__ == "__main__":
     # print("\n=== APP: STABILIZER 20 Physical Entagled Pairs===")
     # two_node_physical_twenty_memories_stabilizer_with_app(verbose=False)
 
-    # print("\n=== APP: KET STATE 20 Physical Entagled Pairs===")
-    # two_node_physical_twenty_memories_ketState_with_app_2(verbose=False)
+    print("\n=== APP: KET STATE 20 Physical Entagled Pairs===")
+    two_node_physical_twenty_memories_ketState_with_app_2(verbose=False)
     # print("\n=== APP: STABILIZER 20 Physical Entagled Pairs===")
     # two_node_physical_twenty_memories_stabilizer_with_app_2(verbose=False)
 
     # create_logical_bell_pair(verbose=False)
 
-    two_node_logical_pair_with_app(verbose=True)
+    # two_node_logical_pair_with_app(verbose=True)
 
     pass

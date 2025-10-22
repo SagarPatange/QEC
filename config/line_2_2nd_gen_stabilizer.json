@@ -2,17 +2,17 @@
     "templates": {
         "qec": {
             "MemoryArray": {
-                "fidelity": 0.9,
+                "fidelity": 0.95,
                 "efficiency": 0.9,
                 "coherence_time": -1
             },
             "DataMemoryArray": {
-                "fidelity": 0.95,
+                "fidelity": 1,
                 "efficiency": 0.9,
                 "coherence_time": -1
             },
             "AncillaMemoryArray": {
-                "fidelity": 0.95,
+                "fidelity": 1,
                 "efficiency": 0.9,
                 "coherence_time": -1
             }
