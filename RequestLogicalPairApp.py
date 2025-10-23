@@ -241,15 +241,16 @@ class RequestLogicalPairApp(RequestApp):
     
     def _calculate_fidelity_via_tomography(self, info: "MemoryInfo", remote_node_name: str, 
                                           remote_memo_name: str) -> float:
-        """Calculate Bell pair fidelity using quantum state tomography.
+        """Calculate Bell pair fidelity using TRUE quantum state tomography.
         
-        This method performs Pauli tomography to reconstruct the density matrix
-        and calculates fidelity with the ideal Bell state |Φ+⟩ = (|00⟩ + |11⟩)/√2.
+        This method performs ACTUAL Pauli tomography by using the quantum manager's
+        compute_density_matrix method, which performs measurements in multiple bases
+        to reconstruct the density matrix, rather than accessing the internal state.
         
         The tomography process involves:
-        1. Getting the quantum state containing both qubits
-        2. Computing the density matrix via Pauli measurements
-        3. Calculating fidelity F = ⟨Φ+|ρ|Φ+⟩
+        1. Finding both qubits in the Bell pair
+        2. Using qm.compute_density_matrix(keys) to perform tomography measurements
+        3. Calculating fidelity F = âŸ¨Î¦+|Ï|Î¦+âŸ© from the reconstructed density matrix
         
         Args:
             info: Local memory information
@@ -257,7 +258,7 @@ class RequestLogicalPairApp(RequestApp):
             remote_memo_name: Name of remote memory
             
         Returns:
-            Fidelity with ideal |Φ+⟩ Bell state (value between 0 and 1)
+            Fidelity with ideal |Î¦+âŸ© Bell state (value between 0 and 1)
         """
         try:
             qm = self.node.timeline.quantum_manager
@@ -279,93 +280,39 @@ class RequestLogicalPairApp(RequestApp):
             
             remote_key = remote_memory.qstate_key
 
-            # Get the quantum states
+            # Validate both keys exist
             if local_key not in qm.states:
-                error_msg = f"{self.node.name}: Local qubit key {local_key} not in quantum manager - cannot calculate fidelity"
+                error_msg = f"{self.node.name}: Local qubit key {local_key} not in quantum manager"
                 log.logger.error(error_msg)
                 raise ValueError(error_msg)
                 
-            local_state = qm.states[local_key]
-            
-            # Check if remote key is in the same state (they should be entangled)
-            if remote_key not in local_state.keys:
-                # They might be in separate states, try to find remote state
-                if remote_key in qm.states:
-                    remote_state = qm.states[remote_key]
-                    # Need to group them for tomography
-                    log.logger.info(f"{self.node.name}: Grouping qubits {local_key} and {remote_key} for tomography")
-                    qm.group_qubits([local_key, remote_key])  # FIXED: use group_qubits() not group()
-                    # Get the grouped state
-                    local_state = qm.states[local_key]
-                else:
-                    error_msg = f"{self.node.name}: Remote qubit {remote_key} not found in any quantum state"
-                    log.logger.error(error_msg)
-                    raise ValueError(error_msg)
-            
-            state = local_state
-            
-            # Verify both qubits are in the state
-            if local_key not in state.keys or remote_key not in state.keys:
-                error_msg = f"{self.node.name}: Bell pair qubits ({local_key}, {remote_key}) not in same quantum state"
+            if remote_key not in qm.states:
+                error_msg = f"{self.node.name}: Remote qubit key {remote_key} not in quantum manager"
                 log.logger.error(error_msg)
                 raise ValueError(error_msg)
             
-            log.logger.debug(f"{self.node.name}: Performing tomography on qubits {local_key}, {remote_key}")
-            log.logger.debug(f"{self.node.name}: State has {len(state.keys)} total qubits")
+            log.logger.info(f"{self.node.name}: Performing TRUE tomography on qubits {local_key}, {remote_key}")
             
-            # Compute density matrix via Pauli tomography
-            if len(state.keys) == 2:
-                # Perfect case - just our Bell pair
-                log.logger.debug(f"{self.node.name}: Computing 2-qubit density matrix directly")
-                rho = state._compute_density_matrix()
-                
-                # Ensure qubits are in correct order (local, remote)
-                if state.keys.index(local_key) > state.keys.index(remote_key):
-                    # Need to swap qubits to get correct ordering
-                    rho = self._swap_qubits_in_density_matrix(rho)
-                    
-            else:
-                # There are additional qubits - need to trace them out
-                log.logger.debug(f"{self.node.name}: Computing full density matrix and tracing out extra qubits")
-                full_rho = state._compute_density_matrix()
-                
-                # Find indices of our two qubits
-                local_idx = state.keys.index(local_key)
-                remote_idx = state.keys.index(remote_key)
-                
-                # Create list of qubit indices to trace out (all except our two)
-                n_qubits = len(state.keys)
-                all_indices = list(range(n_qubits))
-                keep_indices = sorted([local_idx, remote_idx])
-                trace_indices = [i for i in all_indices if i not in keep_indices]
-                
-                log.logger.debug(f"{self.node.name}: Tracing out qubits at indices {trace_indices}")
-                
-                # Trace out unwanted qubits
-                rho = self._partial_trace(full_rho, trace_indices, n_qubits)
-                
-                # Ensure correct qubit ordering after trace
-                if keep_indices[0] == remote_idx:
-                    rho = self._swap_qubits_in_density_matrix(rho)
-            
+            # âœ… KEY CHANGE: Use quantum manager's compute_density_matrix
+            # This performs ACTUAL tomography by measuring in multiple bases
+            # rather than directly accessing the state's internal representation
+            rho = qm.compute_density_matrix([local_key, remote_key])
+
+            log.logger.info(f"{self.node.name}: Tomography complete - reconstructed {rho.shape} density matrix")
+
+            # DEBUG: Log the actual density matrix diagonal and key elements
+            if rho.shape == (4, 4):
+                diag = np.real(np.diag(rho))
+                log.logger.info(f"{self.node.name}: Density matrix diagonal = [{diag[0]:.4f}, {diag[1]:.4f}, {diag[2]:.4f}, {diag[3]:.4f}]")
+                log.logger.info(f"{self.node.name}: rho[0,3] = {rho[0,3]:.4f}, rho[3,0] = {rho[3,0]:.4f}")
+
             # Verify density matrix properties
             trace_rho = np.trace(rho)
             if abs(trace_rho - 1.0) > 1e-6:
                 log.logger.warning(f"{self.node.name}: Density matrix trace = {trace_rho}, normalizing")
                 rho = rho / trace_rho
-            
-            # Calculate fidelity with |Φ+⟩ = (|00⟩ + |11⟩)/√2
-            # The density matrix for |Φ+⟩ is:
-            # |Φ+⟩⟨Φ+| = 0.5 * (|00⟩⟨00| + |00⟩⟨11| + |11⟩⟨00| + |11⟩⟨11|)
-            # In matrix form (basis: |00⟩, |01⟩, |10⟩, |11⟩):
-            #     [0.5  0   0  0.5]
-            #     [0    0   0   0  ]
-            #     [0    0   0   0  ]
-            #     [0.5  0   0  0.5]
-            # 
-            # Fidelity F = Tr(ρ |Φ+⟩⟨Φ+|) = ⟨Φ+|ρ|Φ+⟩
-            # F = 0.5 * (ρ[0,0] + ρ[0,3] + ρ[3,0] + ρ[3,3])
-            
+
+
             fidelity = 0.5 * (rho[0,0] + rho[0,3] + rho[3,0] + rho[3,3])
             
             # Take real part (imaginary part should be negligible)
@@ -384,7 +331,7 @@ class RequestLogicalPairApp(RequestApp):
             # Additional diagnostics
             log.logger.debug(f"{self.node.name}: Density matrix diagonal: "
                            f"[{rho[0,0]:.4f}, {rho[1,1]:.4f}, {rho[2,2]:.4f}, {rho[3,3]:.4f}]")
-            log.logger.debug(f"{self.node.name}: Off-diagonal coherence: |ρ[0,3]| = {abs(rho[0,3]):.4f}")
+            log.logger.debug(f"{self.node.name}: Off-diagonal coherence: |Ï[0,3]| = {abs(rho[0,3]):.4f}")
             
             return float(fidelity)
             
@@ -394,72 +341,6 @@ class RequestLogicalPairApp(RequestApp):
             log.logger.error(traceback.format_exc())
             # Re-raise the exception - DO NOT silently return a fake fidelity value
             raise RuntimeError(f"Tomography-based fidelity calculation failed for {self.node.name}") from e
-    
-    def _swap_qubits_in_density_matrix(self, rho: np.ndarray) -> np.ndarray:
-        """Swap the order of two qubits in a 2-qubit density matrix.
-        
-        This transforms ρ_AB to ρ_BA by applying the swap operator.
-        
-        Args:
-            rho: 4x4 density matrix in basis |00⟩, |01⟩, |10⟩, |11⟩
-            
-        Returns:
-            Swapped density matrix
-        """
-        # Swap operator in computational basis
-        # Maps |00⟩→|00⟩, |01⟩→|10⟩, |10⟩→|01⟩, |11⟩→|11⟩
-        swap = np.array([
-            [1, 0, 0, 0],
-            [0, 0, 1, 0],
-            [0, 1, 0, 0],
-            [0, 0, 0, 1]
-        ])
-        
-        # Apply swap: ρ' = SWAP @ ρ @ SWAP†
-        return swap @ rho @ swap.T
-    
-    def _partial_trace(self, rho: np.ndarray, trace_indices: List[int], 
-                       n_qubits: int) -> np.ndarray:
-        """Compute partial trace of density matrix over specified qubits.
-        
-        This method traces out (removes) specified qubits from a multi-qubit
-        density matrix, leaving only the reduced density matrix of the
-        remaining qubits.
-        
-        Args:
-            rho: Full density matrix (2^n × 2^n)
-            trace_indices: Indices of qubits to trace out
-            n_qubits: Total number of qubits
-            
-        Returns:
-            Reduced density matrix after tracing out specified qubits
-        """
-        if not trace_indices:
-            return rho
-            
-        # Convert density matrix to tensor form
-        # Shape: [2, 2, 2, ..., 2] with 2*n_qubits dimensions
-        shape = [2] * (2 * n_qubits)
-        rho_tensor = rho.reshape(shape)
-        
-        # Sort trace indices in descending order to maintain consistency
-        trace_indices = sorted(trace_indices, reverse=True)
-        
-        # Trace out each qubit
-        for idx in trace_indices:
-            # For each qubit to trace out, we sum over its indices
-            # The ket index is at position idx, bra index at idx + n_qubits
-            # After each trace, adjust the bra indices
-            bra_idx = idx + len([i for i in trace_indices if i > idx]) + (n_qubits - len(trace_indices))
-            
-            # Sum over both indices of the qubit
-            rho_tensor = np.trace(rho_tensor, axis1=idx, axis2=bra_idx)
-            n_qubits -= 1
-        
-        # Reshape back to matrix form
-        final_dim = 2 ** (n_qubits - len(trace_indices) + len(trace_indices))
-        final_dim = 2 ** n_qubits  # Remaining qubits after trace
-        return rho_tensor.reshape(final_dim, final_dim)
     
     def _all_pairs_completed(self):
         """Called when all 7 Bell pairs have been generated.
@@ -527,7 +408,7 @@ class RequestLogicalPairApp(RequestApp):
             log.logger.info(f"{self.node.name}: Fidelity statistics - "
                           f"Mean: {avg_fidelity:.6f}, Std: {std_fidelity:.6f}")
         
-        # ✅ NOW trigger encoding after all fidelities are calculated
+        # âœ… NOW trigger encoding after all fidelities are calculated
         if self.encoding_enabled:
             log.logger.info(f"{self.node.name}: All fidelities calculated - starting QEC encoding")
             self._start_encoding()
@@ -643,7 +524,7 @@ class RequestLogicalPairApp(RequestApp):
             },
             'tomography': {
                 'method': 'Pauli tomography',
-                'target_state': '|Φ+⟩ = (|00⟩ + |11⟩)/√2',
+                'target_state': '|Î¦+âŸ© = (|00âŸ© + |11âŸ©)/âˆš2',
                 'measurements': '2^2 = 4 Pauli basis measurements per pair'
             }
         }

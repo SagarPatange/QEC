@@ -1,5 +1,5 @@
 """
-Test script for Request Logical Pair Application.
+Test script for Request Logical Pair Application - Alice's results only.
 
 This script demonstrates how to use the RequestLogicalPairApp to:
 1. Generate 7 Bell pairs using Barrett-Kok entanglement
@@ -7,6 +7,7 @@ This script demonstrates how to use the RequestLogicalPairApp to:
 3. Encode Bob's data qubits to logical |+⟩_L
 
 Uses stabilizer formalism and 2nd generation quantum routers.
+Only displays Alice's fidelity calculations (not Bob's duplicate calculations).
 """
 
 import numpy as np
@@ -85,9 +86,9 @@ def test_request_logical_pair_with_qec(verbose=True):
     alice_results = alice_app.get_results()
     bob_results = bob_app.get_results()
     
-    # Print comprehensive results
+    # ONLY PRINT ALICE'S RESULTS (no Bob)
     print("\n" + "="*70)
-    print("ALICE (Initiator) - Final Results")
+    print("ALICE - Bell Pair Generation Results")
     print("="*70)
     print(f"Role: Initiator")
     print(f"Logical state target: |{alice_results['encoding']['logical_state']}>_L")
@@ -96,29 +97,29 @@ def test_request_logical_pair_with_qec(verbose=True):
         print(f"Encoding time: {alice_results['encoding']['encoding_time']:.6f}s")
     print(f"Bell pairs generated: {len(alice_results['bell_pairs'])}")
 
+    # Show individual Bell pairs AND their fidelities
     if alice_results['bell_pairs']:
-        # Filter out None fidelities
+        print(f"\nBell Pair Details:")
+        for bp in alice_results['bell_pairs']:
+            fidelity_str = f"{bp['fidelity']:.6f}" if bp['fidelity'] is not None else "None (error)"
+            print(f"  Pair {bp['pair_id']}: Memory {bp['memory_index']}, Fidelity = {fidelity_str}")
+        
+        # Filter out None fidelities for statistics
         fidelities = [bp['fidelity'] for bp in alice_results['bell_pairs'] if bp['fidelity'] is not None]
         if fidelities:
-            print(f"Average Bell pair fidelity: {np.mean(fidelities):.6f}")
-
-    print("\n" + "="*70)
-    print("BOB (Responder) - Final Results")
-    print("="*70)
-    print(f"Role: Responder")
-    print(f"Logical state target: |{bob_results['encoding']['logical_state']}>_L")
-    print(f"Encoding success: {bob_results['encoding']['success']}")
-    if bob_results['encoding']['encoding_time']:
-        print(f"Encoding time: {bob_results['encoding']['encoding_time']:.6f}s")
-    print(f"Bell pairs generated: {len(bob_results['bell_pairs'])}")
-    
-    if bob_results['bell_pairs']:
-        # Filter out None fidelities
-        fidelities = [bp['fidelity'] for bp in bob_results['bell_pairs'] if bp['fidelity'] is not None]
-        if fidelities:
-            print(f"Average Bell pair fidelity: {np.mean(fidelities):.6f}")
+            print(f"\nFidelity Statistics:")
+            print(f"  Average: {np.mean(fidelities):.6f}")
+            print(f"  Min: {np.min(fidelities):.6f}")
+            print(f"  Max: {np.max(fidelities):.6f}")
+            print(f"  Std Dev: {np.std(fidelities):.6f}")
+        else:
+            print(f"\nWARNING: No fidelities calculated (all None)")
     
     print("="*70)
+    
+    # Note: Bob's results are available but not printed
+    print(f"\nNote: Bob also generated {len(bob_results['bell_pairs'])} Bell pairs (same physical pairs)")
+    print(f"      Bob's fidelity calculations are not shown (would be duplicates)")
     
     return alice_app, bob_app, alice_results, bob_results
 
@@ -168,8 +169,8 @@ def test_request_logical_pair_simple():
     tl.init()
     tl.run()
     
-    # Return results
-    return alice_app.get_results(), bob_app.get_results()
+    # Return only Alice's results
+    return alice_app.get_results()
 
 
 if __name__ == '__main__':

@@ -833,8 +833,8 @@ def two_node_logical_pair_with_app(verbose=False):
 if __name__ == "__main__":
 
 
-    # print("\n=== KET STATE 20 Physical Entagled Pairs===")
-    # two_node_physical_twenty_memories_ketState_old(verbose=True)
+    print("\n=== KET STATE 20 Physical Entagled Pairs===")
+    two_node_physical_twenty_memories_ketState_old(verbose=True)
     # print("\n=== STABILIZER 20 Physical Entagled Pairs===")
     # two_node_physical_twenty_memories_stabilizer_old(verbose=True)
 
@@ -846,8 +846,8 @@ if __name__ == "__main__":
     # print("\n=== APP: STABILIZER 20 Physical Entagled Pairs===")
     # two_node_physical_twenty_memories_stabilizer_with_app(verbose=False)
 
-    print("\n=== APP: KET STATE 20 Physical Entagled Pairs===")
-    two_node_physical_twenty_memories_ketState_with_app_2(verbose=False)
+    # print("\n=== APP: KET STATE 20 Physical Entagled Pairs===")
+    # two_node_physical_twenty_memories_ketState_with_app_2(verbose=False)
     # print("\n=== APP: STABILIZER 20 Physical Entagled Pairs===")
     # two_node_physical_twenty_memories_stabilizer_with_app_2(verbose=False)
 
