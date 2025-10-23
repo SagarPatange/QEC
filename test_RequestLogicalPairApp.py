@@ -40,7 +40,7 @@ def test_request_logical_pair_with_qec(verbose=True):
     # Load Network Configuration
     network_config = 'config/line_2_2nd_gen_stabilizer.json'
     network_topo = RouterNetTopo2G(network_config)
-    tl = network_topo.get_timeline()
+    tl = network_topo.get_timgne()
 
     # Set up Logging
     log_filename = 'log/request_logical_pair_qec'

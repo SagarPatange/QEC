@@ -25,15 +25,15 @@ if TYPE_CHECKING:
     from sequence.network_management.reservation import Reservation
 
 
-class SyncMessage(Message):
-    """Message for synchronizing nodes before fidelity calculation."""
+# class SyncMessage(Message):
+#     """Message for synchronizing nodes before fidelity calculation."""
     
-    def __init__(self, msg_type: str, source: str, encoding_enabled: bool = False, 
-                 logical_state: str = None):
-        super().__init__(msg_type, source)
-        self.source = source
-        self.encoding_enabled = encoding_enabled
-        self.logical_state = logical_state
+#     def __init__(self, msg_type: str, source: str, encoding_enabled: bool = False, 
+#                  logical_state: str = None):
+#         super().__init__(msg_type, source)
+#         self.source = source
+#         self.encoding_enabled = encoding_enabled
+#         self.logical_state = logical_state
 
 
 class RequestLogicalPairApp(RequestApp):
@@ -60,11 +60,11 @@ class RequestLogicalPairApp(RequestApp):
         self.num_completed = 0
         self.results = []  # Store Bell pair results
         
-        # Synchronization state
-        self.sync_ready = False  # This node ready
-        self.remote_ready = False  # Remote node ready
-        self.remote_node_name = None
-        self.fidelities_calculated = False
+        # # Synchronization state
+        # self.sync_ready = False  # This node ready
+        # self.remote_ready = False  # Remote node ready
+        # self.remote_node_name = None
+        # self.fidelities_calculated = False
         
         # Encoding configuration
         self.encoding_enabled = False
@@ -205,40 +205,40 @@ class RequestLogicalPairApp(RequestApp):
         if self.num_completed >= self.memo_size:
             self._all_pairs_completed()
     
-    def _send_sync_message(self, msg_type: str):
-        """Send synchronization message to remote node.
+    # def _send_sync_message(self, msg_type: str):
+    #     """Send synchronization message to remote node.
         
-        Uses direct app-to-app communication for reliability.
+    #     Uses direct app-to-app communication for reliability.
         
-        Args:
-            msg_type: Type of sync message ("READY" or "ENCODING_COMPLETE")
-        """
-        if self.remote_node_name and self.remote_node_name in RequestLogicalPairApp._instances:
-            remote_app = RequestLogicalPairApp._instances[self.remote_node_name]
-            remote_app._receive_sync_message(msg_type, self.node.name)
+    #     Args:
+    #         msg_type: Type of sync message ("READY" or "ENCODING_COMPLETE")
+    #     """
+    #     if self.remote_node_name and self.remote_node_name in RequestLogicalPairApp._instances:
+    #         remote_app = RequestLogicalPairApp._instances[self.remote_node_name]
+    #         remote_app._receive_sync_message(msg_type, self.node.name)
     
-    def _receive_sync_message(self, msg_type: str, source: str):
-        """Receive synchronization message from remote node.
+    # def _receive_sync_message(self, msg_type: str, source: str):
+    #     """Receive synchronization message from remote node.
         
-        Args:
-            msg_type: Type of sync message
-            source: Name of source node
-        """
-        if msg_type == "READY":
-            # Remote node has finished generating Bell pairs
-            log.logger.info(f"{self.node.name}: Remote node {source} is READY")
-            self.remote_ready = True
+    #     Args:
+    #         msg_type: Type of sync message
+    #         source: Name of source node
+    #     """
+    #     if msg_type == "READY":
+    #         # Remote node has finished generating Bell pairs
+    #         log.logger.info(f"{self.node.name}: Remote node {source} is READY")
+    #         self.remote_ready = True
             
-            # If we're also ready, schedule fidelity calculation as timeline event (zero delay)
-            if self.sync_ready:
-                log.logger.info(f"{self.node.name}: Both nodes ready, scheduling fidelity calculation")
-                process = Process(self, '_calculate_all_fidelities', [])
-                event = Event(self.node.timeline.now(), process)  # Zero delay
-                self.node.timeline.schedule(event)
+    #         # If we're also ready, schedule fidelity calculation as timeline event (zero delay)
+    #         if self.sync_ready:
+    #             log.logger.info(f"{self.node.name}: Both nodes ready, scheduling fidelity calculation")
+    #             process = Process(self, '_calculate_all_fidelities', [])
+    #             event = Event(self.node.timeline.now(), process)  # Zero delay
+    #             self.node.timeline.schedule(event)
         
-        elif msg_type == "ENCODING_COMPLETE":
-            # Remote node has finished encoding
-            log.logger.info(f"{self.node.name}: Remote node {source} completed encoding")
+        # elif msg_type == "ENCODING_COMPLETE":
+        #     # Remote node has finished encoding
+        #     log.logger.info(f"{self.node.name}: Remote node {source} completed encoding")
     
     def _calculate_fidelity_via_tomography(self, info: "MemoryInfo", remote_node_name: str, 
                                           remote_memo_name: str) -> float:
@@ -343,34 +343,44 @@ class RequestLogicalPairApp(RequestApp):
             # Re-raise the exception - DO NOT silently return a fake fidelity value
             raise RuntimeError(f"Tomography-based fidelity calculation failed for {self.node.name}") from e
     
-    def _all_pairs_completed(self):
-        """Called when all 7 Bell pairs have been generated.
+    # def _all_pairs_completed(self):
+    #     """Called when all 7 Bell pairs have been generated.
         
-        Sends a READY message to synchronize with remote node before calculating fidelity.
-        Fidelity calculation happens AFTER both nodes are ready.
-        """
+    #     Sends a READY message to synchronize with remote node before calculating fidelity.
+    #     Fidelity calculation happens AFTER both nodes are ready.
+    #     """
+    #     log.logger.info(f"{self.node.name}: All {self.num_completed} Bell pairs generated")
+        
+    #     # Mark this node as ready
+    #     self.sync_ready = True
+        
+    #     # ALWAYS send READY message (not just when encoding)
+    #     if self.remote_node_name:
+    #         log.logger.info(f"{self.node.name}: Sending READY message to {self.remote_node_name}")
+    #         self._send_sync_message("READY")
+            
+    #         # Check if remote is also ready
+    #         if self.remote_ready:
+    #             log.logger.info(f"{self.node.name}: Both nodes ready, scheduling fidelity calculation")
+    #             process = Process(self, '_calculate_all_fidelities', [])
+    #             event = Event(self.node.timeline.now(), process)  # Zero delay
+    #             self.node.timeline.schedule(event)
+    #     else:
+    #         # No remote node configured - schedule fidelity calculation with zero delay
+    #         log.logger.info(f"{self.node.name}: No remote node, scheduling fidelity calculation")
+    #         process = Process(self, '_calculate_all_fidelities', [])
+    #         event = Event(self.node.timeline.now(), process)  # Zero delay
+    #         self.node.timeline.schedule(event)
+
+    def _all_pairs_completed(self):
+        """Called when all 7 Bell pairs have been generated."""
         log.logger.info(f"{self.node.name}: All {self.num_completed} Bell pairs generated")
         
-        # Mark this node as ready
-        self.sync_ready = True
-        
-        # ALWAYS send READY message (not just when encoding)
-        if self.remote_node_name:
-            log.logger.info(f"{self.node.name}: Sending READY message to {self.remote_node_name}")
-            self._send_sync_message("READY")
-            
-            # Check if remote is also ready
-            if self.remote_ready:
-                log.logger.info(f"{self.node.name}: Both nodes ready, scheduling fidelity calculation")
-                process = Process(self, '_calculate_all_fidelities', [])
-                event = Event(self.node.timeline.now(), process)  # Zero delay
-                self.node.timeline.schedule(event)
-        else:
-            # No remote node configured - schedule fidelity calculation with zero delay
-            log.logger.info(f"{self.node.name}: No remote node, scheduling fidelity calculation")
-            process = Process(self, '_calculate_all_fidelities', [])
-            event = Event(self.node.timeline.now(), process)  # Zero delay
-            self.node.timeline.schedule(event)
+        # Directly schedule fidelity calculation
+        log.logger.info(f"{self.node.name}: Scheduling fidelity calculation")
+        process = Process(self, '_calculate_all_fidelities', [])
+        event = Event(self.node.timeline.now(), process)
+        self.node.timeline.schedule(event)
     
     def _calculate_all_fidelities(self):
         """Calculate fidelities for all Bell pairs after applying depolarization noise."""
@@ -486,7 +496,7 @@ class RequestLogicalPairApp(RequestApp):
         log.logger.info(f"{self.node.name}: Encoding completed in {encoding_time:.6f}s")
         
         # Send completion message to remote
-        self._send_sync_message("ENCODING_COMPLETE")
+        # self._send_sync_message("ENCODING_COMPLETE")
         
         # ✅ NEW: Expire the reservation to stop generating more pairs
         for reservation in self.memo_to_reservation.values():
