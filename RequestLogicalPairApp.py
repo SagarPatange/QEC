@@ -11,6 +11,7 @@ COMPLETE VERSION: Includes proper fidelity calculation via tomography and full s
 """
 
 import numpy as np
+import stim
 from typing import TYPE_CHECKING, Dict, List, Optional
 from sequence.app.request_app import RequestApp
 from sequence.utils import log
@@ -372,51 +373,86 @@ class RequestLogicalPairApp(RequestApp):
             self.node.timeline.schedule(event)
     
     def _calculate_all_fidelities(self):
-        """Calculate fidelity for all Bell pairs using quantum state tomography.
+        """Calculate fidelities for all Bell pairs after applying depolarization noise."""
         
-        This method is called after both nodes are synchronized to ensure
-        the quantum states are properly established before measurement.
-        Only calculates once, even if called multiple times.
-        """
-        if self.fidelities_calculated:
-            return
+        log.logger.info(f"{self.node.name}: Starting fidelity calculation")
         
-        self.fidelities_calculated = True
-        log.logger.info(f"{self.node.name}: Calculating fidelities via tomography for {len(self.results)} Bell pairs")
+        # Get current simulation time
+        current_time = self.node.timeline.now()  # in picoseconds
         
-        # Calculate fidelity for each Bell pair using tomography
+        # Apply depolarization noise to each Bell pair based on elapsed time
+        for i, result in enumerate(self.results):
+            # Get when this pair was generated (convert from seconds to picoseconds)
+            generation_time_ps = result['generation_time'] * 1e12
+            
+            # Calculate elapsed time
+            elapsed_time_ps = current_time - generation_time_ps
+            
+            # Calculate depolarization probability
+            p = self._calculate_depolarization_probability(elapsed_time_ps)
+            
+            log.logger.info(f"{self.node.name}: Pair {i} - elapsed {elapsed_time_ps*1e-3:.1f} ns, p_depol = {p:.6f}")
+            
+            # Apply two-qubit depolarization noise using stabilizer circuit
+            info = result['memory_info']
+            memory = info.memory
+            local_key = memory.qstate_key
+            
+            # Get remote memory key
+            remote_memory = self.node.timeline.get_entity_by_name(result['remote_memory'])
+            remote_key = remote_memory.qstate_key
+            
+            qm = self.node.timeline.quantum_manager
+            
+            # Create two-qubit depolarization circuit
+            depol_circuit = stim.Circuit(f"""
+                DEPOLARIZE2({p}) 0 1
+            """)
+
+            
+            # Apply to both qubits in the Bell pair
+            qm.run_circuit(depol_circuit, [local_key, remote_key])
+        
+        # Now calculate fidelities via tomography (existing code continues...)
         for i, result in enumerate(self.results):
             info = result['memory_info']
             remote_node = result['remote_node']
             remote_memory = result['remote_memory']
             
             log.logger.info(f"{self.node.name}: Computing fidelity for Bell pair {i} "
-                          f"(local mem: {info.index}, remote: {remote_memory})")
+                        f"(local mem: {info.index}, remote: {remote_memory})")
             
-            # Use tomography to calculate actual fidelity
             measured_fidelity = self._calculate_fidelity_via_tomography(info, remote_node, remote_memory)
             result['fidelity'] = measured_fidelity
             
             log.logger.info(f"{self.node.name}: Bell pair {result['pair_id']} "
-                          f"tomography fidelity = {measured_fidelity:.6f}")
+                        f"tomography fidelity = {measured_fidelity:.6f}")
         
-        # Calculate and log statistics
+        # Calculate and log statistics (rest of existing code...)
         fidelities = [r['fidelity'] for r in self.results if r['fidelity'] is not None]
         if fidelities:
             avg_fidelity = np.mean(fidelities)
             std_fidelity = np.std(fidelities)
             log.logger.info(f"{self.node.name}: Fidelity statistics - "
-                          f"Mean: {avg_fidelity:.6f}, Std: {std_fidelity:.6f}")
+                        f"Mean: {avg_fidelity:.6f}, Std: {std_fidelity:.6f}")
         
-        # âœ… NOW trigger encoding after all fidelities are calculated
+        # Rest of existing code for encoding...
         if self.encoding_enabled:
             log.logger.info(f"{self.node.name}: All fidelities calculated - starting QEC encoding")
             self._start_encoding()
         else:
-            # No encoding - release memories and print results
             log.logger.info(f"{self.node.name}: No encoding requested - releasing memories")
             self._release_memories()
             self.print_results()
+
+
+    def _calculate_depolarization_probability(self, elapsed_time_ps: float, 
+                                            coherence_time_ns: float = 1000000000000.0) -> float:
+        """Calculate depolarization probability after elapsed time."""
+        elapsed_time_ns = elapsed_time_ps * 1e-3
+        gamma = 1.0 / coherence_time_ns
+        p = 1.0 - np.exp(-gamma * elapsed_time_ns)
+        return np.clip(p, 0.0, 1.0)
     
     def _release_memories(self):
         """Release all communication memories to RAW state."""
@@ -452,10 +488,33 @@ class RequestLogicalPairApp(RequestApp):
         # Send completion message to remote
         self._send_sync_message("ENCODING_COMPLETE")
         
+        # ✅ NEW: Expire the reservation to stop generating more pairs
+        for reservation in self.memo_to_reservation.values():
+            self.node.resource_manager.expire_rules_by_reservation(reservation)
+            break  # Only expire once
+        
         # Release memories and print results
         self._release_memories()
         self.print_results()
+
+    def _calculate_depolarization_probability(self, elapsed_time_ps: float, 
+                                         coherence_time_ns: float = 1e9) -> float:
+        """
+        Calculate depolarization probability after elapsed time.
+        
+        Args:
+            elapsed_time_ps: Time elapsed since generation (picoseconds)
+            coherence_time_ns: T2 coherence time (nanoseconds)
+        
+        Returns:
+            Depolarization probability p ∈ [0, 1]
+        """
+        elapsed_time_ns = elapsed_time_ps * 1e-3
+        gamma = 1.0 / coherence_time_ns
+        p = 1.0 - np.exp(-gamma * elapsed_time_ns)
+        return np.clip(p, 0.0, 1.0)
     
+
     def print_results(self):
         """Print comprehensive results of Bell pair generation and encoding."""
         print(f"\n{'='*70}")
@@ -490,6 +549,12 @@ class RequestLogicalPairApp(RequestApp):
                 fidelity_str = f"{result['fidelity']:.6f}" if result['fidelity'] is not None else "Not calculated"
                 print(f"  Pair {result['pair_id']}: Memory {result['memory_index']}, "
                      f"Fidelity = {fidelity_str}")
+            
+
+            print("\nBell Pair Generation Timestamps (picoseconds):")
+            for result in self.results:
+                timestamp_ps = result['generation_time'] * 1e12
+                print(f"  Pair {result['pair_id']}: t = {timestamp_ps:.0f} ps")
         
         # Encoding results
         if self.encoding_enabled:
