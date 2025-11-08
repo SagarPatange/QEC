@@ -2,7 +2,7 @@
     "templates": {
         "qec": {
             "MemoryArray": {
-                "fidelity": 0.95,
+                "fidelity": 0.999,
                 "efficiency": 0.9,
                 "coherence_time": -1
             },
@@ -67,35 +67,35 @@
             "source": "BSM_0_1",
             "destination": "router_0",
             "distance": 500.0,
-            "delay": 1000000000.0
+            "delay": -1
         },
         {
             "source": "router_0",
             "destination": "BSM_0_1",
             "distance": 500.0,
-            "delay": 1000000000.0
+            "delay": -1
         },
         {
             "source": "BSM_0_1",
             "destination": "router_1",
             "distance": 500.0,
-            "delay": 1000000000.0
+            "delay": -1
         },
         {
             "source": "router_1",
             "destination": "BSM_0_1",
             "distance": 500.0,
-            "delay": 1000000000.0
+            "delay": -1
         },
         {
             "source": "router_0",
             "destination": "router_1",
-            "delay": 1000000000.0
+            "delay": -1
         },
         {
             "source": "router_1",
             "destination": "router_0",
-            "delay": 1000000000.0
+            "delay": -1
         }
     ],
     "stop_time": 10000000000000,

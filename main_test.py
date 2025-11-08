@@ -1,5 +1,6 @@
 import numpy as np
-from sequence.topology.router_net_topo import RouterNetTopo, RouterNetTopo2G
+from sequence.topology.router_net_topo import RouterNetTopo
+from router_net_topo_2G import RouterNetTopo2G
 import sequence.utils.log as log
 from sequence.kernel.quantum_manager import QuantumManager
 from sequence.constants import STABILIZER_FORMALISM
@@ -748,7 +749,9 @@ def two_node_logical_pair_with_app(verbose=False):
     EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
 
     log_filename = 'log/logical_pair_generation_app'
-    network_config = 'config/line_2_2nd_gen_stabilizer.json'
+    # network_config = 'config/line_2_2nd_gen_stabilizer.json'
+    network_config = 'config/line_3_2G.json'
+
 
     network_topo = RouterNetTopo2G(network_config)
     tl = network_topo.get_timeline()
@@ -834,7 +837,7 @@ if __name__ == "__main__":
 
 
     print("\n=== KET STATE 20 Physical Entagled Pairs===")
-    two_node_physical_twenty_memories_ketState_old(verbose=True)
+    # two_node_physical_twenty_memories_ketState_old(verbose=True)
     # print("\n=== STABILIZER 20 Physical Entagled Pairs===")
     # two_node_physical_twenty_memories_stabilizer_old(verbose=True)
 
@@ -853,6 +856,6 @@ if __name__ == "__main__":
 
     # create_logical_bell_pair(verbose=False)
 
-    # two_node_logical_pair_with_app(verbose=True)
+    two_node_logical_pair_with_app(verbose=True)
 
     pass

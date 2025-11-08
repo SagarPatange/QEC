@@ -59,7 +59,7 @@ def generate_node_procs(parallel, net_size, naming_func) -> dict:
 
     return node_procs
 
-def generate_nodes(node_procs: dict, router_names: str, memo_size: int, template: str = None, gate_fidelity: float = None, measurement_fidelity: float = None) -> list:
+def generate_nodes(router_names: str, memo_size: int, template: str = None, gate_fidelity: float = None, measurement_fidelity: float = None) -> list:
     """generate a list of node configs for quantum routers
     """
     nodes = []
@@ -67,8 +67,7 @@ def generate_nodes(node_procs: dict, router_names: str, memo_size: int, template
         config = {Topology.NAME: name,
                   Topology.TYPE: RouterNetTopo.QUANTUM_ROUTER,
                   Topology.SEED: i,
-                  RouterNetTopo.MEMO_ARRAY_SIZE: memo_size,
-                  RouterNetTopo.GROUP: node_procs[name]}
+                  RouterNetTopo.MEMO_ARRAY_SIZE: memo_size}
         if template:
             config[Topology.TEMPLATE] = template
         if gate_fidelity:
@@ -183,21 +182,7 @@ def generate_classical(router_names: list, cc_delay: int) -> list:
 def final_config(output_dict, parsed_args):
     output_dict[Topology.STOP_TIME] = int(parsed_args.stop * SECOND)
     output_dict[Topology.FORMALISM] = parsed_args.formalism
-    if parsed_args.parallel:
-        output_dict[RouterNetTopo.IS_PARALLEL] = True
-        output_dict[RouterNetTopo.PROC_NUM] = int(parsed_args.parallel[2])
-        output_dict[RouterNetTopo.IP] = parsed_args.parallel[0]
-        output_dict[RouterNetTopo.PORT] = int(parsed_args.parallel[1])
-        output_dict[RouterNetTopo.LOOKAHEAD] = int(parsed_args.parallel[4])
-        if parsed_args.parallel[3] == "true":
-            # set all to synchronous
-            output_dict[RouterNetTopo.ALL_GROUP] = \
-                    [{RouterNetTopo.TYPE: RouterNetTopo.SYNC} for _ in range(int(parsed_args.parallel[2]))] 
-        else:
-            output_dict[RouterNetTopo.ALL_GROUP] = \
-                    [{RouterNetTopo.TYPE: RouterNetTopo.ASYNC}] * int(parsed_args.parallel[2])
-    else:
-        output_dict[RouterNetTopo.IS_PARALLEL] = False
+
 
 
 def router_name_func(i) -> str:

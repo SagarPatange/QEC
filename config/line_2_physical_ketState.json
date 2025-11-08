@@ -2,7 +2,7 @@
     "templates": {
         "qec": {
             "MemoryArray": {
-                "fidelity": 1,
+                "fidelity": 0.95,
                 "efficiency": 0.9
             }
         }

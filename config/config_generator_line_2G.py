@@ -13,45 +13,42 @@ Optional Args:
     -d --directory (str): name of the output directory (default tmp)
     -o --output (str): name of the output file (default out.json).
     -s --stop (float): simulation stop time (in s) (default infinity).
-    -p --parallel: sets simulation as parallel and requires addition args:
-        server ip (str): IP address of quantum manager server.
-        server port (int): port quantum manager server is attached to.
-        num. processes (int): number of processes to use for simulation.
-        sync/async (bool): denotes if timelines should be synchronous (true) or not (false).
-        lookahead (int): simulation lookahead time for timelines (in ps).
     -n --nodes (str): path to csv file providing process information for nodes.
 """
 
 # For generating a 2-node linear network with 20 memories per node, 1 km distance between nodes, for 1G networks
 # python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2_physical.json -s 10
 
-# For generating a 2-node linear network with 20 memories per node, 1 km distance between nodes, for 2G networks that are stim-enabled
-# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2_logical.json -s 10 --stim
-# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2_logical_v2.json -s 10 --stim
 
 # For 2nd generation quantum routers (NEW):
-# python config/config_generator_line.py 2 20 1 0.0002 1 -d config -o line_2_gen2.json -s 10 --gen2
+# python config/config_generator_line_2G.py 3 7 1 0.0002 -1 -d config -o line_3_2G.json -s 10 --gen2 -ds 7
 
 import argparse
 import json
 import os
-from config_generator import add_default_args, get_node_csv, generate_node_procs, generate_nodes, generate_classical, final_config, router_name_func, generate_stim_nodes
+from config_generator import add_default_args, generate_nodes, generate_classical, final_config, router_name_func
 from sequence.topology.topology import Topology
 from sequence.topology.router_net_topo import RouterNetTopo
 
 
 #=========================== NEW FUNCTION ============================
-def generate_2g_nodes(node_procs, router_names, memo_size, template=None):
+def generate_2g_nodes(router_names, memo_size, data_memo_size, ancilla_memo_size, template=None):
     """Generate node configs for 2nd generation quantum routers."""
     # Start with standard nodes
-    nodes = generate_nodes(node_procs, router_names, memo_size, template)
+    nodes = generate_nodes(router_names, memo_size, template)
     
-    # Add 2nd generation specific fields
-    for node in nodes:
+    N = len(router_names) 
+
+    for i,node in enumerate(nodes):
         node["generation"] = 2           # This triggers 2nd gen creation
-        node["data_memo_size"] = 7       # Perfect for [[7,1,3]] QEC
-        node["ancilla_memo_size"] = 6    # Perfect for [[7,1,3]] QEC
-    
+        if i == 0 or i == N-1:
+            node["data_memo_size"] = data_memo_size       
+            node["ancilla_memo_size"] = ancilla_memo_size   
+        else:
+            node["memo_size"] = memo_size*2 
+            node["data_memo_size"] = data_memo_size*2       
+            node["ancilla_memo_size"] = ancilla_memo_size*2
+            
     return nodes
 #================================================================
 
@@ -59,9 +56,11 @@ def generate_2g_nodes(node_procs, router_names, memo_size, template=None):
 parser = argparse.ArgumentParser()
 parser.add_argument('linear_size', type=int, help='number of network nodes')
 parser = add_default_args(parser)
+parser.add_argument('-ds', '--data_size', type = int, default = 7, help='Data memories for 2nd generation quantum routers')
+parser.add_argument('-as', '--ancilla_size', type = int, default = 0, help='Ancilla memories for 2nd generation quantum routers') 
+ 
 
 #=========================== Changes ============================
-parser.add_argument('--stim', action='store_true', help='Use Stim-enabled quantum nodes')
 parser.add_argument('--gen2', action='store_true', help='Use 2nd generation quantum routers')  # NEW LINE
 #================================================================
 
@@ -81,26 +80,17 @@ output_dict[Topology.ALL_TEMPLATES] = \
     }
 
 # get csv file (if present)
-if args.nodes:
-    node_procs = get_node_csv(args.nodes)
-else:
-    node_procs = generate_node_procs(args.parallel, args.linear_size, router_name_func)
-
-# generate nodes
-router_names = list(node_procs.keys())
-# nodes = generate_nodes(node_procs, router_names, args.memo_size)
+router_names = [router_name_func(i) for i in range(args.linear_size)]
+nodes = generate_nodes(router_names, args.memo_size)
 template = 'qec'
 
 #=========================== MODIFIED SECTION ============================
-# nodes = generate_nodes(node_procs, router_names, args.memo_size, template)
-if args.stim:
-    args.formalism = 'stabilizer'  # Override formalism for Stim mode
-    nodes = generate_stim_nodes(node_procs, router_names, args.memo_size, template)
-elif args.gen2:  # Check for 2nd generation flag (NEW)
+
+if args.gen2:  # Check for 2nd generation flag (NEW)
     args.formalism = 'stabilizer'  # 2nd gen routers typically use stabilizer for QEC
-    nodes = generate_2g_nodes(node_procs, router_names, args.memo_size, template)
+    nodes = generate_2g_nodes(router_names, args.memo_size, args.data_size, args.ancilla_size, template)
 else:
-    nodes = generate_nodes(node_procs, router_names, args.memo_size, template)
+    nodes = generate_nodes(router_names, args.memo_size, template)
 #================================================================
 
 
@@ -111,16 +101,18 @@ bsm_nodes = [{Topology.NAME: bsm_name,
               Topology.SEED: i,
               RouterNetTopo.TEMPLATE: template}
              for i, bsm_name in enumerate(bsm_names)]
-if args.parallel:
-    for i in range(args.linear_size - 1):
-        bsm_nodes[i][RouterNetTopo.GROUP] = int(
-            i // (args.linear_size / int(args.parallel[2])))
 nodes += bsm_nodes
 output_dict[Topology.ALL_NODE] = nodes
 
 # generate quantum links, classical with bsm nodes
 qchannels = []
 cchannels = []
+
+if args.cc_delay < 0:
+    cc_delay = -1
+else:   
+    cc_delay = int(args.cc_delay * 1e9)
+    
 for i, bsm_name in enumerate(bsm_names):
     # qchannels
     qchannels.append({Topology.SRC: router_names[i],
@@ -136,16 +128,16 @@ for i, bsm_name in enumerate(bsm_names):
         cchannels.append({Topology.SRC: bsm_name,
                           Topology.DST: node,
                           Topology.DISTANCE: args.qc_length * 1000 / 2,
-                          Topology.DELAY: args.cc_delay * 1e9})
-
+                          Topology.DELAY: cc_delay})
         cchannels.append({Topology.SRC: node,
                           Topology.DST: bsm_name,
                           Topology.DISTANCE: args.qc_length * 1000 / 2,
-                          Topology.DELAY: args.cc_delay * 1e9})
+                          Topology.DELAY: cc_delay})
+        
 output_dict[Topology.ALL_Q_CHANNEL] = qchannels
 
 # generate classical links
-router_cchannels = generate_classical(router_names, args.cc_delay)
+router_cchannels = generate_classical(router_names, cc_delay)
 cchannels += router_cchannels
 output_dict[Topology.ALL_C_CHANNEL] = cchannels
 
