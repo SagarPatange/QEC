@@ -2,8 +2,8 @@
     "templates": {
         "qec": {
             "MemoryArray": {
-                "fidelity": 1.0,
-                "efficiency": 0.9
+                "fidelity": 0.95,
+                "efficiency": 1
             }
         }
     },
@@ -11,23 +11,23 @@
         {
             "name": "router_0",
             "type": "QuantumRouter",
-            "seed": 0,
-            "memo_size": 100,
+            "seed": 2,
+            "memo_size": 20,
             "group": 0,
             "template": "qec"
         },
         {
             "name": "router_1",
             "type": "QuantumRouter",
-            "seed": 1,
-            "memo_size": 100,
-            "group": 0,
+            "seed": 3,
+            "memo_size": 20,
+            "group": 20,
             "template": "qec"
         },
         {
             "name": "BSM_0_1",
             "type": "BSMNode",
-            "seed": 0,
+            "seed": 5,
             "template": "qec"
         }
     ],
@@ -36,13 +36,13 @@
             "source": "router_0",
             "destination": "BSM_0_1",
             "distance": 500.0,
-            "attenuation": 0.0002
+            "attenuation": 0.000
         },
         {
             "source": "router_1",
             "destination": "BSM_0_1",
             "distance": 500.0,
-            "attenuation": 0.0002
+            "attenuation": 0.000
         }
     ],
     "cchannels": [

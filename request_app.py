@@ -55,6 +55,9 @@ class RequestAppThroughput(RequestApp):
         - Stops processing after reaching limit to prevent runaway
         - Sets quantum memory to RAW after use
         - Implements timeout mechanism
+        - For stabilizer formalism: only processes from responder node to ensure
+        both corrections are applied before fidelity calculation
+        
         """
         # Initialize start time on first call
         if self.start_time is None:
@@ -79,16 +82,40 @@ class RequestAppThroughput(RequestApp):
         if info.index in self.memo_to_reservation:
             reservation = self.memo_to_reservation[info.index]
             
-            if info.fidelity >= reservation.fidelity:
+            qm = self.node.timeline.quantum_manager
+            
+            if qm.get_active_formalism() == "stabilizer":
+                # For stabilizer formalism: only responder should calculate fidelity
+                # because it applies corrections last, so circuit is complete
+                if info.remote_node != reservation.initiator:
+                    return  # Skip if we're the initiator
+                
+                local_key = info.memory.qstate_key
+                remote_key = self.node.timeline.get_entity_by_name(info.remote_memo).qstate_key
+                
+                # Get the state to check key ordering
+                state = qm.states[local_key]
+                
+                # Use correct key ordering for density matrix
+                if state.keys[0] == local_key:
+                    rho = qm.compute_density_matrix([local_key, remote_key])
+                else:
+                    rho = qm.compute_density_matrix([remote_key, local_key])
+                
+                fidelity = 0.5 * np.real(rho[0,0] + rho[0,3] + rho[3,0] + rho[3,3])
+                fidelity = float(np.clip(fidelity, 0.0, 1.0))
+            else:
+                # Ket formalism - use stored fidelity
+                fidelity = info.fidelity
+                # Only count from initiator (original behavior for ket formalism)
+                if info.remote_node != reservation.responder:
+                    return
+            
+            if fidelity >= reservation.fidelity:
                 # Record the entanglement per reservation
                 self.entanglement_timestamps[reservation].append(self.node.timeline.now())
-                self.entanglement_fidelities[reservation].append(info.fidelity)
+                self.entanglement_fidelities[reservation].append(fidelity)
                 self.memory_counter += 1
-                
-                # CRITICAL: Set quantum memory to RAW after successful use
-                # This frees the memory for the next entanglement attempt
-                self.node.resource_manager.update(None, info.memory, "RAW")
-                log.logger.debug(f"{self.name}: Reset quantum memory {info.index} to RAW state")
                 
                 # Check if we should stop
                 if self.memory_counter >= self.max_entanglements:
@@ -139,6 +166,8 @@ class RequestAppThroughput(RequestApp):
         Args:
             reservation: Optional reservation to get fidelities for. If None, returns all.
         """
+        self.get_memory()
+        
         if reservation:
             return self.entanglement_fidelities.get(reservation, [])
         else:
@@ -202,7 +231,16 @@ class RequestAppThroughput(RequestApp):
         return {}
     
     def get_statistics(self) -> Dict:
-        """Get comprehensive statistics about the entanglement generation."""
+        """Get comprehensive statistics about the entanglement generation.
+        
+        Returns:
+            Dictionary with all statistics including:
+            - General info (timeout, completion status, etc.)
+            - Per-reservation stats (counts, fidelities)
+            - All timestamps and fidelities
+            - Time to service metrics
+            - Throughput metrics
+        """
         stats = {
             "timeout_duration_seconds": self.TIMEOUT_DURATION / SECOND,
             "max_entanglements": self.max_entanglements,
@@ -219,13 +257,61 @@ class RequestAppThroughput(RequestApp):
             fidelities = self.entanglement_fidelities[reservation]
             
             if timestamps:
+                # Calculate inter-arrival times if we have multiple entanglements
+                inter_arrival = []
+                if len(timestamps) > 1:
+                    inter_arrival = [timestamps[i] - timestamps[i-1] for i in range(1, len(timestamps))]
+                
                 reservation_stats[str(reservation)] = {
                     "count": len(timestamps),
+                    "timestamps_ps": timestamps,
+                    "inter_arrival_times_ps": inter_arrival,
+                    "avg_inter_arrival_ps": np.mean(inter_arrival) if inter_arrival else 0,
+                    "fidelities": fidelities,
                     "avg_fidelity": np.mean(fidelities) if fidelities else 0,
                     "min_fidelity": min(fidelities) if fidelities else 0,
                     "max_fidelity": max(fidelities) if fidelities else 0,
+                    "std_fidelity": np.std(fidelities) if len(fidelities) > 1 else 0,
                 }
         
         stats["per_reservation_stats"] = reservation_stats
+        
+        # Time to service statistics
+        time_to_service = self.get_time_to_service()
+        if time_to_service:
+            stats["time_to_service"] = {
+                "all_values_us": time_to_service,
+                "avg_us": np.mean(time_to_service),
+                "min_us": min(time_to_service),
+                "max_us": max(time_to_service),
+                "std_us": np.std(time_to_service) if len(time_to_service) > 1 else 0,
+            }
+        else:
+            stats["time_to_service"] = None
+        
+        # Throughput statistics
+        throughput_dict = self.get_request_to_throughput()
+        stats["throughput"] = throughput_dict if throughput_dict else None
+        
+        # All timestamps combined (across all reservations)
+        all_timestamps = []
+        for res_timestamps in self.entanglement_timestamps.values():
+            all_timestamps.extend(res_timestamps)
+        all_timestamps.sort()
+        stats["all_timestamps_ps"] = all_timestamps
+        
+        # All fidelities combined (across all reservations)
+        all_fidelities = []
+        for res_fidelities in self.entanglement_fidelities.values():
+            all_fidelities.extend(res_fidelities)
+        stats["all_fidelities"] = all_fidelities
+        
+        if all_fidelities:
+            stats["overall_fidelity_stats"] = {
+                "avg": np.mean(all_fidelities),
+                "min": min(all_fidelities),
+                "max": max(all_fidelities),
+                "std": np.std(all_fidelities) if len(all_fidelities) > 1 else 0,
+            }
         
         return stats

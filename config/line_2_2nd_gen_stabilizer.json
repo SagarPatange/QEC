@@ -2,18 +2,18 @@
     "templates": {
         "qec": {
             "MemoryArray": {
-                "fidelity": 0.999,
-                "efficiency": 0.9,
+                "fidelity": 0.99,
+                "efficiency": 1,
                 "coherence_time": -1
             },
             "DataMemoryArray": {
-                "fidelity": 1,
-                "efficiency": 0.9,
+                "fidelity": 0.99,
+                "efficiency": 1,
                 "coherence_time": -1
             },
             "AncillaMemoryArray": {
                 "fidelity": 1,
-                "efficiency": 0.9,
+                "efficiency": 1,
                 "coherence_time": -1
             }
         }
@@ -22,7 +22,7 @@
         {
             "name": "router_0",
             "type": "QuantumRouter",
-            "seed": 0,
+            "seed": 4,
             "memo_size": 7,
             "generation": 2,
             "data_memo_size": 7,
@@ -33,7 +33,7 @@
         {
             "name": "router_1",
             "type": "QuantumRouter",
-            "seed": 1,
+            "seed": 10,
             "memo_size": 7,
             "generation": 2,
             "data_memo_size": 7,

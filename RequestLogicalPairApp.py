@@ -37,10 +37,7 @@ class RequestLogicalPairApp(RequestApp):
     3. Calculate fidelities using quantum state tomography
     4. Optionally encode to logical qubits (Alice: |0>_L, Bob: |+>_L)
     """
-    
-    # Class variable to track all instances for inter-app communication
-    _instances = {}
-    
+
     def __init__(self, node: "QuantumRouter"):
         super().__init__(node)
 
@@ -48,8 +45,6 @@ class RequestLogicalPairApp(RequestApp):
         self.node.request_logical_pair_app = self  # ADD THIS LINE
         self.remote_node: QuantumRouter = None  
     
-        # Register this instance for inter-app communication
-        RequestLogicalPairApp._instances[node.name] = self
 
         # Bell pair tracking
         self.memo_size = 7  # Need exactly 7 Bell pairs for [[7,1,3]] code
@@ -73,7 +68,7 @@ class RequestLogicalPairApp(RequestApp):
 
         # Depolarization parameters
         self.depolarization_time_ms = 500  # Coherence time for depolarization noise in ms TODO: make a coherence time 
-        self.depolarization_enabled = True  # Flag to enable/disable idling decoherence
+        self.depolarization_enabled = False  # Flag to enable/disable idling decoherence
         
         # Timing
         self.first_pair_time = None
@@ -151,130 +146,13 @@ class RequestLogicalPairApp(RequestApp):
             }
         }
    
-   
-    def _calculate_logical_bell_pair_fidelity(self, shots: int = 100000) -> float:
-        """
-        Calculate logical Bell pair fidelity after teleported CNOT.
 
-        Measures F = (1 + <XX> - <YY> + <ZZ>) / 4 using efficient sampling.
-
-        Args:
-            shots: Number of measurement samples per basis
-
-        Returns:
-            Logical Bell pair fidelity with |Φ⁺>_L
-        """
-        qm = self.node.timeline.quantum_manager
-
-        # Get Alice's data qubits (this node)
-        alice_keys = [mem.qstate_key for mem in self.data_qubits]
-
-        # Get Bob's data qubits (remote node) - FIX: Was using communication_qubits (measured ancillas)
-        bob_app = RequestLogicalPairApp._instances[self.remote_node_name]
-        bob_keys = [mem.qstate_key for mem in bob_app.data_qubits]
-
-        all_keys = alice_keys + bob_keys
-
-        log.logger.info(f"{self.node.name}: Measuring logical Bell pair fidelity...")
-        log.logger.info(f"{self.node.name}: Using Alice's data qubits: {[mem.name for mem in self.data_qubits]}")
-        log.logger.info(f"{self.node.name}: Using Bob's data qubits: {[mem.name for mem in bob_app.data_qubits]}")
-        log.logger.info(f"{self.node.name}: Alice keys: {alice_keys}")
-        log.logger.info(f"{self.node.name}: Bob keys: {bob_keys}")
-        
-        # Build base circuit from all qubits
-        base_circuit = stim.Circuit()
-        added_states = set()
-
-        # DEBUG: Check if qubits are in the same state
-        log.logger.info(f"{self.node.name}: Checking quantum states...")
-        for i, key in enumerate(all_keys):
-            state = qm.states[key]
-            state_id = id(state)
-            state_qubits = sorted(state.keys)
-            if i < 7:
-                log.logger.info(f"{self.node.name}: Alice qubit {key} -> state_id={state_id}, state contains qubits: {state_qubits}")
-            else:
-                log.logger.info(f"{self.node.name}: Bob qubit {key} -> state_id={state_id}, state contains qubits: {state_qubits}")
-
-        for key in all_keys:
-            state = qm.states[key]
-            if id(state) in added_states:
-                continue
-            added_states.add(id(state))
-
-            for instruction in state.circuit:
-                gate_args = instruction.gate_args_copy()
-                # Handle both qubit targets and measurement record targets
-                targets = []
-                for t in instruction.targets_copy():
-                    if t.is_measurement_record_target:
-                        # Keep measurement record targets as-is
-                        targets.append(t)
-                    else:
-                        # Convert qubit targets to integers
-                        targets.append(t.value)
-
-                if gate_args:
-                    base_circuit.append(instruction.name, targets, *gate_args)
-                else:
-                    base_circuit.append(instruction.name, targets)
-
-        log.logger.info(f"{self.node.name}: Found {len(added_states)} unique quantum states among {len(all_keys)} qubits")
-        
-        # Measure all three correlations and compute fidelity
-        correlations = {}
-        
-        for basis in ['X', 'Y', 'Z']:
-            # Copy circuit and add basis rotations
-            meas_circuit = base_circuit.copy()
-            
-            for key in all_keys:
-                if basis == 'X':
-                    meas_circuit.append("H", [key])
-                elif basis == 'Y':
-                    meas_circuit.append("S_DAG", [key])
-                    meas_circuit.append("H", [key])
-            
-            # Add measurements
-            for key in all_keys:
-                meas_circuit.append("M", [key])
-            
-            # Sample and compute correlation
-            seed = hash(f"{self.node.name}_{basis}_{self.node.timeline.now()}") % (2**31)
-            sampler = meas_circuit.compile_sampler(seed=seed)
-            measurements = sampler.sample(shots=shots)
-            
-            # Compute logical parities and correlation
-
-            alice_parity = np.sum(measurements[:, 14:21], axis=1) % 2  # Alice data qubits (7 qubits)
-            bob_parity = np.sum(measurements[:, 21:28], axis=1) % 2    # Bob data qubits (7 qubits)
-            alice_eigenvalues = 1 - 2 * alice_parity
-            bob_eigenvalues = 1 - 2 * bob_parity
-            correlations[basis] = float(np.mean(alice_eigenvalues * bob_eigenvalues))
-        
-        # Store correlations
-        self.logical_fidelity['correlations']['XX'] = correlations['X']
-        self.logical_fidelity['correlations']['YY'] = correlations['Y']
-        self.logical_fidelity['correlations']['ZZ'] = correlations['Z']
-        
-        # Calculate fidelity
-        fidelity = (1 + correlations['X'] - correlations['Y'] + correlations['Z']) / 4
-
-        log.logger.info(f"{self.node.name}: Logical Bell pair fidelity = {fidelity:.6f}")
-        log.logger.info(f"{self.node.name}: Correlation XX = {correlations['X']:+.6f}")
-        log.logger.info(f"{self.node.name}: Correlation YY = {correlations['Y']:+.6f}")
-        log.logger.info(f"{self.node.name}: Correlation ZZ = {correlations['Z']:+.6f}")
-        log.logger.info(f"{self.node.name}: Fidelity formula: (1 + {correlations['X']:+.6f} - {correlations['Y']:+.6f} + {correlations['Z']:+.6f}) / 4 = {fidelity:.6f}")
-
-        return float(fidelity)
-
-
-    def start(self, remote_node_name: str, start_time: int, end_time: int,
+    def start(self, responder: str, start_time: int, end_time: int, ## TODO: put the coherence time into the config file 
             memory_size: int = 7, target_fidelity: float = 0.8,
-            logical_state: str = '0', encoding_enabled: bool = False,
+            logical_state: str = '+', encoding_enabled: bool = True,
             teleported_cnot_enabled: bool = False, depolarization_enabled: bool = False,
-            coherence_time_ms: float = 500, remote_node: "QuantumRouter" = None):
-        """Start Bell pair generation with optional QEC encoding.
+            coherence_time_ms: float = 500): ### TODO: replace memory size with th CSS object, and see how you can put the logical state in the protocol level. Removal of encoding_enabled and depolarization enabled, and tcnot_enabled
+        """Start Bell pair generation with optional QEC encoding. 
 
         Args:
             remote_node_name: Name of the remote quantum router
@@ -292,8 +170,37 @@ class RequestLogicalPairApp(RequestApp):
         if teleported_cnot_enabled:
             assert encoding_enabled, "Teleported CNOT requires encoding to be enabled"
             
-        self.remote_node = remote_node
-        self.remote_node_name = remote_node_name
+        self.responder = responder
+
+        # ============================================================================
+        # SIMULATION WORKAROUND - NOT LOCC COMPLIANT
+        # ============================================================================
+        # The following code accesses the remote node object directly from the
+        # timeline. This is ONLY required due to how Stim (the stabilizer simulator)
+        # structures quantum states and requires all entangled qubits to be grouped
+        # into a single shared tableau/circuit before operations can be performed.
+        #
+        # In a real physical implementation, Alice would NOT have access to Bob's
+        # quantum state or qubit references. However, in Stim's simulator:
+        # - Alice's encoded qubits exist in one tableau
+        # - The Bell pairs exist in another tableau
+        # - Bob's encoded qubits exist in yet another tableau
+        # - To apply transversal operations across these, Stim requires grouping them
+        #
+        # This grouping operation (quantum_manager.group_qubits) is a simulator-specific
+        # requirement that has no physical analog. In reality:
+        # - Each party operates only on their local qubits
+        # - Classical communication carries measurement results
+        # - No direct access to remote quantum states is needed or possible
+        #
+        # This reference is used ONLY to call group_qubits() on the shared state,
+        # which is a simulation bookkeeping operation, not a physical quantum operation.
+        # All actual quantum operations remain strictly local and LOCC-compliant.
+        # ============================================================================
+        self.remote_node = self.node.timeline.get_entity_by_name(responder)
+        if self.remote_node is None:
+            log.logger.warning(f"{self.node.name}: Could not find remote node {responder}")
+
         self.encoding_enabled = encoding_enabled
         self.logical_state = logical_state
         self.teleported_cnot_enabled = teleported_cnot_enabled
@@ -301,62 +208,24 @@ class RequestLogicalPairApp(RequestApp):
         self.depolarization_time_ms = coherence_time_ms
         self.is_initiator = True
         self.is_responder = False
-
-        # Configure the remote app directly if it exists
-        if remote_node_name in RequestLogicalPairApp._instances:
-            remote_app = RequestLogicalPairApp._instances[remote_node_name]
-            remote_app._configure_as_responder(
-                initiator_name=self.node.name,
-                encoding_enabled=encoding_enabled,
-                initiator_logical_state=logical_state,
-                teleported_cnot_enabled=teleported_cnot_enabled,
-                depolarization_enabled=self.depolarization_enabled,
-                coherence_time_ms=self.depolarization_time_ms
-            )
         
         # Start Bell pair generation using parent class
+        
         super().start(
-            responder=remote_node_name,
+            responder=responder,
             start_t=start_time,
             end_t=end_time,
             memo_size=memory_size,
             fidelity=target_fidelity
         )
         
-        log.logger.info(f"{self.node.name}: Started Bell pair generation with {remote_node_name}, "
+        log.logger.info(f"{self.node.name}: Started Bell pair generation with {responder}, "
                        f"encoding={'enabled' if encoding_enabled else 'disabled'}")
   
-    
-    def _on_teleported_cnot_complete(self):
-        """Called when teleported CNOT protocol finishes."""
-        self.teleported_cnot_complete = True
-        self.teleported_cnot_end_time = self.node.timeline.now()
-        
-        duration = (self.teleported_cnot_end_time - self.teleported_cnot_start_time) * 1e-12
-        
-        log.logger.info(f"\n{'='*70}")
-        log.logger.info(f"{self.node.name}: LOGICAL BELL PAIR CREATED!")
-        log.logger.info(f"{'='*70}")
-        
-        # MEASURE LOGICAL FIDELITY (only initiator measures to avoid duplication)
-        if self.is_initiator:
-            log.logger.info(f"{self.node.name}: Calculating logical Bell pair fidelity...")
-            logical_fidelity = self._calculate_logical_bell_pair_fidelity()
-            self.logical_fidelity['fidelity'] = logical_fidelity
-            log.logger.info(f"{self.node.name}: Logical fidelity = {logical_fidelity:.6f}")
-        
-        log.logger.info(f"Teleported CNOT completed in {duration:.6f}s")
-        log.logger.info(f"State: |Phi+>_AB = 1/sqrt(2)(|0>_L^A |0>_L^B + |1>_L^A |1>_L^B)")
-        log.logger.info(f"{'='*70}\n")
-        
-        # NOW release memories and print final results
-        self._release_memories()
-        self.print_results()
-  
-        
+ 
     def _configure_as_responder(self, initiator_name: str, encoding_enabled: bool,
                                 initiator_logical_state: str,
-                                teleported_cnot_enabled: bool = False,
+                                teleported_cnot_enabled: bool = True,
                                 depolarization_enabled: bool = False,
                                 coherence_time_ms: float = 500):
         """Configure this app as a responder to an initiator's request.
@@ -369,7 +238,7 @@ class RequestLogicalPairApp(RequestApp):
             depolarization_enabled: Whether to apply depolarization noise
             coherence_time_ms: Coherence time for depolarization noise in milliseconds
         """
-        self.remote_node_name = initiator_name
+        self.responder = initiator_name
 
         # Get remote node reference from timeline
         self.remote_node = self.node.timeline.get_entity_by_name(initiator_name)
@@ -391,294 +260,38 @@ class RequestLogicalPairApp(RequestApp):
             self.logical_state = '0' if initiator_logical_state == '+' else '+'
     
     
-    def _initialize_teleported_cnot(self):
-        """Initialize and start the teleported CNOT protocol."""
-
-        # Determine role based on who initiated the request
-        role = 'alice' if self.is_initiator else 'bob'
-
-        # Only create protocol if not already created
-        if self.teleported_cnot_protocol is None:
-            # Create protocol instance
-            protocol_name = f"TeleportedCNOT_{self.node.name}"
-            self.teleported_cnot_protocol = TeleportedCNOTProtocol(
-                owner=self.node,
-                name=protocol_name,
-                role=role,
-                remote_node_name=self.remote_node_name,
-                data_qubits=self.data_qubits,
-                communication_qubits=self.communication_qubits,
-                remote_node=self.remote_node
-            )
-
-            # Register protocol with node so it can receive messages
-            self.node.protocols.append(self.teleported_cnot_protocol)
-            log.logger.info(f"{self.node.name}: Teleported CNOT protocol initialized")
-
-        # Alice needs to check if Bob is ready before starting
-        if role == 'alice':
-            # Check if Bob's protocol is initialized
-            if self.remote_node and hasattr(self.remote_node, 'request_logical_pair_app'):
-                bob_app = self.remote_node.request_logical_pair_app
-                if bob_app.teleported_cnot_protocol is None:
-                    # Bob not ready yet, schedule retry
-                    process = Process(self, '_initialize_teleported_cnot', [])
-                    event = Event(self.node.timeline.now() + 1000000, process)
-                    self.node.timeline.schedule(event)
-                    return
-
-            # Bob is ready, start protocol
-            self.teleported_cnot_start_time = self.node.timeline.now()
-            log.logger.info(f"{self.node.name}: Starting teleported CNOT as Alice")
-            self.teleported_cnot_protocol.alice_start_protocol()
-        else:
-            log.logger.info(f"{self.node.name}: Ready for teleported CNOT as Bob")
-
-
     def get_other_reservation(self, reservation: "Reservation") -> None:
-        """Called when responder receives a reservation from initiator.
-        
-        This method is called automatically when the initiator creates a reservation.
-        The responder doesn't call start() - it reacts to the initiator's request.
+        """Called when responder (Bob) receives a reservation from initiator (Alice).
+
+        This method is called automatically by SeQUeNCe's reservation system.
+        We configure Bob's role and encoding parameters here, then call the parent
+        to populate memo_to_reservation so get_memory() can track Bell pairs.
         """
-        if self.is_responder:
-            super().get_other_reservation(reservation)
-            log.logger.info(f"{self.node.name}: Accepted reservation from {reservation.initiator}")
-    
-    
-    def get_memory(self, info: "MemoryInfo") -> None:
-        """Process completed Bell pairs.
-        
-        Called when a memory becomes entangled. Collects Bell pairs and
-        triggers synchronization when all 7 are ready.
-        
-        Args:
-            info: Memory information containing entanglement details
-        """
-        if info.state != "ENTANGLED":
-            return
-        
-        # Check if this memory is part of our reservation
-        if info.index not in self.memo_to_reservation:
-            return
-        
-        reservation = self.memo_to_reservation[info.index]
-        
-        # Track timing
-        generation_time = self.node.timeline.now()
-        if self.first_pair_time is None:
-            self.first_pair_time = generation_time
-        self.last_pair_time = generation_time
-        
-        log.logger.info(f"{self.node.name}: Bell pair {self.num_completed} generated "
-                       f"at t={generation_time*1e-12:.6f}s on memory {info.index}")
-        
-        # Store result (fidelity calculated later after sync)
-        result = {
-            'pair_id': self.num_completed,
-            'memory_index': info.index,
-            'memory_info': info,
-            'generation_time': generation_time * 1e-12,
-            'fidelity': None,  # Calculated after synchronization
-            'remote_node': info.remote_node,
-            'remote_memory': info.remote_memo
-        }
-        self.results.append(result)
-        self.num_completed += 1
-        
-        # Check if all pairs are complete
-        if self.num_completed >= self.memo_size:
-            self._all_physical_bell_pairs_completed()
-    
-    
-    def _calculate_physical_bell_pair_fidelity_via_tomography(self, info: "MemoryInfo", remote_node_name: str, 
-                                          remote_memo_name: str) -> float:
-        """Calculate Bell pair fidelity using TRUE quantum state tomography.
-        
-        This method performs ACTUAL Pauli tomography by using the quantum manager's
-        compute_density_matrix method, which performs measurements in multiple bases
-        to reconstruct the density matrix, rather than accessing the internal state.
-        
-        The tomography process involves:
-        1. Finding both qubits in the Bell pair
-        2. Using qm.compute_density_matrix(keys) to perform tomography measurements
-        3. Calculating fidelity F = Ã¢Å¸Â¨ÃŽÂ¦+|Ã|ÃŽÂ¦+Ã¢Å¸Â© from the reconstructed density matrix
-        
-        Args:
-            info: Local memory information
-            remote_node_name: Name of remote node
-            remote_memo_name: Name of remote memory
-            
-        Returns:
-            Fidelity with ideal |ÃŽÂ¦+Ã¢Å¸Â© Bell state (value between 0 and 1)
-        """
-        try:
-            qm = self.node.timeline.quantum_manager
-            local_memory = info.memory
-            local_key = local_memory.qstate_key
-            
-            # Validate remote memory info
-            if remote_memo_name is None or remote_node_name is None:
-                error_msg = f"{self.node.name}: Missing remote memory info - cannot calculate fidelity via tomography"
-                log.logger.error(error_msg)
-                raise ValueError(error_msg)
+        # Configure as responder FIRST (before calling super)
+        self.is_responder = True
+        self.is_initiator = False
+        self.responder = reservation.initiator  # Bob's "responder" field = who he talks to (Alice)
 
-            # Find remote memory using the stored name
-            remote_memory = self.node.timeline.get_entity_by_name(remote_memo_name)
-            if remote_memory is None:
-                error_msg = f"{self.node.name}: Could not find remote memory '{remote_memo_name}' - cannot calculate fidelity"
-                log.logger.error(error_msg)
-                raise ValueError(error_msg)
-            
-            remote_key = remote_memory.qstate_key
+        # Get remote node reference from timeline
+        self.remote_node = self.node.timeline.get_entity_by_name(reservation.initiator)
+        if self.remote_node is None:
+            log.logger.warning(f"{self.node.name}: Could not find remote node {reservation.initiator}")
 
-            # Validate both keys exist
-            if local_key not in qm.states:
-                error_msg = f"{self.node.name}: Local qubit key {local_key} not in quantum manager"
-                log.logger.error(error_msg)
-                raise ValueError(error_msg)
-                
-            if remote_key not in qm.states:
-                error_msg = f"{self.node.name}: Remote qubit key {remote_key} not in quantum manager"
-                log.logger.error(error_msg)
-                raise ValueError(error_msg)
-            
-            log.logger.info(f"{self.node.name}: Performing TRUE tomography on qubits {local_key}, {remote_key}")
-            
-            # Ã¢Å“â€¦ KEY CHANGE: Use quantum manager's compute_density_matrix
-            # This performs ACTUAL tomography by measuring in multiple bases
-            # rather than directly accessing the state's internal representation
-            rho = qm.compute_density_matrix([local_key, remote_key])
+        # Configure encoding parameters
+        # Alice uses |+>_L, so Bob uses |0>_L for proper Bell pair creation
+        self.encoding_enabled = True
+        self.logical_state = '0'
+        self.teleported_cnot_enabled = False
+        self.depolarization_enabled = False
 
-            log.logger.info(f"{self.node.name}: Tomography complete - reconstructed {rho.shape} density matrix")
+        # CRITICAL: Call parent to populate memo_to_reservation
+        # Without this, get_memory() will exit early and Bob won't track Bell pairs
+        super().get_other_reservation(reservation)
 
-            # DEBUG: Log the actual density matrix diagonal and key elements
-            if rho.shape == (4, 4):
-                diag = np.real(np.diag(rho))
-                log.logger.info(f"{self.node.name}: Density matrix diagonal = [{diag[0]:.4f}, {diag[1]:.4f}, {diag[2]:.4f}, {diag[3]:.4f}]")
-                log.logger.info(f"{self.node.name}: rho[0,3] = {rho[0,3]:.4f}, rho[3,0] = {rho[3,0]:.4f}")
-
-            # Verify density matrix properties
-            trace_rho = np.trace(rho)
-            if abs(trace_rho - 1.0) > 1e-6:
-                log.logger.warning(f"{self.node.name}: Density matrix trace = {trace_rho}, normalizing")
-                rho = rho / trace_rho
-
-
-            fidelity = 0.5 * (rho[0,0] + rho[0,3] + rho[3,0] + rho[3,3])
-            
-            # Take real part (imaginary part should be negligible)
-            fidelity = np.real(fidelity)
-            
-            # Log if imaginary part is significant
-            imag_part = np.imag(0.5 * (rho[0,0] + rho[0,3] + rho[3,0] + rho[3,3]))
-            if abs(imag_part) > 1e-6:
-                log.logger.warning(f"{self.node.name}: Significant imaginary part in fidelity: {imag_part}")
-            
-            # Clip to valid range [0, 1] to handle numerical errors
-            fidelity = max(0.0, min(1.0, fidelity))
-            
-            log.logger.info(f"{self.node.name}: Tomography-based fidelity = {fidelity:.6f}")
-            
-            # Additional diagnostics
-            log.logger.debug(f"{self.node.name}: Density matrix diagonal: "
-                           f"[{rho[0,0]:.4f}, {rho[1,1]:.4f}, {rho[2,2]:.4f}, {rho[3,3]:.4f}]")
-            log.logger.debug(f"{self.node.name}: Off-diagonal coherence: |Ã[0,3]| = {abs(rho[0,3]):.4f}")
-            
-            return float(fidelity)
-            
-        except Exception as e:
-            log.logger.error(f"{self.node.name}: Fidelity calculation via tomography FAILED: {e}")
-            import traceback
-            log.logger.error(traceback.format_exc())
-            # Re-raise the exception - DO NOT silently return a fake fidelity value
-            raise RuntimeError(f"Tomography-based fidelity calculation failed for {self.node.name}") from e
-
-
-    def _all_physical_bell_pairs_completed(self):
-        """Called when all 7 Bell pairs have been generated."""
-        log.logger.info(f"{self.node.name}: All {self.num_completed} Bell pairs generated")
-        # Directly schedule fidelity calculation
-        log.logger.info(f"{self.node.name}: Scheduling fidelity calculation")
-        process = Process(self, '_calculate_physical_bell_pair_fidelities', [])
-        event = Event(self.node.timeline.now(), process)
-        self.node.timeline.schedule(event)
-    
-    
-    def _calculate_physical_bell_pair_fidelities(self):
-        """Calculate fidelities for all Bell pairs after applying depolarization noise."""
+        log.logger.info(f"{self.node.name}: Configured as responder for {reservation.initiator}, "
+                       f"encoding={self.encoding_enabled}, logical_state=|{self.logical_state}>_L")
         
-        log.logger.info(f"{self.node.name}: Starting fidelity calculation")
-        
-        # Get current simulation time
-        current_time = self.node.timeline.now()  # in picoseconds
-        
-        # Apply depolarization noise to each Bell pair based on elapsed time (if enabled)
-        if self.depolarization_enabled:
-            for i, result in enumerate(self.results):
-                # Get when this pair was generated (convert from seconds to picoseconds)
-                generation_time_ps = result['generation_time'] * 1e12
-                
-                # Calculate elapsed time
-                elapsed_time_ps = current_time - generation_time_ps
-                
-                # Calculate depolarization probability
-                p = self._calculate_depolarization_probability(elapsed_time_ps, coherence_time_ms = self.depolarization_time_ms)
-                
-                log.logger.info(f"{self.node.name}: Pair {i} - elapsed {elapsed_time_ps*1e-3:.1f} ns, p_depol = {p:.6f}")
-                
-                # Apply two-qubit depolarization noise using stabilizer circuit
-                info = result['memory_info']
-                memory = info.memory
-                local_key = memory.qstate_key
-                
-                # Get remote memory key
-                remote_memory = self.node.timeline.get_entity_by_name(result['remote_memory'])
-                remote_key = remote_memory.qstate_key
-                
-                qm = self.node.timeline.quantum_manager
-                
-                # Create two-qubit depolarization circuit
-                depol_circuit = stim.Circuit(f"""
-                    DEPOLARIZE2({p}) 0 1
-                """)
 
-                # Apply to both qubits in the Bell pair
-                qm.run_circuit(depol_circuit, [local_key, remote_key])
-        
-        # Now calculate fidelities via tomography (existing code continues...)
-        for i, result in enumerate(self.results):
-            info = result['memory_info']
-            remote_node = result['remote_node']
-            remote_memory = result['remote_memory']
-            
-            log.logger.info(f"{self.node.name}: Computing fidelity for Bell pair {i} "
-                        f"(local mem: {info.index}, remote: {remote_memory})")
-            
-            measured_fidelity = self._calculate_physical_bell_pair_fidelity_via_tomography(info, remote_node, remote_memory)
-            result['fidelity'] = measured_fidelity
-            
-            log.logger.info(f"{self.node.name}: Bell pair {result['pair_id']} "
-                        f"tomography fidelity = {measured_fidelity:.6f}")
-        
-        # Calculate and log statistics (rest of existing code...)
-        fidelities = [r['fidelity'] for r in self.results if r['fidelity'] is not None]
-        if fidelities:
-            avg_fidelity = np.mean(fidelities)
-            std_fidelity = np.std(fidelities)
-            log.logger.info(f"{self.node.name}: Fidelity statistics - "
-                        f"Mean: {avg_fidelity:.6f}, Std: {std_fidelity:.6f}")
-        
-        # Rest of existing code for encoding...
-        if self.encoding_enabled:
-            log.logger.info(f"{self.node.name}: All fidelities calculated - starting QEC encoding")
-            self._start_encoding()
-        else:
-            log.logger.info(f"{self.node.name}: No encoding requested - releasing memories")
-            self._release_memories()
-            self.print_results()
-    
-    
     def _release_memories(self):
         """Release all communication memories to RAW state."""
         for result in self.results:
@@ -687,227 +300,6 @@ class RequestLogicalPairApp(RequestApp):
         log.logger.info(f"{self.node.name}: Released all memories")
     
     
-    def _start_encoding(self):
-        """Start QEC encoding process to create logical qubits.
-        
-        Encodes the pre-allocated data qubits to create either |0>_L or |+>_L.
-        
-        Steps:
-        1. Initialize data qubits to |0> states
-        2. Prepare initial state (apply H for |+> if needed)
-        3. Apply [[7,1,3]] encoding circuit
-        4. Schedule completion callback
-        """
-        log.logger.info(f"{self.node.name}: Starting [[7,1,3]] encoding to |{self.logical_state}>_L")
-        self.encoding_start_time = self.node.timeline.now()
-        
-        try:
-            # Get quantum manager
-            qm = self.node.timeline.quantum_manager
-            
-            # Validate we have exactly 7 data qubits
-            if len(self.data_qubits) != 7:
-                raise ValueError(f"Expected 7 data qubits, got {len(self.data_qubits)}")
-            
-            # Get qubit keys from pre-allocated data memories
-            log.logger.info(f"{self.node.name}: Using pre-allocated data memories")
-            
-            # Get qubit keys from pre-allocated data memories
-            data_keys = [memory.qstate_key for memory in self.data_qubits]
-            
-            log.logger.info(f"{self.node.name}: Encoding using qubit keys {data_keys}")
-            
-            # Prepare initial state based on desired logical state
-            if self.logical_state == '+':
-                # Apply H to first qubit to get |+> = (|0> + |1>)/sqrt(2)
-                log.logger.info(f"{self.node.name}: Applying H gate to prepare |+> initial state")
-                h_circuit = QEC713.create_hadamard_circuit()
-                qm.run_circuit(h_circuit, [data_keys[0]], 0.5)
-            else:
-                # Bob needs |0>_L: Qubits already in |0> state
-                log.logger.info(f"{self.node.name}: Using |0> initial state (no preparation needed)")
-            
-            # Apply [[7,1,3]] encoding circuit
-            log.logger.info(f"{self.node.name}: Applying [[7,1,3]] encoding circuit")
-            encoding_circuit = QEC713.create_encoding_circuit()
-            qm.run_circuit(encoding_circuit, data_keys, 0.5, False)
-            
-            log.logger.info(f"{self.node.name}: Encoding circuit applied successfully")
-            
-            # Schedule encoding completion callback
-            delay = 1000  # 1 nanosecond
-            process = Process(self, '_encoding_completed', [])
-            event = Event(self.node.timeline.now() + delay, process)
-            self.node.timeline.schedule(event)
-            
-            log.logger.info(f"{self.node.name}: Scheduled encoding completion callback")
-            
-        except Exception as e:
-            log.logger.error(f"{self.node.name}: Encoding FAILED with error: {e}")
-            import traceback
-            log.logger.error(traceback.format_exc())
-            
-            # Mark encoding as failed and clean up
-            self.encoding_complete = False
-            self._release_memories()
-            raise
-
-
-    def _encoding_completed(self):
-        """Called when QEC encoding is complete."""
-        # DEBUG: Check if this is being called
-        log.logger.info(f"{'*'*70}")
-        log.logger.info(f"DEBUG: {self.node.name} _encoding_completed() CALLED")
-        log.logger.info(f"DEBUG: Role: {'initiator' if self.is_initiator else 'responder'}")
-        log.logger.info(f"DEBUG: teleported_cnot_enabled = {self.teleported_cnot_enabled}")
-        log.logger.info(f"{'*'*70}")
-
-        self.encoding_end_time = self.node.timeline.now()
-        self.encoding_complete = True
-
-        if self.is_initiator:
-            log.logger.info(f"{self.node.name}: Calculating product state fidelity |0>_L (Alice) x |+>_L (Bob)")
-            
-            # Calculate product state fidelity
-            product_fidelity_result = self._calculate_product_state_fidelity(shots=10000)
-            
-            # Store results
-            self.product_state_fidelity = product_fidelity_result
-            
-            alice_x = product_fidelity_result['alice_x_prob']
-            bob_z = product_fidelity_result['bob_z_prob']
-            fidelity = product_fidelity_result['fidelity']
-
-        encoding_time = (self.encoding_end_time - self.encoding_start_time) * 1e-12
-        log.logger.info(f"{self.node.name}: Encoding completed in {encoding_time:.6f}s")
-        
-        # Expire the reservation to stop generating more pairs
-        for reservation in self.memo_to_reservation.values():
-            self.node.resource_manager.expire_rules_by_reservation(reservation)
-            break  # Only expire once
-        
-        # Check if we should proceed to teleported CNOT
-        if self.teleported_cnot_enabled:
-            log.logger.info(f"{self.node.name}: Proceeding to teleported CNOT phase")
-
-            # Verify qubits are ready (already allocated in __init__)
-            log.logger.info(f"{self.node.name}: Using {len(self.data_qubits)} encoded data qubits "
-                        f"and {len(self.communication_qubits)} communication qubits for teleported CNOT")
-            
-            # Verify we have the right number of qubits
-            if len(self.data_qubits) != 7 or len(self.communication_qubits) != 7:
-                raise RuntimeError(f"{self.node.name}: Incorrect number of qubits - "
-                                f"data: {len(self.data_qubits)}, comm: {len(self.communication_qubits)}")
-
-            self._initialize_teleported_cnot()
-            # DON'T release memories or print yet - protocol needs them!
-        else:
-            # No teleported CNOT - we're done
-            self._release_memories()
-            self.print_results()
-
-
-    def _calculate_depolarization_probability(self, elapsed_time_ps: float, 
-                                         coherence_time_ms: float = 100) -> float:
-        """
-        Calculate depolarization probability after elapsed time.
-        
-        Args:
-            elapsed_time_ps: Time elapsed since generation (picoseconds)
-            coherence_time_ns: T2 coherence time (nanoseconds)
-        
-        Returns:
-            Depolarization probability p âˆˆ [0, 1]
-        """
-        elapsed_time_ms = elapsed_time_ps * 1e-9
-        p = 1.0 - np.exp(- elapsed_time_ms / coherence_time_ms)
-        if p < 0.0 or p > 1.0:
-            log.logger.warning(f"{self.node.name}: Calculated depolarization probability out of bounds: p={p}")
-            p = np.clip(p, 0.0, 1.0)
-        return p
-    
-
-    def print_results(self):
-        """Print comprehensive results of Bell pair generation and encoding."""
-        if not self.verbose:
-            return
-
-        print(f"\n{'='*70}")
-        print(f"Results for {self.node.name}")
-        print(f"{'='*70}")
-        
-        # Bell pair generation results
-        print(f"Bell Pairs Generated: {self.num_completed}/{self.memo_size}")
-        
-        if self.results:
-            # Calculate statistics
-            fidelities = [r['fidelity'] for r in self.results if r['fidelity'] is not None]
-            if fidelities:
-                avg_fidelity = np.mean(fidelities)
-                min_fidelity = np.min(fidelities)
-                max_fidelity = np.max(fidelities)
-                std_fidelity = np.std(fidelities)
-                
-                print(f"\nFidelity Statistics (via Quantum State Tomography):")
-                print(f"  Average: {avg_fidelity:.6f}")
-                print(f"  Std Dev: {std_fidelity:.6f}")
-                print(f"  Min/Max: {min_fidelity:.6f} / {max_fidelity:.6f}")
-            
-            # Generation time
-            if self.first_pair_time and self.last_pair_time:
-                total_gen_time = (self.last_pair_time - self.first_pair_time) * 1e-12
-                print(f"\nGeneration Time: {total_gen_time:.6f}s")
-            
-            # Individual pair details
-            print("\nIndividual Bell Pairs (Tomography Results):")
-            for result in self.results:
-                fidelity_str = f"{result['fidelity']:.6f}" if result['fidelity'] is not None else "Not calculated"
-                print(f"  Pair {result['pair_id']}: Memory {result['memory_index']}, "
-                     f"Fidelity = {fidelity_str}")
-            
-
-            print("\nBell Pair Generation Timestamps (picoseconds):")
-            for result in self.results:
-                timestamp_ps = result['generation_time'] * 1e12
-                print(f"  Pair {result['pair_id']}: t = {timestamp_ps:.0f} ps")
-        
-        # Encoding results
-        if self.encoding_enabled:
-            print(f"\nQEC Encoding:")
-            print(f"  Target State: |{self.logical_state}>_L")
-            print(f"  Encoding Complete: {self.encoding_complete}")
-            
-            if self.encoding_complete and self.encoding_start_time and self.encoding_end_time:
-                encoding_time = (self.encoding_end_time - self.encoding_start_time) * 1e-12
-                print(f"  Encoding Time: {encoding_time:.6f}s")
-                
-        # Logical Bell pair fidelity results
-        if self.teleported_cnot_enabled:
-            print(f"\nLogical Bell Pair Fidelity (Post Teleported-CNOT):")
-            if self.logical_fidelity['fidelity'] is not None:
-                print(f"  Fidelity: {self.logical_fidelity['fidelity']:.6f}")
-                print(f"  <XX> = {self.logical_fidelity['correlations']['XX']:+.6f}")
-                print(f"  <YY> = {self.logical_fidelity['correlations']['YY']:+.6f}")
-                print(f"  <ZZ> = {self.logical_fidelity['correlations']['ZZ']:+.6f}")
-                
-                # Compare to physical fidelities
-                if self.results and any(r['fidelity'] is not None for r in self.results):
-                    physical_fidelities = [r['fidelity'] for r in self.results if r['fidelity'] is not None]
-                    avg_physical = np.mean(physical_fidelities)
-                    improvement = self.logical_fidelity['fidelity'] - avg_physical
-                    print(f"\n  Comparison to Physical Bell Pairs:")
-                    print(f"    Average physical fidelity: {avg_physical:.6f}")
-                    print(f"    Logical fidelity improvement: {improvement:+.6f}")
-            else:
-                print(f"  ERROR: Logical fidelity calculation FAILED!")
-                print(f"  Fidelity: None")
-                print(f"  This indicates an error occurred during fidelity measurement.")
-        
-        print(f"{'='*70}\n")
-        
-        print(f"{'='*70}\n")
-    
-
     def received_message(self, src: str, msg):
         """Handle incoming messages - route to appropriate protocol."""
 
@@ -938,8 +330,651 @@ class RequestLogicalPairApp(RequestApp):
             # Handle other message types if needed
             log.logger.debug(f"{self.node.name}: Received non-teleported-CNOT message")
             pass
+         
+    ####################### Generate Physical Bell Pairs ##########################
+     
+    def get_memory(self, info: "MemoryInfo") -> None:
+        """Process completed Bell pairs.
         
+        Called when a memory becomes entangled. Collects Bell pairs and
+        triggers synchronization when all 7 are ready.
+        
+        Args:
+            info: Memory information containing entanglement details
+        """
+        if info.state != "ENTANGLED":
+            return
+        
+        # Check if this memory is part of our reservation
+        if info.index not in self.memo_to_reservation:
+            return
+                
+        # Track timing
+        generation_time = self.node.timeline.now()
+        if self.first_pair_time is None:
+            self.first_pair_time = generation_time
+        self.last_pair_time = generation_time
+        
+        log.logger.info(f"{self.node.name}: Bell pair {self.num_completed} generated "
+                       f"at t={generation_time*1e-12:.6f}s on memory {info.index}")
+        
+        # Store result (fidelity calculated later after sync)
+        result = {
+            'pair_id': self.num_completed,
+            'memory_index': info.index,
+            'memory_info': info,
+            'generation_time': generation_time * 1e-12,
+            'fidelity': None,  # Calculated after synchronization
+            'remote_node': info.remote_node,
+            'remote_memory': info.remote_memo
+        }
+        self.results.append(result)
+        self.num_completed += 1  ## TODO: we need to continiously generate the bell pair so if we do this we only generate 1 logical bell pair
+        
+        if self.num_completed >= self.memo_size:
+            # Schedule fidelity calculation first
+            process = Process(self, '_calculate_physical_bell_pair_fidelities', [])
+            event = Event(self.node.timeline.now() + 1000, process, priority=0)
+            self.node.timeline.schedule(event)           
+            
+            if self.encoding_enabled:
+                # Schedule encoding AFTER fidelity calculation (additional delay)
+                process = Process(self, '_start_encoding', [])
+                event = Event(self.node.timeline.now() + 1000, process, priority=1)
+                self.node.timeline.schedule(event)
+            else:
+                # Schedule cleanup after fidelity calculation
+                log.logger.info(f"{self.node.name}: No encoding requested - releasing memories")
+                process = Process(self, 'print_results', [])
+                event = Event(self.node.timeline.now() + 1000, process, priority=1)
+                self.node.timeline.schedule(event)
+         
+    ####################### Generate Single State Encoding ##########################
+        
+    def _start_encoding(self):
+        """Start QEC encoding process to create logical qubits.
+
+        Encodes the pre-allocated data qubits to create either |0>_L or |+>_L.
+
+        Steps:
+        1. Initialize data qubits to |0> states
+        2. Apply preparation noise (DEPOLARIZE1) based on memory fidelity
+        3. Prepare initial state (apply H for |+> if needed)
+        4. Apply [[7,1,3]] encoding circuit
+        5. Schedule completion callback
+        """
+        log.logger.info(f"{self.node.name}: Starting [[7,1,3]] encoding to |{self.logical_state}>_L")
+        self.encoding_start_time = self.node.timeline.now()
+
+        try:
+            # Get quantum manager
+            qm = self.node.timeline.quantum_manager
+
+            # Validate we have exactly 7 data qubits
+            if len(self.data_qubits) != 7:
+                raise ValueError(f"Expected 7 data qubits, got {len(self.data_qubits)}")
+
+            # Get qubit keys from pre-allocated data memories
+            log.logger.info(f"{self.node.name}: Using pre-allocated data memories")
+
+            # Get qubit keys from pre-allocated data memories
+            data_keys = [memory.qstate_key for memory in self.data_qubits]
+
+            log.logger.info(f"{self.node.name}: Encoding using qubit keys {data_keys}")
+
+            # Apply preparation noise (DEPOLARIZE1) to each data qubit based on its raw_fidelity
+            for i, memory in enumerate(self.data_qubits):
+                fidelity = getattr(memory, 'raw_fidelity', 1.0)
+                if fidelity < 1.0:
+                    # Apply single-qubit depolarizing noise
+                    noise_param = 1.0 - fidelity
+                    noise_circuit = stim.Circuit()
+                    noise_circuit.append("DEPOLARIZE1", [data_keys[i]], noise_param)
+                    qm.run_circuit(noise_circuit, [data_keys[i]], compute_dm=False)
+                    log.logger.debug(f"{self.node.name}: Applied DEPOLARIZE1({noise_param:.4f}) to data qubit {i}")
+
+            # Log the fidelity being used
+            avg_fidelity = np.mean([getattr(m, 'raw_fidelity', 1.0) for m in self.data_qubits])
+            log.logger.info(f"{self.node.name}: Data qubit avg fidelity = {avg_fidelity:.4f}")
+
+            # Prepare initial state based on desired logical state
+            if self.logical_state == '+':
+                # Apply H to first qubit to get |+> = (|0> + |1>)/sqrt(2)
+                log.logger.info(f"{self.node.name}: Applying H gate to prepare |+> initial state")
+                h_circuit = QEC713.create_hadamard_circuit()
+                qm.run_circuit(h_circuit, [data_keys[0]], compute_dm = False)
+
+                # Schedule encoding completion callback
+                delay = 1  # 1 picosecond
+                process = Process(self, '_encoding_completed', [])
+                event = Event(self.node.timeline.now() + delay, process)
+                self.node.timeline.schedule(event)
+
+                log.logger.info(f"{self.node.name}: Scheduled encoding completion callback")
+            else:
+                # Bob needs |0>_L: Qubits already in |0> state
+                log.logger.info(f"{self.node.name}: Using |0> initial state (no preparation needed)")
+
+            # Apply [[7,1,3]] encoding circuit
+            log.logger.info(f"{self.node.name}: Applying [[7,1,3]] encoding circuit")
+            encoding_circuit = QEC713.create_encoding_circuit()
+            qm.run_circuit(encoding_circuit, data_keys, compute_dm = False)
+
+            log.logger.info(f"{self.node.name}: Encoding circuit applied successfully")
+
+            # Mark encoding as complete for Bob (who doesn't schedule _encoding_completed)
+            if self.logical_state != '+':
+                self.encoding_complete = True
+                self.encoding_end_time = self.node.timeline.now()
+
+        except Exception as e:
+            log.logger.error(f"{self.node.name}: Encoding FAILED with error: {e}")
+            import traceback
+            log.logger.error(traceback.format_exc())
+            
+            # Mark encoding as failed and clean up
+            self.encoding_complete = False
+            self._release_memories()
+            raise
+
+
+    def _encoding_completed(self):
+        """Called when QEC encoding is complete."""
+        # DEBUG: Check if this is being called
+        log.logger.info(f"{'*'*70}")
+        log.logger.info(f"DEBUG: {self.node.name} _encoding_completed() CALLED")
+        log.logger.info(f"DEBUG: Role: {'initiator' if self.is_initiator else 'responder'}")
+        log.logger.info(f"DEBUG: teleported_cnot_enabled = {self.teleported_cnot_enabled}")
+        log.logger.info(f"{'*'*70}")
+
+        self.encoding_end_time = self.node.timeline.now()
+        self.encoding_complete = True
+
+        if self.is_initiator:
+            log.logger.info(f"{self.node.name}: Calculating product state fidelity |+>_L (Alice) x |0>_L (Bob)")
+            
+            # Calculate product state fidelity
+            product_fidelity_result = self._calculate_product_state_fidelity()
+            
+            # Store results
+            self.product_state_fidelity = product_fidelity_result
+
+
+        encoding_time = (self.encoding_end_time - self.encoding_start_time) * 1e-12
+        log.logger.info(f"{self.node.name}: Encoding completed in {encoding_time:.6f}s")
+        
+        # # Expire the reservation to stop generating more pairs 
+        # for reservation in self.memo_to_reservation.values():
+        #     self.node.resource_manager.expire_rules_by_reservation(reservation)
+        #     break  # Only expire once
+        
+        # Check if we should proceed to teleported CNOT
+        if self.teleported_cnot_enabled:
+            log.logger.info(f"{self.node.name}: Proceeding to teleported CNOT phase")
+
+            # Verify qubits are ready (already allocated in __init__)
+            log.logger.info(f"{self.node.name}: Using {len(self.data_qubits)} encoded data qubits "
+                        f"and {len(self.communication_qubits)} communication qubits for teleported CNOT")
+            
+            # Verify we have the right number of qubits
+            if len(self.data_qubits) != 7 or len(self.communication_qubits) != 7:
+                raise RuntimeError(f"{self.node.name}: Incorrect number of qubits - "
+                                f"data: {len(self.data_qubits)}, comm: {len(self.communication_qubits)}")
+
+            self._initialize_teleported_cnot()
+            # DON'T release memories or print yet - protocol needs them!
+        else:
+            # No teleported CNOT - we're done
+            # self._release_memories()
+            self.print_results()
+
+    ####################### Teleported CNOT Protocol ##########################
+
+    def _initialize_teleported_cnot(self):
+        """Initialize and start the teleported CNOT protocol.
+
+        Alice initializes both her own protocol and Bob's protocol.
+        This is a simulation workaround - in reality, each node would
+        initialize its own protocol via classical coordination.
+        """
+
+        # Only Alice initializes protocols (she handles both sides)
+        if not self.is_initiator:
+            log.logger.warning(f"{self.node.name}: _initialize_teleported_cnot called on responder - skipping")
+            return
+
+        # Create Alice's protocol if not already created
+        if self.teleported_cnot_protocol is None:
+            protocol_name = f"TeleportedCNOT_{self.node.name}"
+            self.teleported_cnot_protocol = TeleportedCNOTProtocol(
+                owner=self.node,
+                name=protocol_name,
+                role='alice',
+                remote_node_name=self.responder,
+                data_qubits=self.data_qubits,
+                communication_qubits=self.communication_qubits,
+                remote_node=self.remote_node
+            )
+            self.node.protocols.append(self.teleported_cnot_protocol)
+            log.logger.info(f"{self.node.name}: Alice's teleported CNOT protocol initialized")
+
+        # Create Bob's protocol if not already created
+        if self.remote_node and hasattr(self.remote_node, 'request_logical_pair_app'):
+            bob_app = self.remote_node.request_logical_pair_app
+            if bob_app.teleported_cnot_protocol is None:
+                bob_protocol_name = f"TeleportedCNOT_{self.remote_node.name}"
+                bob_app.teleported_cnot_protocol = TeleportedCNOTProtocol(
+                    owner=self.remote_node,
+                    name=bob_protocol_name,
+                    role='bob',
+                    remote_node_name=self.node.name,
+                    data_qubits=bob_app.data_qubits,
+                    communication_qubits=bob_app.communication_qubits,
+                    remote_node=self.node
+                )
+                self.remote_node.protocols.append(bob_app.teleported_cnot_protocol)
+                log.logger.info(f"{self.remote_node.name}: Bob's teleported CNOT protocol initialized by Alice")
+
+        # Start the protocol
+        self.teleported_cnot_start_time = self.node.timeline.now()
+        log.logger.info(f"{self.node.name}: Starting teleported CNOT as Alice")
+        self.teleported_cnot_protocol.start()
+
+
+    def _on_teleported_cnot_complete(self):
+        """Called when teleported CNOT protocol finishes."""
+        self.teleported_cnot_complete = True
+        self.teleported_cnot_end_time = self.node.timeline.now()
+        
+        duration = (self.teleported_cnot_end_time - self.teleported_cnot_start_time) * 1e-12
+        
+        log.logger.info(f"\n{'='*70}")
+        log.logger.info(f"{self.node.name}: LOGICAL BELL PAIR CREATED!")
+        log.logger.info(f"{'='*70}")
+        
+        # MEASURE LOGICAL FIDELITY (only initiator measures to avoid duplication)
+        if self.is_initiator:
+            log.logger.info(f"{self.node.name}: Calculating logical Bell pair fidelity...")
+            logical_fidelity = self._calculate_logical_bell_pair_fidelity()
+            self.logical_fidelity['fidelity'] = logical_fidelity
+            log.logger.info(f"{self.node.name}: Logical fidelity = {logical_fidelity:.6f}")
+        
+        log.logger.info(f"Teleported CNOT completed in {duration:.6f}s")
+        log.logger.info(f"State: |Phi+>_AB = 1/sqrt(2)(|0>_L^A |0>_L^B + |1>_L^A |1>_L^B)")
+        log.logger.info(f"{'='*70}\n")
+        
+        # NOW release memories and print final results
+        self.print_results()
+
+################ Fidelity & Error Calculation Functions  #########################  
+        
+    def _calculate_logical_bell_pair_fidelity(self, num_samples: int = 100, shots_per_sample: int = 1000) -> float:
+        """
+        Calculate logical Bell pair fidelity using multi-sample averaging.
+
+        Uses multiple sampling runs with different seeds to properly capture
+        stochastic noise from DEPOLARIZE2 channels.
+
+        For |Φ+>_L = (|0>_L|0>_L + |1>_L|1>_L)/√2, measures:
+        - <X_L ⊗ X_L> should be +1
+        - <Y_L ⊗ Y_L> should be -1
+        - <Z_L ⊗ Z_L> should be +1
+
+        Fidelity F = (1 + <XX> - <YY> + <ZZ>) / 4
+
+        For [[7,1,3]] Steane code:
+        - X_L = X^⊗7 (X on all 7 physical qubits)
+        - Z_L = Z^⊗7 (Z on all 7 physical qubits)
+
+        Args:
+            num_samples: Number of independent sampling runs to average
+            shots_per_sample: Shots per Pauli basis per sample
+
+        Returns:
+            Logical Bell pair fidelity with |Φ⁺>_L
+        """
+        qm = self.node.timeline.quantum_manager
+
+        # Get Alice's data qubits (this node)
+        alice_keys = [mem.qstate_key for mem in self.data_qubits]
+
+        # Get Bob's data qubits
+        bob_node = self.node.timeline.get_entity_by_name(self.responder)
+        if bob_node is None or not hasattr(bob_node, 'request_logical_pair_app'):
+            raise ValueError(f"Cannot access Bob's node {self.responder} for fidelity measurement")
+        bob_app = bob_node.request_logical_pair_app
+        bob_keys = [mem.qstate_key for mem in bob_app.data_qubits]
+
+        all_keys = alice_keys + bob_keys
+
+        log.logger.info(f"{self.node.name}: Measuring logical Bell pair fidelity...")
+        log.logger.info(f"{self.node.name}: Using {num_samples} samples x {shots_per_sample} shots")
+        log.logger.info(f"{self.node.name}: Alice keys: {alice_keys}")
+        log.logger.info(f"{self.node.name}: Bob keys: {bob_keys}")
+
+        # Get the shared quantum state
+        state = qm.states[alice_keys[0]]
+        log.logger.info(f"{self.node.name}: State contains qubits: {sorted(state.keys)}")
+
+        # Multi-sample averaging to capture stochastic noise
+        correlation_samples = {'X': [], 'Y': [], 'Z': []}
+
+        for sample_idx in range(num_samples):
+            seed = (sample_idx * 12345 + hash(f"{self.node.name}_logical")) % (2**31)
+
+            for basis in ['X', 'Y', 'Z']:
+                # Build measurement circuit from state
+                meas_circuit = state.circuit.copy()
+
+                # Add basis rotation for all qubits
+                for key in all_keys:
+                    if basis == 'X':
+                        meas_circuit.append("H", [key])
+                    elif basis == 'Y':
+                        meas_circuit.append("S_DAG", [key])
+                        meas_circuit.append("H", [key])
+
+                # Add measurements
+                for key in all_keys:
+                    meas_circuit.append("M", [key])
+
+                # Sample with unique seed (ensure non-negative)
+                basis_seed = abs(seed + hash(basis)) % (2**63)
+                sampler = meas_circuit.compile_sampler(seed=basis_seed)
+                measurements = sampler.sample(shots=shots_per_sample)
+
+                # Find measurement columns for our qubits
+                # Measurements are appended in order, so last 14 columns are ours
+                num_meas = measurements.shape[1]
+                num_our_qubits = len(all_keys)
+
+                # Extract our measurements (last num_our_qubits columns)
+                our_measurements = measurements[:, num_meas - num_our_qubits:]
+
+                # Compute logical parities
+                # Alice's logical parity = XOR of her 7 physical measurements
+                alice_parity = np.sum(our_measurements[:, :7], axis=1) % 2
+                # Bob's logical parity = XOR of his 7 physical measurements
+                bob_parity = np.sum(our_measurements[:, 7:14], axis=1) % 2
+
+                # Convert to eigenvalues and compute correlation
+                alice_eigenvalues = 1 - 2 * alice_parity
+                bob_eigenvalues = 1 - 2 * bob_parity
+                correlation = float(np.mean(alice_eigenvalues * bob_eigenvalues))
+
+                correlation_samples[basis].append(correlation)
+
+        # Average correlations over all samples
+        correlations = {
+            'X': float(np.mean(correlation_samples['X'])),
+            'Y': float(np.mean(correlation_samples['Y'])),
+            'Z': float(np.mean(correlation_samples['Z']))
+        }
+
+        # Store correlations
+        self.logical_fidelity['correlations']['XX'] = correlations['X']
+        self.logical_fidelity['correlations']['YY'] = correlations['Y']
+        self.logical_fidelity['correlations']['ZZ'] = correlations['Z']
+
+        # Calculate fidelity: F = (1 + <XX> - <YY> + <ZZ>) / 4
+        fidelity = (1 + correlations['X'] - correlations['Y'] + correlations['Z']) / 4
+
+        log.logger.info(f"{self.node.name}: <X_L ⊗ X_L> = {correlations['X']:+.4f}")
+        log.logger.info(f"{self.node.name}: <Y_L ⊗ Y_L> = {correlations['Y']:+.4f}")
+        log.logger.info(f"{self.node.name}: <Z_L ⊗ Z_L> = {correlations['Z']:+.4f}")
+        log.logger.info(f"{self.node.name}: Logical Bell pair fidelity = {fidelity:.6f}")
+        log.logger.info(f"{self.node.name}: Formula: (1 + {correlations['X']:+.4f} - ({correlations['Y']:+.4f}) + {correlations['Z']:+.4f}) / 4 = {fidelity:.6f}")
+
+        return float(fidelity)
+
+
+    def _calculate_physical_bell_pair_fidelities(self, num_samples: int = 100, shots_per_sample: int = 1000):
+        """Calculate fidelities for all Bell pairs using multi-sample averaging.
+
+        Uses multiple sampling runs with different seeds to properly capture
+        stochastic noise from DEPOLARIZE2 channels.
+
+        Args:
+            num_samples: Number of independent sampling runs to average
+            shots_per_sample: Shots per Pauli basis per sample
+        """
+        qm = self.node.timeline.quantum_manager
+
+        log.logger.info(f"{self.node.name}: Calculating fidelities for {self.memo_size} Bell pairs")
+        log.logger.info(f"{self.node.name}: Using {num_samples} samples x {shots_per_sample} shots")
+
+        # Calculate fidelity for each pair
+        for result in self.results:
+            local_key = result['memory_info'].memory.qstate_key
+            remote_memory = self.node.timeline.get_entity_by_name(result['remote_memory'])
+            remote_key = remote_memory.qstate_key
+            keys = [local_key, remote_key]
+
+            # Get the state and its circuit
+            state = qm.states[local_key]
+
+            # Sample multiple times with different seeds to capture stochastic noise
+            fidelity_samples = []
+
+            for sample_idx in range(num_samples):
+                # Use different seed for each sample
+                seed = (sample_idx * 12345 + hash(f"{self.node.name}_{result['pair_id']}")) % (2**31)
+
+                # Compute density matrix via Pauli tomography
+                # For Bell state fidelity: F = (1 + <XX> + <YY> + <ZZ>) / 4 for |Φ+>
+                # But we need to be careful - |Φ+> has <XX>=+1, <YY>=-1, <ZZ>=+1
+                # So F = Tr(ρ |Φ+><Φ+|) = (1 + <XX> - <YY> + <ZZ>) / 4
+
+                correlations = {}
+                for basis in ['X', 'Y', 'Z']:
+                    # Build measurement circuit
+                    meas_circuit = state.circuit.copy()
+
+                    # Add basis rotation
+                    for key in keys:
+                        if basis == 'X':
+                            meas_circuit.append("H", [key])
+                        elif basis == 'Y':
+                            meas_circuit.append("S_DAG", [key])
+                            meas_circuit.append("H", [key])
+
+                    # Add measurements
+                    for key in keys:
+                        meas_circuit.append("M", [key])
+
+                    # Sample with this seed (ensure non-negative)
+                    basis_seed = abs(seed + hash(basis)) % (2**63)
+                    sampler = meas_circuit.compile_sampler(seed=basis_seed)
+                    measurements = sampler.sample(shots=shots_per_sample)
+
+                    # Get the last 2 measurement columns (for our 2 qubits)
+                    num_measurements = measurements.shape[1]
+                    m0 = measurements[:, num_measurements - 2]
+                    m1 = measurements[:, num_measurements - 1]
+
+                    # Compute correlation: <ZZ> after basis rotation
+                    eigenvalues = (1 - 2*m0) * (1 - 2*m1)
+                    correlations[basis] = float(np.mean(eigenvalues))
+
+                # Fidelity with |Φ+>: F = (1 + <XX> - <YY> + <ZZ>) / 4
+                fid = (1 + correlations['X'] - correlations['Y'] + correlations['Z']) / 4
+                fidelity_samples.append(fid)
+
+            # Average over all samples
+            avg_fidelity = float(np.mean(fidelity_samples))
+            std_fidelity = float(np.std(fidelity_samples))
+
+            result['fidelity'] = float(np.clip(avg_fidelity, 0.0, 1.0))
+            result['fidelity_std'] = std_fidelity
+
+            log.logger.info(f"{self.node.name}: Pair {result['pair_id']} fidelity = {result['fidelity']:.4f} ± {std_fidelity:.4f}")
+
+        # Log statistics
+        fidelities = [r['fidelity'] for r in self.results]
+        log.logger.info(f"{self.node.name}: Fidelity stats - mean={np.mean(fidelities):.4f}, std={np.std(fidelities):.4f}")
+
+
+    def _calculate_product_state_fidelity(self, num_samples: int = 100, shots_per_sample: int = 1000) -> dict:
+        """
+        Calculate fidelity of |+>_L (Alice) and |0>_L (Bob) product state.
+
+        Uses multi-sample averaging to properly capture stochastic noise.
+
+        For [[7,1,3]] Steane code:
+        - Logical Z = Z^{otimes 7} (all physical Z operators)
+        - Logical X = X^{otimes 7} (all physical X operators)
+
+        For |+>_L state: X_L eigenvalue should be +1
+        For |0>_L state: Z_L eigenvalue should be +1
+
+        Measures:
+        - Alice: P(X_L = +1) for |+>_L state
+        - Bob: P(Z_L = +1) for |0>_L state
+        - Product fidelity: F = P(X_L = +1) * P(Z_L = +1)
+
+        Args:
+            num_samples: Number of independent sampling runs to average
+            shots_per_sample: Shots per sample
+
+        Returns:
+            dict with 'alice_x_prob', 'bob_z_prob', 'fidelity'
+        """
+        try:
+            qm = self.node.timeline.quantum_manager
+
+            # Get Alice's data qubits (this node)
+            alice_keys = [mem.qstate_key for mem in self.data_qubits]
+
+            # Get Bob's data qubits
+            bob_node = self.node.timeline.get_entity_by_name(self.responder)
+            if bob_node is None or not hasattr(bob_node, 'request_logical_pair_app'):
+                raise ValueError(f"Cannot access Bob's node {self.responder} for fidelity measurement")
+            bob_app = bob_node.request_logical_pair_app
+            bob_keys = [mem.qstate_key for mem in bob_app.data_qubits]
+
+            log.logger.info(f"{self.node.name}: Measuring product state fidelity using multi-sample averaging")
+            log.logger.info(f"{self.node.name}: Using {num_samples} samples x {shots_per_sample} shots")
+            log.logger.info(f"{self.node.name}: Alice keys: {alice_keys}")
+            log.logger.info(f"{self.node.name}: Bob keys: {bob_keys}")
+
+            # Get the quantum states
+            alice_state = qm.states[alice_keys[0]]
+            bob_state = qm.states[bob_keys[0]]
+
+            # Multi-sample averaging
+            alice_x_samples = []
+            bob_z_samples = []
+
+            for sample_idx in range(num_samples):
+                seed = (sample_idx * 12345 + hash(f"{self.node.name}_product")) % (2**63)
+
+                # =====================================================================
+                # Measure Alice's X_L (logical X operator = X^{otimes 7})
+                # For |+>_L state, X_L|+>_L = +1|+>_L
+                # =====================================================================
+
+                # Build measurement circuit for X basis
+                alice_meas_circuit = alice_state.circuit.copy()
+
+                # Apply H to measure in X basis
+                for key in alice_keys:
+                    alice_meas_circuit.append("H", [key])
+
+                # Add measurements
+                for key in alice_keys:
+                    alice_meas_circuit.append("M", [key])
+
+                # Sample
+                alice_seed = abs(seed + hash("alice_x")) % (2**63)
+                sampler = alice_meas_circuit.compile_sampler(seed=alice_seed)
+                measurements = sampler.sample(shots=shots_per_sample)
+
+                # Get last 7 measurement columns for Alice
+                num_meas = measurements.shape[1]
+                alice_measurements = measurements[:, num_meas - 7:]
+
+                # Compute logical parity (XOR of all 7 physical measurements)
+                alice_parity = np.sum(alice_measurements, axis=1) % 2
+
+                # P(X_L = +1) = fraction where parity is 0
+                alice_x_prob = float(np.mean(alice_parity == 0))
+                alice_x_samples.append(alice_x_prob)
+
+                # =====================================================================
+                # Measure Bob's Z_L (logical Z operator = Z^{otimes 7})
+                # For |0>_L state, Z_L|0>_L = +1|0>_L
+                # =====================================================================
+
+                # Build measurement circuit for Z basis (no rotation needed)
+                bob_meas_circuit = bob_state.circuit.copy()
+
+                # Add measurements (Z basis = computational basis)
+                for key in bob_keys:
+                    bob_meas_circuit.append("M", [key])
+
+                # Sample
+                bob_seed = abs(seed + hash("bob_z")) % (2**63)
+                sampler = bob_meas_circuit.compile_sampler(seed=bob_seed)
+                measurements = sampler.sample(shots=shots_per_sample)
+
+                # Get last 7 measurement columns for Bob
+                num_meas = measurements.shape[1]
+                bob_measurements = measurements[:, num_meas - 7:]
+
+                # Compute logical parity
+                bob_parity = np.sum(bob_measurements, axis=1) % 2
+
+                # P(Z_L = +1) = fraction where parity is 0
+                bob_z_prob = float(np.mean(bob_parity == 0))
+                bob_z_samples.append(bob_z_prob)
+
+            # Average over all samples
+            alice_x_prob = float(np.mean(alice_x_samples))
+            bob_z_prob = float(np.mean(bob_z_samples))
+            fidelity = alice_x_prob * bob_z_prob
+
+            log.logger.info(f"{self.node.name}: Alice P(X_L=+1) = {alice_x_prob:.6f} (should be ~1.0 for |+>_L)")
+            log.logger.info(f"{self.node.name}: Bob P(Z_L=+1) = {bob_z_prob:.6f} (should be ~1.0 for |0>_L)")
+            log.logger.info(f"{self.node.name}: Product state fidelity = {fidelity:.6f}")
+
+            return {
+                'alice_x_prob': alice_x_prob,
+                'bob_z_prob': bob_z_prob,
+                'fidelity': fidelity
+            }
+
+        except Exception as e:
+            log.logger.error(f"{self.node.name}: Error calculating product state fidelity: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'alice_x_prob': None,
+                'bob_z_prob': None,
+                'fidelity': None
+            }
+                 
+        
+    def _calculate_depolarization_probability(self, elapsed_time_ps: float, 
+                                         coherence_time_ms: float = 100) -> float:
+        """
+        Calculate depolarization probability after elapsed time.
+        
+        Args:
+            elapsed_time_ps: Time elapsed since generation (picoseconds)
+            coherence_time_ns: T2 coherence time (nanoseconds)
+        
+        Returns:
+            Depolarization probability p âˆˆ [0, 1]
+        """
+        elapsed_time_ms = elapsed_time_ps * 1e-9
+        p = 1.0 - np.exp(- elapsed_time_ms / coherence_time_ms)
+        if p < 0.0 or p > 1.0:
+            log.logger.warning(f"{self.node.name}: Calculated depolarization probability out of bounds: p={p}")
+            p = np.clip(p, 0.0, 1.0)
+        return p
     
+    ############################ Result Processing and Printing  #########################
+        
     def get_results(self) -> Dict:
         """Get structured results for external analysis.
         
@@ -1013,120 +1048,41 @@ class RequestLogicalPairApp(RequestApp):
             results['product_state_fidelity'] = self.product_state_fidelity
 
         return results
-    
-    
-    def _calculate_product_state_fidelity(self, shots: int = 10000) -> dict:
-        """
-        Calculate fidelity of |+>_L (Alice) and |0>_L (Bob) product state.
-        
-        For [[7,1,3]] Steane code:
-        - Logical Z = Z^(otimes 7) (all physical Z operators)
-        - Logical X = X^(otimes 7) (all physical X operators)
-        
-        Measures:
-        - Alice: P(X_L = +1) for |+>_L state
-        - Bob: P(Z_L = +1) for |0>_L state
-        - Product fidelity: F = P(X_L = +1) * P(Z_L = +1)
-        
-        Args:
-            shots: Number of measurement samples
-            
-        Returns:
-            dict with 'alice_x_prob', 'bob_z_prob', 'fidelity'
-        """
-        try:
-            qm = self.node.timeline.quantum_manager
-            
-            # Get Alice's data qubits (this node)
-            alice_keys = [mem.qstate_key for mem in self.data_qubits]
-            
-            # Get Bob's data qubits (remote node)
-            bob_app = RequestLogicalPairApp._instances[self.remote_node_name]
-            bob_keys = [mem.qstate_key for mem in bob_app.data_qubits]
-            
-            log.logger.info(f"{self.node.name}: Measuring product state fidelity")
-            log.logger.info(f"{self.node.name}: Alice keys: {alice_keys}")
-            log.logger.info(f"{self.node.name}: Bob keys: {bob_keys}")
-            
-            # Build base circuit from all qubits
-            base_circuit = stim.Circuit()
-            added_states = set()
-            all_keys = alice_keys + bob_keys
-            
-            for key in all_keys:
-                state = qm.states[key]
-                if id(state) in added_states:
-                    continue
-                added_states.add(id(state))
-                
-                for instruction in state.circuit:
-                    gate_args = instruction.gate_args_copy()
-                    # Handle both qubit targets and measurement record targets
-                    targets = []
-                    for t in instruction.targets_copy():
-                        if t.is_measurement_record_target:
-                            # Keep measurement record targets as-is
-                            targets.append(t)
-                        else:
-                            # Convert qubit targets to integers
-                            targets.append(t.value)
 
-                    if gate_args:
-                        base_circuit.append(instruction.name, targets, *gate_args)
-                    else:
-                        base_circuit.append(instruction.name, targets)
-            
-            log.logger.info(f"{self.node.name}: Found {len(added_states)} unique quantum states")
-            
-            # Measure Alice's logical X (apply H to change to X basis, then measure)
-            alice_circuit = base_circuit.copy()
-            for key in alice_keys:  # Only apply H to Alice's qubits
-                alice_circuit.append("H", [key])
-            for key in all_keys:
-                alice_circuit.append("M", [key])
-            
-            seed_alice = hash(f"{self.node.name}_alice_x_{self.node.timeline.now()}") % (2**31)
-            alice_sampler = alice_circuit.compile_sampler(seed=seed_alice)
-            alice_samples = alice_sampler.sample(shots=shots)
-            
-            # Calculate Alice's X_L eigenvalue: parity of first 7 measurements
-            alice_x_parity = np.sum(alice_samples[:, :7], axis=1) % 2
-            alice_x_eigenvalues = 1 - 2 * alice_x_parity  # +1 or -1
-            alice_x_prob = float(np.mean(alice_x_eigenvalues == 1))  # P(X_L = +1)
-            
-            # Measure Bob's logical Z (measure directly in Z basis)
-            bob_circuit = base_circuit.copy()
-            for key in all_keys:
-                bob_circuit.append("M", [key])
-            
-            seed_bob = hash(f"{self.node.name}_bob_z_{self.node.timeline.now()}") % (2**31)
-            bob_sampler = bob_circuit.compile_sampler(seed=seed_bob)
-            bob_samples = bob_sampler.sample(shots=shots)
-            
-            # Calculate Bob's Z_L eigenvalue: parity of last 7 measurements
-            bob_z_parity = np.sum(bob_samples[:, 7:14], axis=1) % 2
-            bob_z_eigenvalues = 1 - 2 * bob_z_parity  # +1 or -1
-            bob_z_prob = float(np.mean(bob_z_eigenvalues == 1))  # P(Z_L = +1)
-            
-            # Product state fidelity
-            fidelity = alice_x_prob * bob_z_prob
-            
-            log.logger.info(f"{self.node.name}: Alice P(X_L=+1) = {alice_x_prob:.6f} (should be ~1.0 for |+>_L)")
-            log.logger.info(f"{self.node.name}: Bob P(Z_L=+1) = {bob_z_prob:.6f} (should be ~1.0 for |0>_L)")
-            log.logger.info(f"{self.node.name}: Product state fidelity = {fidelity:.6f}")
-            
-            return {
-                'alice_x_prob': alice_x_prob,
-                'bob_z_prob': bob_z_prob,
-                'fidelity': fidelity
-            }
-            
-        except Exception as e:
-            log.logger.error(f"{self.node.name}: Error calculating product state fidelity: {e}")
-            import traceback
-            traceback.print_exc()
-            return {
-                'alice_x_prob': None,
-                'bob_z_prob': None,
-                'fidelity': None
-            }
+     
+    def print_results(self):
+        """Print Bell pair fidelity results."""
+        if not self.verbose:
+            return
+
+        print(f"\n{'='*70}")
+        print(f"Physical Bell Pair Fidelities - {self.node.name}")
+        print(f"{'='*70}")
+
+        if self.results:
+            # Calculate statistics
+            fidelities = [r['fidelity'] for r in self.results if r['fidelity'] is not None]
+            if fidelities:
+                print(f"\nIndividual Bell Pair Fidelities:")
+                for result in self.results:
+                    fidelity_str = f"{result['fidelity']:.6f}" if result['fidelity'] is not None else "Error"
+                    print(f"  Pair {result['pair_id']}: {fidelity_str}")
+
+                # Summary statistics
+                avg_fidelity = np.mean(fidelities)
+                min_fidelity = np.min(fidelities)
+                max_fidelity = np.max(fidelities)
+                std_fidelity = np.std(fidelities)
+
+                print(f"\nStatistics:")
+                print(f"  Average: {avg_fidelity:.6f}")
+                print(f"  Min:     {min_fidelity:.6f}")
+                print(f"  Max:     {max_fidelity:.6f}")
+                print(f"  Std Dev: {std_fidelity:.6f}")
+            else:
+                print(f"\nWARNING: No fidelities calculated")
+        else:
+            print(f"\nNo Bell pairs generated")
+
+        print(f"{'='*70}\n")
+    

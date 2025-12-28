@@ -128,290 +128,168 @@ class TeleportedCNOTProtocol(Protocol):
         
         log.logger.info(f"[{self.name}] TeleportedCNOTProtocol initialized as {role}")
     
-    # ==================== ALICE'S PHASE A METHODS ====================
+    # ==================== PHASE A: Alice's Operations ====================
     
     def alice_start_protocol(self):
-        """Alice initiates the teleported CNOT protocol.
-        
-        Called by the app when all 7 Bell pairs are ready and encoding is complete.
-        Groups all qubits (Alice's data, Alice's comm, Bob's comm, Bob's data) 
-        into shared circuit, then begins serial processing.
-        """
+        """Alice groups qubits, applies transversal CX + M, notifies Bob."""
         assert self.role == 'alice', "Only Alice can start the protocol"
         
         self.start_time = self.owner.timeline.now()
-        self.current_phase = 'ALICE_MEASURING'
+        self.current_phase = 'PHASE_A'
         
-        log.logger.info(f"[T:{self.start_time:,}] [{self.name}] Alice starting teleported CNOT protocol")
+        log.logger.info(f"[T:{self.start_time:,}] [{self.name}] Alice starting teleported CNOT")
         
-        # Collect all qubit keys that need to be grouped
+        # ========================================================================
+        # SIMULATION WORKAROUND - NOT LOCC COMPLIANT
+        # ========================================================================
+        # The following code accesses Bob's quantum state keys through the remote
+        # node reference. This is ONLY necessary because Stim requires all entangled
+        # qubits to be in the same stabilizer tableau before applying operations.
+        #
+        # PHYSICAL REALITY:
+        # In a real teleported CNOT, Alice operates ONLY on her local qubits:
+        # - Her encoded data qubits (control)
+        # - Her half of the Bell pairs (communication qubits)
+        # She measures, sends classical bits to Bob, and Bob performs corrections.
+        # NO access to Bob's quantum state is needed or possible.
+        #
+        # SIMULATION REQUIREMENT:
+        # Stim's group_qubits() needs all qubit keys to merge separate tableaus.
+        # This is purely a simulator bookkeeping operation with no physical analog.
+        # All subsequent operations (measurements, gates, corrections) are still
+        # strictly local to each party and fully LOCC-compliant.
+        # ========================================================================
+        
+        # === Validate Bob's node and protocol ===
+        if self.remote_node is None:
+            raise ValueError("remote_node not provided")
+        
+        if not hasattr(self.remote_node, 'request_logical_pair_app'):
+            raise ValueError(f"Bob's node {self.remote_node.name} missing request_logical_pair_app")
+        
+        bob_app = self.remote_node.request_logical_pair_app
+        if bob_app.teleported_cnot_protocol is None:
+            raise ValueError("Bob's teleported CNOT protocol not initialized")
+        
+        bob_protocol = bob_app.teleported_cnot_protocol
+        
+        # === Collect all qubit keys for grouping ===
         all_keys = []
         
-        # Alice's data qubits (7 qubits)
+        # Alice's data qubits (7)
         for i in range(7):
             all_keys.append(self.data_qubits[i].qstate_key)
         
-        # Alice's communication qubits (7 Bell pair halves)
+        # Alice's communication qubits (7)
         for i in range(7):
             all_keys.append(self.communication_qubits[i].qstate_key)
         
-        # Get Bob's node
-        if self.remote_node is None:
-            raise ValueError("remote_node not provided - cannot access Bob's data qubits for grouping")
-
-        bob_node = self.remote_node
-
-        # Get Bob's TeleportedCNOT protocol instance via the app reference
-        if not hasattr(bob_node, 'request_logical_pair_app'):
-            raise ValueError(f"Bob's node {bob_node.name} does not have request_logical_pair_app attribute")
-
-        bob_app = bob_node.request_logical_pair_app
-        if bob_app.teleported_cnot_protocol is None:
-            raise ValueError(f"Bob's teleported CNOT protocol not initialized")
-
-        bob_protocol = bob_app.teleported_cnot_protocol
-
-        # Bob's data qubits (7 qubits)
+        # Bob's communication qubits (7) - NOT LOCC COMPLIANT
+        for i in range(7):
+            all_keys.append(bob_protocol.communication_qubits[i].qstate_key)
+        
+        # Bob's data qubits (7) - NOT LOCC COMPLIANT
         for i in range(7):
             all_keys.append(bob_protocol.data_qubits[i].qstate_key)
         
-        log.logger.info(f"[T:{self.start_time:,}] [{self.name}] "
-                       f"Grouping {len(all_keys)} qubits: "
-                       f"Alice data + Alice comm + Bob data")
+        log.logger.info(f"[T:{self.start_time:,}] [{self.name}] Grouping {len(all_keys)} qubits: "
+                        f"Alice data (7) + Alice comm (7) + Bob comm (7) + Bob data (7)")
         
-        # Group all qubits into shared circuit
+        # Group into shared tableau
         self.owner.timeline.quantum_manager.group_qubits(all_keys)
         
-        log.logger.info(f"[T:{self.start_time:,}] [{self.name}] "
-                       f"All qubits grouped into shared circuit")
+        # === Get shared circuit ===
+        circuit = self.owner.timeline.quantum_manager.states[all_keys[0]].circuit
         
-        # Start processing first qubit
-        self.alice_process_qubit(0)
+        # === Apply transversal CX(data -> comm) ===
+        for i in range(7):
+            data_key = self.data_qubits[i].qstate_key
+            comm_key = self.communication_qubits[i].qstate_key
+            circuit.append('CX', [data_key, comm_key])
         
-  
-    def alice_process_qubit(self, qubit_index: int):
-        """Alice appends CNOT and measurement to circuit, then notifies Bob (deferred execution).
-
-        Process:
-        1. Append local CNOT(data[i] -> comm[i]) to circuit
-        2. Append measurement M(comm[i]) to circuit
-        3. Send notification message to Bob
-
-        Args:
-            qubit_index: Index of qubit to process (0-6)
-        """
-        if qubit_index >= 7:
-            # All qubits processed by Alice
-            self.current_phase = 'WAITING_FOR_BOB'
-            log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Alice completed all measurements, waiting for Bob")
-            return
-
-        log.logger.debug(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Alice processing qubit {qubit_index}")
-
-        data_key = self.data_qubits[qubit_index].qstate_key
-        comm_key = self.communication_qubits[qubit_index].qstate_key
-
-        # Get the shared circuit
-        data_state = self.owner.timeline.quantum_manager.states[data_key]
-        circuit = data_state.circuit
-
-        # Append CNOT(data -> comm) - NO EXECUTION
-        circuit.append('CX', [data_key, comm_key])
-
-        # Append measurement of comm - NO EXECUTION
-        circuit.append('M', [comm_key])
-
-        self.alice_qubits_sent += 1
-
+        # === Apply measurements M(comm) ===
+        for i in range(7):
+            comm_key = self.communication_qubits[i].qstate_key
+            circuit.append('M', [comm_key])
+        
         log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                    f"Alice appended CNOT+M for qubit {qubit_index}")
-
-        # Send notification message to Bob
+                        f"Alice appended 7 CX + 7 M")
+        
+        # === Send message to Bob ===
         msg = TeleportedCNOTMessage(
             TeleportedCNOTMsgType.ALICE_MEASUREMENT,
             protocol_name=self.name,
-            qubit_index=qubit_index
+            qubit_index=-1
         )
-
-        bob_protocol_name = f"TeleportedCNOT_{self.remote_node_name}"
-        msg.receiver = bob_protocol_name
+        msg.receiver = f"TeleportedCNOT_{self.remote_node_name}"
         self.owner.send_message(self.remote_node_name, msg)
+        
+        self.current_phase = 'WAITING_FOR_BOB'
+        
+    # ==================== PHASE C: Bob's Operations ====================
 
-        log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Alice sent notification for qubit {qubit_index} to {self.remote_node_name}")
-    
-    # ==================== BOB'S PHASE C METHODS ====================
-    
-    def bob_receive_alice_measurement(self, msg: TeleportedCNOTMessage):
-        """Bob receives notification that Alice processed qubit i and schedules processing.
-        
-        Process:
-        1. Extract qubit index from message
-        2. Schedule processing of this qubit with local processing delay
-        
-        Args:
-            msg: Message from Alice
-        """
-        assert self.role == 'bob', "Only Bob receives Alice's measurements"
-        
-        qubit_index = msg.qubit_index
-        
-        log.logger.debug(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Bob received notification for qubit {qubit_index}")
-        
-        # Schedule Bob's processing with local delay
-        delay = 50  # Bob's local processing delay (50 ps)
-        
-        process = Process(self, "bob_process_qubit", [qubit_index])
-        event = Event(self.owner.timeline.now() + delay, process)
-        self.owner.timeline.schedule(event)
-        
-        log.logger.debug(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                    f"Scheduled Bob's processing of qubit {qubit_index} at T={self.owner.timeline.now() + delay:,}")
-    
-    
-    def bob_process_qubit(self, qubit_index: int):
-        """Bob appends operations and notifies Alice using target_rec(-1) (deferred execution).
-
-        Process:
-        1. Append CNOT(comm -> data)
-        2. Append X correction controlled by Alice's measurement (target_rec(-1))
-        3. Append Hadamard to comm
-        4. Append measurement M(comm) in X basis
-        5. Send notification message to Alice
-
-        Args:
-            qubit_index: Index of qubit (0-6)
-        """
-        log.logger.debug(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Bob processing qubit {qubit_index}")
-
-        data_key = self.data_qubits[qubit_index].qstate_key
-        comm_key = self.communication_qubits[qubit_index].qstate_key
-
-        # Get the shared circuit
-        data_state = self.owner.timeline.quantum_manager.states[data_key]
-        circuit = data_state.circuit
-
-        # Step 1: CNOT(comm -> data)
-        circuit.append('CX', [comm_key, data_key])
-        
-        # Step 2: X correction controlled by Alice's Z measurement
-        # Since we process serially, Alice's measurement is always the most recent (target_rec(-1))
-        circuit.append('CX', [stim.target_rec(-1), data_key])
-        
-        # Step 3: Hadamard on comm (converts Z to X basis)
-        circuit.append('H', [comm_key])
-        
-        # Step 4: Measure comm in Z basis (which is X after Hadamard)
-        circuit.append('M', [comm_key])
+    def bob_process_all_qubits(self):
+        """Bob applies CX, X_correction, H, M for all 7 qubits."""
+        self.current_phase = 'PHASE_C'
         
         log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                    f"Bob appended operations for qubit {qubit_index}")
+                        f"Bob processing all qubits")
         
-        # Send notification message to Alice
+        # Get shared circuit
+        circuit = self.owner.timeline.quantum_manager.states[self.data_qubits[0].qstate_key].circuit
+        
+        for i in range(7):
+            data_key = self.data_qubits[i].qstate_key
+            comm_key = self.communication_qubits[i].qstate_key
+            
+            circuit.append('CX', [comm_key, data_key])
+            circuit.append('CX', [stim.target_rec(-7), data_key])
+            circuit.append('H', [comm_key])
+            circuit.append('M', [comm_key])
+        
+        log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
+                        f"Bob appended 7 (CX + X_corr + H + M)")
+        
+        # Send message to Alice
         msg = TeleportedCNOTMessage(
             TeleportedCNOTMsgType.BOB_MEASUREMENT,
             protocol_name=self.name,
-            qubit_index=qubit_index
+            qubit_index=-1
         )
-
-        alice_protocol_name = f"TeleportedCNOT_{self.remote_node_name}"
-        msg.receiver = alice_protocol_name
+        msg.receiver = f"TeleportedCNOT_{self.remote_node_name}"
         self.owner.send_message(self.remote_node_name, msg)
+        
+        self.current_phase = 'WAITING_FOR_ALICE'
 
-        log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Bob sent notification for qubit {qubit_index} to {self.remote_node_name}")
-        
-        self.bob_qubits_processed += 1
-        
-        # Check if all qubits processed
-        if self.bob_qubits_processed == 7:
-            self.current_phase = 'WAITING_FOR_ALICE'
-            log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Bob completed all operations, waiting for Alice")  
-            
-    # ==================== ALICE'S PHASE E METHODS ====================
-    
-    def alice_receive_bob_measurement(self, msg: TeleportedCNOTMessage):
-        """Alice receives notification that Bob processed qubit i, applies Z correction, and continues.
-        
-        Process:
-        1. Apply Z correction using target_rec(-1)
-        2. Mark qubit as complete
-        3. Schedule next qubit processing or complete protocol
-        
-        Args:
-            msg: Message from Bob
-        """
-        assert self.role == 'alice', "Only Alice receives Bob's measurements"
-        
-        qubit_index = msg.qubit_index
-        
-        log.logger.debug(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Alice received notification for qubit {qubit_index}")
-        
-        # Apply final Z correction
-        data_key = self.data_qubits[qubit_index].qstate_key
-        data_state = self.owner.timeline.quantum_manager.states[data_key]
-        circuit = data_state.circuit
+
+    # ==================== PHASE E: Alice's Final Corrections ====================
+
+    def alice_apply_z_corrections(self):
+        """Alice applies Z corrections for all 7 qubits."""
+        self.current_phase = 'PHASE_E'
         
         log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                    f"Alice applying Z correction for qubit {qubit_index}")
+                        f"Alice applying Z corrections")
         
-        # Z correction controlled by Bob's X measurement
-        # Since we process serially, Bob's measurement is always the most recent (target_rec(-1))
-        circuit.append('CZ', [stim.target_rec(-1), data_key])
+        # Get shared circuit
+        circuit = self.owner.timeline.quantum_manager.states[self.data_qubits[0].qstate_key].circuit
+        
+        # Bob's measurement for qubit i is at index 7+i
+        # target_rec(i - 7) references measurement at index (current_count) + (i - 7)
+        for i in range(7):
+            data_key = self.data_qubits[i].qstate_key
+            circuit.append('CZ', [stim.target_rec(i - 7), data_key])
         
         log.logger.info(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                    f"Alice appended Z correction for qubit {qubit_index}")
+                        f"Alice appended 7 CZ corrections")
         
-        # Mark as complete
-        self.corrections_applied[qubit_index] = True
-        self.qubits_processed += 1
-        
-        # Check if all qubits processed
-        if self.qubits_processed == 7:
-            self.protocol_complete()
-        else:
-            # Schedule processing of next qubit after a small delay
-            next_qubit = qubit_index + 1
-            delay = 100  # Small delay between qubits (100 ps)
-            
-            process = Process(self, "alice_process_qubit", [next_qubit])
-            event = Event(self.owner.timeline.now() + delay, process)
-            self.owner.timeline.schedule(event)
-            
-            log.logger.debug(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
-                        f"Scheduled qubit {next_qubit} processing at T={self.owner.timeline.now() + delay:,}")
-        
-    # ==================== COMPLETION ====================
-    
-    def protocol_complete(self):
-        """Called when all 7 qubits processed."""
-        self.end_time = self.owner.timeline.now()
-        self.current_phase = 'COMPLETE'
-        
-        duration = self.end_time - self.start_time
-        
-        log.logger.info(f"[T:{self.end_time:,}] [{self.name}] "
-                    f"Teleported CNOT protocol COMPLETE")
-        log.logger.info(f"[{self.name}] Protocol duration: {duration:,} ps")
-        log.logger.info(f"[{self.name}] All 7 qubits processed successfully")
-        
-        # Schedule notification to app via timeline
-        delay = 1000  # 1 nanosecond for local processing
-        process = Process(self.owner.request_logical_pair_app, '_on_teleported_cnot_complete', [])
-        event = Event(self.owner.timeline.now() + delay, process)
-        self.owner.timeline.schedule(event)
-        log.logger.info(f"[{self.name}] Scheduled app completion notification")  
-      
+        self.protocol_complete()
+
+
     # ==================== MESSAGE HANDLING ====================
-    
+
     def received_message(self, src: str, msg: TeleportedCNOTMessage):
-        """Route incoming messages based on type and role.
+        """Route incoming messages and schedule appropriate processing.
         
         Args:
             src: Source node name
@@ -422,19 +300,49 @@ class TeleportedCNOTProtocol(Protocol):
         """
         if self.role == 'bob':
             assert msg.msg_type == TeleportedCNOTMsgType.ALICE_MEASUREMENT, \
-                f"[{self.name}] Bob received wrong message type: {msg.msg_type} from {src}"
-            self.bob_receive_alice_measurement(msg)
+                f"[{self.name}] Bob received wrong message type: {msg.msg_type}"
+            
+            log.logger.debug(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
+                            f"Bob received Alice's notification")
+            
+            process = Process(self, "bob_process_all_qubits", [])
+            event = Event(self.owner.timeline.now() + 50, process)
+            self.owner.timeline.schedule(event)
             return True
             
         elif self.role == 'alice':
             assert msg.msg_type == TeleportedCNOTMsgType.BOB_MEASUREMENT, \
-                f"[{self.name}] Alice received wrong message type: {msg.msg_type} from {src}"
-            self.alice_receive_bob_measurement(msg)
-            return True
+                f"[{self.name}] Alice received wrong message type: {msg.msg_type}"
             
+            log.logger.debug(f"[T:{self.owner.timeline.now():,}] [{self.name}] "
+                            f"Alice received Bob's notification")
+            
+            process = Process(self, "alice_apply_z_corrections", [])
+            event = Event(self.owner.timeline.now() + 50, process)
+            self.owner.timeline.schedule(event)
+            return True
+        
         else:
-            assert False, f"[{self.name}] Invalid role: {self.role}"
-  
+            raise ValueError(f"[{self.name}] Invalid role: {self.role}")
+
+
+    # ==================== COMPLETION ====================
+
+    def protocol_complete(self):
+        """Called when all 7 qubits processed."""
+        self.end_time = self.owner.timeline.now()
+        self.current_phase = 'COMPLETE'
+        
+        duration = self.end_time - self.start_time
+        
+        log.logger.info(f"[T:{self.end_time:,}] [{self.name}] Teleported CNOT protocol COMPLETE")
+        log.logger.info(f"[{self.name}] Protocol duration: {duration:,} ps")
+        
+        # Notify app
+        process = Process(self.owner.request_logical_pair_app, '_on_teleported_cnot_complete', [])
+        event = Event(self.owner.timeline.now() + 1000, process)
+        self.owner.timeline.schedule(event)
+    
     
     def is_ready(self) -> bool:
         """Check if protocol is ready to start."""

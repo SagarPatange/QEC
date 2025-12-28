@@ -1,8 +1,5 @@
 __pycache__
-tcnot_circuit.ipynb
-teleportedCNOTdraft3.py   
-teleported_CNOT_draft2.py   
-teleported_CNOT_draft1.py   
+tcnot_circuit.ipynb 
 TCNOT_with_sequence.py
 Liang_Purification.py
 TeleportedCNOT_EncodedBellPair.ipynb
@@ -26,4 +23,4 @@ QEC_app.py
 QEC_protcol.py
 tmp/
 *test.json
-
+stim_bug.ipynb
