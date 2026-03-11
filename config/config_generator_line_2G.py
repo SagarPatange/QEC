@@ -32,23 +32,44 @@ from sequence.topology.router_net_topo import RouterNetTopo
 
 
 #=========================== NEW FUNCTION ============================
-def generate_2g_nodes(router_names, memo_size, data_memo_size, ancilla_memo_size, template=None):
+def generate_2g_nodes(
+    router_names,
+    memo_size,
+    data_memo_size,
+    ancilla_memo_size,
+    template=None,
+    gate_fidelity=None,
+    two_qubit_gate_fidelity=None,
+    ft_prep_mode="none",
+    ft_max_retries=1,
+    ft_postselect=False,
+):
     """Generate node configs for 2nd generation quantum routers."""
     # Start with standard nodes
     nodes = generate_nodes(router_names, memo_size, template)
-    
-    N = len(router_names) 
 
-    for i,node in enumerate(nodes):
+    N = len(router_names)
+
+    for i, node in enumerate(nodes):
         node["generation"] = 2           # This triggers 2nd gen creation
+        # FT ancilla-prep configuration (consumed by app/router layers later)
+        node["ft_prep_mode"] = ft_prep_mode
+        node["ft_max_retries"] = int(ft_max_retries)
+        node["ft_postselect"] = bool(ft_postselect)
+
         if i == 0 or i == N-1:
-            node["data_memo_size"] = data_memo_size       
-            node["ancilla_memo_size"] = ancilla_memo_size   
+            node["data_memo_size"] = data_memo_size
+            node["ancilla_memo_size"] = ancilla_memo_size
         else:
-            node["memo_size"] = memo_size*2 
-            node["data_memo_size"] = data_memo_size*2       
+            node["memo_size"] = memo_size*2
+            node["data_memo_size"] = data_memo_size*2
             node["ancilla_memo_size"] = ancilla_memo_size*2
-            
+
+        if gate_fidelity is not None:
+            node["gate_fidelity"] = gate_fidelity
+        if two_qubit_gate_fidelity is not None:
+            node["two_qubit_gate_fidelity"] = two_qubit_gate_fidelity
+
     return nodes
 #================================================================
 
@@ -57,14 +78,28 @@ parser = argparse.ArgumentParser()
 parser.add_argument('linear_size', type=int, help='number of network nodes')
 parser = add_default_args(parser)
 parser.add_argument('-ds', '--data_size', type = int, default = 7, help='Data memories for 2nd generation quantum routers')
-parser.add_argument('-as', '--ancilla_size', type = int, default = 0, help='Ancilla memories for 2nd generation quantum routers') 
- 
+parser.add_argument('-as', '--ancilla_size', type = int, default = 0, help='Ancilla memories for 2nd generation quantum routers')
+parser.add_argument('--gate_fid', type=float, default=None, help='Single-qubit gate fidelity (default: ideal)')
+parser.add_argument('--two_qubit_gate_fid', type=float, default=None, help='Two-qubit gate fidelity (default: ideal)')
+parser.add_argument('--css_code', type=str, default='[[7,1,3]]', help='CSS code name, e.g. "[[7,1,3]]" or "[[9,1,3]]". Auto-sets data_size.')
+parser.add_argument('--ft_prep_mode', type=str, default='none', choices=['none', 'minimal', 'strong'], help='Fault-tolerant prep mode for logical-state preparation')
+parser.add_argument('--ft_max_retries', type=int, default=1, help='Max retries for FT prep attempts per logical block')
+parser.add_argument('--ft_postselect', action='store_true', help='Enable detector-based postselection during FT prep')
 
 #=========================== Changes ============================
-parser.add_argument('--gen2', action='store_true', help='Use 2nd generation quantum routers')  # NEW LINE
+parser.add_argument('--gen2', action='store_true', help='Use 2nd generation quantum routers')
 #================================================================
 
 args = parser.parse_args()
+
+# If --css_code is provided, derive data_size and memo_size from the code's n
+if args.css_code != '[[7,1,3]]' or args.data_size == 7:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from css_codes import get_css_code
+    code = get_css_code(args.css_code)
+    args.data_size = code.n
+    args.memo_size = code.n
 
 output_dict = {}
 
@@ -72,7 +107,7 @@ output_dict = {}
 output_dict[Topology.ALL_TEMPLATES] = \
     {
         "qec": {
-            "MemoryArray": {
+            "memory": {
                 "fidelity": 1.0,
                 "efficiency": 0.9
             }
@@ -88,7 +123,9 @@ template = 'qec'
 
 if args.gen2:  # Check for 2nd generation flag (NEW)
     args.formalism = 'stabilizer'  # 2nd gen routers typically use stabilizer for QEC
-    nodes = generate_2g_nodes(router_names, args.memo_size, args.data_size, args.ancilla_size, template)
+    nodes = generate_2g_nodes(router_names, args.memo_size, args.data_size, args.ancilla_size,
+                              template, args.gate_fid, args.two_qubit_gate_fid,
+                              args.ft_prep_mode, args.ft_max_retries, args.ft_postselect)
 else:
     nodes = generate_nodes(router_names, args.memo_size, template)
 #================================================================
@@ -136,9 +173,19 @@ for i, bsm_name in enumerate(bsm_names):
         
 output_dict[Topology.ALL_Q_CHANNEL] = qchannels
 
-# generate classical links
-router_cchannels = generate_classical(router_names, cc_delay)
-cchannels += router_cchannels
+# generate router-to-router classical links
+# NOTE: Cannot use SeQUeNCe's generate_classical(router_names, cc_delay) because
+# it multiplies cc_delay by 1e9 again (line 144 of config_generator.py), but our
+# cc_delay is already -1 (sentinel for "auto-calculate"). The double multiplication
+# produces -1e9, which bypasses the sentinel check in ClassicalChannel.__init__
+# (it only checks delay == -1) and results in a literal negative delay.
+# We generate these manually with the correct cc_delay value.
+for n1 in router_names:
+    for n2 in router_names:
+        if n1 != n2:
+            cchannels.append({Topology.SRC: n1,
+                              Topology.DST: n2,
+                              Topology.DELAY: cc_delay})
 output_dict[Topology.ALL_C_CHANNEL] = cchannels
 
 

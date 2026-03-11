@@ -1,7 +1,7 @@
 {
     "templates": {
         "qec": {
-            "MemoryArray": {
+            "memory": {
                 "fidelity": 1.0,
                 "efficiency": 0.9
             }
@@ -129,32 +129,32 @@
         {
             "source": "router_0",
             "destination": "router_1",
-            "delay": -1000000000.0
+            "delay": -1
         },
         {
             "source": "router_0",
             "destination": "router_2",
-            "delay": -1000000000.0
+            "delay": -1
         },
         {
             "source": "router_1",
             "destination": "router_0",
-            "delay": -1000000000.0
+            "delay": -1
         },
         {
             "source": "router_1",
             "destination": "router_2",
-            "delay": -1000000000.0
+            "delay": -1
         },
         {
             "source": "router_2",
             "destination": "router_0",
-            "delay": -1000000000.0
+            "delay": -1
         },
         {
             "source": "router_2",
             "destination": "router_1",
-            "delay": -1000000000.0
+            "delay": -1
         }
     ],
     "stop_time": 10000000000000,

@@ -1,4 +1,5 @@
 import numpy as np
+from pathlib import Path
 from sequence.topology.router_net_topo import RouterNetTopo
 from router_net_topo_2G import RouterNetTopo2G
 import sequence.utils.log as log
@@ -9,6 +10,36 @@ from sequence.entanglement_management.generation import EntanglementGenerationA,
 from request_app import RequestAppThroughput
 from RequestLogicalPairApp import RequestLogicalPairApp
 from sequence.topology.node import QuantumRouter2ndGeneration
+
+
+def resolve_config_path(config_file: str) -> str:
+    config_path = Path(config_file)
+    if not config_path.is_absolute():
+        config_path = Path(__file__).resolve().parent / config_file
+    return str(config_path)
+
+
+def run_five_node_pair(label: str, css_code: str, non_ft_config: str, ft_config: str):
+    """Run paired 5-node comparisons, skipping configs that do not exist yet."""
+    print("\n" + "=" * 70)
+    print(f"  {label}")
+    print("=" * 70)
+
+    run_ft = False
+    mode_configs = [("Non-FT", non_ft_config)]
+    if run_ft:
+        mode_configs.append(("FT", ft_config))
+
+    for mode_label, config_file in mode_configs:
+        config_path = Path(resolve_config_path(config_file))
+        print(f"\n[{mode_label}] {config_file}")
+        if not config_path.exists():
+            print(f"Skipping missing config: {config_file}")
+            continue
+        five_node_logical_pair_with_app(
+            config_file=config_file,
+            css_code=css_code,
+        )
 
 
 def two_node_physical_pair_with_app_ketstate(verbose=False):
@@ -168,6 +199,150 @@ def two_node_physical_pair_with_app_stabilizer():
     print("="*70 + "\n")
     
 
+def five_node_line_topology_smoke_test(config_file='config/line_5.json'):
+    """Smoke test the new 5-router line topology with one physical request.
+
+    This verifies that the topology loads, router_0 can issue a request to
+    router_4 through the multihop chain, and the simulation completes.
+    """
+    print('\n5-node linear topology smoke test:')
+
+    log_filename = 'log/line_5_smoke_test'
+    network_topo = RouterNetTopo(config_file)
+    tl = network_topo.get_timeline()
+
+    log.set_logger(__name__, tl, log_filename)
+    log.set_logger_level('INFO')
+
+    src_node_name = 'router_0'
+    dest_node_name = 'router_4'
+    src_app = None
+
+    routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
+    for router in routers:
+        app = RequestAppThroughput(router)
+        if router.name == src_node_name:
+            src_app = app
+
+    if src_app is None:
+        raise RuntimeError(f"Failed to find source app for {src_node_name}")
+
+    start_time = 1e12
+    end_time = 5e12
+    memory_size = 1
+    target_fidelity = 0.01
+    src_app.max_entanglements = 1
+    src_app.start(dest_node_name, start_time, end_time, memory_size, target_fidelity)
+
+    tl.init()
+    tl.run()
+
+    stats = src_app.get_statistics()
+    print(f"Routers: {len(routers)}")
+    print(f"Completed: {stats['completed']}")
+    print(f"Timeout triggered: {stats['timeout_triggered']}")
+    print(f"Total entanglements generated: {stats['total_entanglements']}")
+    if src_app.entanglement_fidelities:
+        fidelities = []
+        for values in src_app.entanglement_fidelities.values():
+            fidelities.extend(values)
+        if fidelities:
+            print(f"Average fidelity: {np.mean(fidelities):.6f}")
+
+
+def five_node_physical_pair_with_app_ketstate(config_file='config/line_5.json'):
+    """True no-QEC 5-node baseline using raw physical entanglement."""
+    print('\n5-node physical pairs using KetState with RequestApp:')
+    QuantumManager.clear_active_formalism()
+
+    log_filename = 'log/line_5_physical_ketstate_app'
+    network_topo = RouterNetTopo(config_file)
+    tl = network_topo.get_timeline()
+
+    log.set_logger(__name__, tl, log_filename)
+    log.set_logger_level('INFO')
+
+    src_node_name = 'router_0'
+    dest_node_name = 'router_4'
+    src_app = None
+
+    for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
+        app = RequestAppThroughput(router)
+        if router.name == src_node_name:
+            src_app = app
+
+    if src_app is None:
+        raise RuntimeError(f"Failed to find source app for {src_node_name}")
+
+    start_time = 1e12
+    end_time = 10e12
+    memory_size = 1
+    target_fidelity = 0.01
+    src_app.max_entanglements = 1
+    src_app.start(dest_node_name, start_time, end_time, memory_size, target_fidelity)
+
+    tl.init()
+    tl.run()
+
+    stats = src_app.get_statistics()
+    print(f"Completed: {stats['completed']}")
+    print(f"Timeout triggered: {stats['timeout_triggered']}")
+    print(f"Total entanglements generated: {stats['total_entanglements']}")
+    if stats.get('overall_fidelity_stats'):
+        print(f"Average fidelity: {stats['overall_fidelity_stats']['avg']:.6f}")
+    return stats
+
+
+def five_node_physical_pair_with_app_stabilizer(config_file='config/line_5_physical_stabilizer.json'):
+    """True no-QEC 5-node baseline under stabilizer formalism."""
+    print('\n5-node physical pairs using Stabilizers with RequestApp:')
+
+    QuantumManager.set_global_manager_formalism(STABILIZER_FORMALISM)
+    EntanglementGenerationA.set_global_type('barret_kok_stabilizer')
+    EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
+
+    log_filename = 'log/line_5_physical_stabilizer_app'
+    network_topo = RouterNetTopo(config_file)
+    tl = network_topo.get_timeline()
+
+    log.set_logger(__name__, tl, log_filename)
+    log.set_logger_level('INFO')
+
+    src_node_name = 'router_0'
+    dest_node_name = 'router_4'
+    src_app = None
+    dest_app = None
+
+    for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
+        app = RequestAppThroughput(router)
+        if router.name == src_node_name:
+            src_app = app
+        elif router.name == dest_node_name:
+            dest_app = app
+
+    if src_app is None or dest_app is None:
+        raise RuntimeError("Failed to find source/destination apps for 5-node stabilizer baseline")
+
+    start_time = 1e12
+    end_time = 10e12
+    memory_size = 1
+    target_fidelity = 0.01
+    src_app.max_entanglements = 1
+    dest_app.max_entanglements = 1
+    src_app.start(dest_node_name, start_time, end_time, memory_size, target_fidelity)
+
+    tl.init()
+    tl.run()
+
+    stats = dest_app.get_statistics()
+    print(f"Completed: {stats['completed']}")
+    print(f"Timeout triggered: {stats['timeout_triggered']}")
+    print(f"Total entanglements generated: {stats['total_entanglements']}")
+    if stats.get('overall_fidelity_stats'):
+        print(f"Average fidelity: {stats['overall_fidelity_stats']['avg']:.6f}")
+    return stats
+
+
 def create_logical_bell_pair(verbose=True):
     """Create one logical Bell pair using [[7,1,3]] encoding on each node.
     """  
@@ -230,13 +405,17 @@ def create_logical_bell_pair(verbose=True):
         print(f'Total entanglements generated: {len(latencies)}')
 
 
-def two_node_logical_pair_with_app(verbose=False):
-    """Demonstrate [[7,1,3]] QEC encoding with RequestLogicalPairApp.
+def three_node_logical_pair_with_app(verbose=False, config_file='config/line_3_2G.json', css_code="[[7,1,3]]"):
+    """Create a logical Bell pair between router_0 and router_2 via router_1.
 
-    Generates 7 Bell pairs (in communication memories) and separately
-    encodes |0⟩_L (in data memories) to showcase both capabilities.
+    3-node linear chain: router_0 -- router_1 -- router_2
+
+    Pipeline:
+    1. Generate n physical Bell pairs on each link in parallel
+    2. Encode logical qubits at all 3 nodes (router_1 encodes two: left and right)
+    3. Teleported CNOT on each link to create logical entanglement per link
+    4. Logical entanglement swapping at router_1 to extend to router_0 <-> router_2
     """
-    print('\n[[7,1,3]] Steane Code Demonstration:')
 
     # Set quantum manager to use stabilizer formalism
     QuantumManager.set_global_manager_formalism(STABILIZER_FORMALISM)
@@ -245,125 +424,431 @@ def two_node_logical_pair_with_app(verbose=False):
     EntanglementGenerationA.set_global_type('barret_kok_stabilizer')
     EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
 
-    log_filename = 'log/logical_pair_generation_app'
-    network_config = 'config/line_2_2nd_gen_stabilizer.json'
-    # network_config = 'config/line_3_2G.json'
-
+    log_filename = 'log/three_node_logical_pair'
+    network_config = config_file
 
     network_topo = RouterNetTopo2G(network_config)
     tl = network_topo.get_timeline()
-    
+
+    # Set gate fidelities on quantum manager from node config
+    routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
+    tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
+    tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
-    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 
+    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager',
                'generation', 'purification', 'swapping', 'bsm']
     for module in modules:
         log.track_module(module)
-    
-    # Set up applications on BOTH nodes
-    apps = []
-    src_node_name = 'router_0'
-    dest_node_name = 'router_1' # TODO: change to router_2 for 3-node test
-    src_app = None
-    dest_app = None
-    
+
+    # ========================================================================
+    # Set up applications on all 3 nodes
+    # ========================================================================
+    node_names = []
+    apps = {}
+
     for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
-        # Verify it's 2nd generation
         if not isinstance(router, QuantumRouter2ndGeneration):
             raise TypeError(f"Node {router.name} must be QuantumRouter2ndGeneration")
-        
-        # Create app on each node
-        app = RequestLogicalPairApp(router)
-        apps.append(app)
-        
-        if router.name == src_node_name:
-            src_app = app
-        elif router.name == dest_node_name:
-            dest_app = app
-    
-    # Configure request
+
+        app = RequestLogicalPairApp(router, css_code=css_code)
+        apps[router.name] = app
+        node_names.append(router.name)
+
+    # Sort to ensure linear order
+    node_names.sort(key=lambda name: int(name.split('_')[-1]))
+    assert len(node_names) >= 2, f"Need at least 2 nodes, got {len(node_names)}"
+
+    # ========================================================================
+    # Configure swap schedule (LOCC compliant — per-node configs)
+    # ========================================================================
+    swap_configs, final_swap_node = RequestLogicalPairApp.build_swap_schedule(node_names)
+    for node_name, config in swap_configs.items():
+        apps[node_name].set_swap_config(config)
+
+    # Designate which node stops the simulation
+    if final_swap_node:
+        apps[final_swap_node].set_final_action_node()
+    else:
+        # No swaps (2-node chain) — initiator stops after link fidelity
+        apps[node_names[0]].set_final_action_node()
+
+    # ========================================================================
+    # Configure requests - one reservation per link
+    # Each link: left node (Alice/initiator) -> right node (Bob/responder)
+    # All links start at the same time so Bell pairs generate in parallel
+    # ========================================================================
     start_time = 1e12   # 1 second
     end_time = 10e12    # 10 seconds
     target_fidelity = 0.8
-    
-    # Request 1 or 2 logical pairs (limited by memory constraints)
-    num_logical_pairs = 1  # Start with 1 for testing
-    
-    for i in range(num_logical_pairs):
-        request_start = start_time + i * 2e11  # 200ms between requests
-        
-        # Only source initiates
 
-        src_app.start(
-            responder=dest_node_name,
-            start_time=request_start,
+    num_links = len(node_names) - 1
+    for i in range(num_links):
+        apps[node_names[i]].start(
+            responder=node_names[i + 1],
+            start_time=start_time,
             end_time=end_time,
             target_fidelity=target_fidelity,
             teleported_cnot_enabled=True
         )
-    
+
+    # ========================================================================
+    # Run simulation
+    # ========================================================================
     tl.init()
     tl.run()
 
-    # Display results
-    print("\n--- Results from RequestLogicalPairApp ---")
+    print(f"\n--- {num_links}-link pipeline complete ---")
 
-    # Get results from source
-    src_results = src_app.get_results()
+    return apps
 
-    # Display available metrics
-    print(f"\nSource Node ({src_results['node_name']}) - Role: {src_results['role']}")
 
-    # Timing information
-    if src_results['timing'].get('generation_time'):
-        print(f"  Bell pair generation time: {src_results['timing']['generation_time']:.4f}s")
+def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G_near_term.json', css_code="[[7,1,3]]"):
+    """Create end-to-end logical entanglement across a 5-node chain.
 
-    if src_results['encoding'].get('encoding_time'):
-        print(f"  Encoding time: {src_results['encoding']['encoding_time']:.6f}s")
+    5-node linear chain: router_0 -- router_1 -- router_2 -- router_3 -- router_4
 
-    # Calculate total time if available
-    if src_results['timing'].get('first_pair_time') and src_results['timing'].get('last_pair_time'):
-        total_time = src_results['timing']['last_pair_time'] - src_results['timing']['first_pair_time']
-        print(f"  Total time: {total_time:.4f}s")
+    Pipeline per link:
+    1. Generate 7 physical Bell pairs on each link in parallel
+    2. Encode logical qubits at all nodes (middle nodes encode two: left and right)
+    3. Teleported CNOT on each link to create logical entanglement per link
+    4. Logical entanglement swapping at each middle node
+    """
 
-    # Extract and display Bell pair fidelities
-    fidelities = [bp['fidelity'] for bp in src_results['bell_pairs'] if bp['fidelity'] is not None]
-    if fidelities:
-        print(f"  Bell pair fidelities: {[f'{f:.4f}' for f in fidelities]}")
-        print(f"  Average Bell fidelity: {np.mean(fidelities):.4f}")
+    # Set quantum manager to use stabilizer formalism
+    QuantumManager.set_global_manager_formalism(STABILIZER_FORMALISM)
 
-    print(f"  Encoding complete: {src_results['encoding']['success']}")
+    # Set protocols to use stabilizer versions
+    EntanglementGenerationA.set_global_type('barret_kok_stabilizer')
+    EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
 
-    # Display logical Bell pair fidelity if available
-    if 'logical_bell_pair' in src_results and src_results['logical_bell_pair']['fidelity'] is not None:
-        print(f"\n  Logical Bell Pair Fidelity: {src_results['logical_bell_pair']['fidelity']:.4f}")
-        correlations = src_results['logical_bell_pair']['correlations']
-        print(f"    <XX> = {correlations['XX']:.4f}")
-        print(f"    <YY> = {correlations['YY']:.4f}")
-        print(f"    <ZZ> = {correlations['ZZ']:.4f}")
+    log_filename = 'log/five_node_logical_pair'
+    network_config = resolve_config_path(config_file)
 
-    # Display product state fidelity if available (when teleported_cnot_enabled=False)
-    if 'product_state_fidelity' in src_results:
-        prod_fid = src_results['product_state_fidelity']
-        print(f"\n  Product State Fidelity (|+>_L x |0>_L):")
-        print(f"    Alice P(X_L=+1) for |+>_L: {prod_fid['alice_x_prob']:.4f}")
-        print(f"    Bob   P(Z_L=+1) for |0>_L: {prod_fid['bob_z_prob']:.4f}")
-        print(f"    Combined fidelity: {prod_fid['fidelity']:.4f}")
+    network_topo = RouterNetTopo2G(network_config)
+    tl = network_topo.get_timeline()
 
-    # Destination results
-    dest_results = dest_app.get_results()
-    print(f"\nDestination Node ({dest_results['node_name']}) - Role: {dest_results['role']}")
-    print(f"  Encoding complete: {dest_results['encoding']['success']}")
+    # Set gate fidelities on quantum manager from node config
+    routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
+    tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
+    tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
 
-    return src_app, dest_app
+    log.set_logger(__name__, tl, log_filename)
+    log.set_logger_level('DEBUG')
+    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager',
+               'generation', 'purification', 'swapping', 'bsm']
+    for module in modules:
+        log.track_module(module)
 
+    # ========================================================================
+    # Set up applications on all 5 nodes
+    # ========================================================================
+    node_names = []
+    apps = {}
+
+    for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
+        if not isinstance(router, QuantumRouter2ndGeneration):
+            raise TypeError(f"Node {router.name} must be QuantumRouter2ndGeneration")
+
+        app = RequestLogicalPairApp(router, css_code=css_code)
+        apps[router.name] = app
+        node_names.append(router.name)
+
+    # Sort to ensure linear order
+    node_names.sort(key=lambda name: int(name.split('_')[-1]))
+    assert len(node_names) == 5, f"Expected 5 nodes, got {len(node_names)}"
+
+    # ========================================================================
+    # Configure swap schedule (LOCC compliant — per-node configs)
+    # ========================================================================
+    swap_configs, final_swap_node = RequestLogicalPairApp.build_swap_schedule(node_names)
+    for node_name, config in swap_configs.items():
+        apps[node_name].set_swap_config(config)
+
+    # Designate which node stops the simulation
+    if final_swap_node:
+        apps[final_swap_node].set_final_action_node()
+    else:
+        apps[node_names[0]].set_final_action_node()
+
+    # ========================================================================
+    # Configure requests - one reservation per link
+    # Each link: left node (Alice/initiator) -> right node (Bob/responder)
+    # All links start at the same time so Bell pairs generate in parallel
+    # ========================================================================
+    start_time = 1e12   # 1 second
+    end_time = 10e12    # 10 seconds
+    target_fidelity = 0.8
+
+    num_links = len(node_names) - 1
+    for i in range(num_links):
+        apps[node_names[i]].start(
+            responder=node_names[i + 1],
+            start_time=start_time,
+            end_time=end_time,
+            target_fidelity=target_fidelity,
+            teleported_cnot_enabled=True
+        )
+
+    # ========================================================================
+    # Run simulation
+    # ========================================================================
+    tl.init()
+    tl.run()
+
+    metrics = {
+        "css_code": css_code,
+        "config_file": config_file,
+        "gate_fidelity": tl.quantum_manager.gate_fid,
+        "two_qubit_gate_fidelity": tl.quantum_manager.two_qubit_gate_fid,
+        "link_rows": [],
+        "avg_initial_phys": float("nan"),
+        "avg_link_logical": float("nan"),
+        "end_to_end_logical": float("nan"),
+    }
+
+    print("\nLink Summary")
+    initial_values = []
+    logical_values = []
+    for i in range(num_links):
+        left = node_names[i]
+        right = node_names[i + 1]
+        left_app = apps[left]
+        initial_phys = left_app._initial_link_fidelities.get(right, float("nan"))
+        logical = left_app._link_logical_fidelities.get(right, float("nan"))
+        metrics["link_rows"].append(
+            {
+                "left": left,
+                "right": right,
+                "link": f"{left}-{right}",
+                "link_index": i,
+                "initial_phys": float(initial_phys),
+                "prep": float(left_app.prep_fidelity),
+                "ft_mode": left_app.ft_prep_mode,
+                "logical": float(logical),
+            }
+        )
+        if not np.isnan(initial_phys):
+            initial_values.append(initial_phys)
+        if not np.isnan(logical):
+            logical_values.append(logical)
+        print(
+            f"{left} <-> {right} | "
+            f"initial_phys={initial_phys:.6f} | "
+            f"prep={left_app.prep_fidelity:.6f} | "
+            f"ft={left_app.ft_prep_mode} | "
+            f"logical={logical:.6f}"
+        )
+
+    final_app = apps[node_names[0]]
+    if final_app._final_end_to_end_fidelity is not None:
+        metrics["end_to_end_logical"] = float(final_app._final_end_to_end_fidelity)
+        print("\nEnd-to-End")
+        print(
+            f"{node_names[0]} <-> {node_names[-1]} | "
+            f"end_to_end_logical={final_app._final_end_to_end_fidelity:.6f}"
+        )
+
+    if initial_values:
+        metrics["avg_initial_phys"] = float(np.mean(initial_values))
+    if logical_values:
+        metrics["avg_link_logical"] = float(np.mean(logical_values))
+
+    print(f"\n--- {num_links}-link pipeline complete ---")
+
+    return {"apps": apps, "metrics": metrics}
+
+
+def n_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G_near_term.json', css_code="[[7,1,3]]"):
+    """Create end-to-end logical entanglement across an N-node linear chain."""
+
+    QuantumManager.set_global_manager_formalism(STABILIZER_FORMALISM)
+    EntanglementGenerationA.set_global_type('barret_kok_stabilizer')
+    EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
+
+    log_filename = 'log/n_node_logical_pair'
+    network_config = resolve_config_path(config_file)
+
+    network_topo = RouterNetTopo2G(network_config)
+    tl = network_topo.get_timeline()
+
+    routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
+    tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
+    tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+
+    log.set_logger(__name__, tl, log_filename)
+    log.set_logger_level('DEBUG')
+    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager',
+               'generation', 'purification', 'swapping', 'bsm']
+    for module in modules:
+        log.track_module(module)
+
+    node_names = []
+    apps = {}
+    for router in routers:
+        if not isinstance(router, QuantumRouter2ndGeneration):
+            raise TypeError(f"Node {router.name} must be QuantumRouter2ndGeneration")
+
+        app = RequestLogicalPairApp(router, css_code=css_code)
+        apps[router.name] = app
+        node_names.append(router.name)
+
+    node_names.sort(key=lambda name: int(name.split('_')[-1]))
+    assert len(node_names) >= 2, f"Expected at least 2 nodes, got {len(node_names)}"
+
+    swap_configs, final_swap_node = RequestLogicalPairApp.build_swap_schedule(node_names)
+    for node_name, config in swap_configs.items():
+        apps[node_name].set_swap_config(config)
+
+    if final_swap_node:
+        apps[final_swap_node].set_final_action_node()
+    else:
+        apps[node_names[0]].set_final_action_node()
+
+    start_time = 1e12
+    end_time = 10e12
+    target_fidelity = 0.8
+
+    num_links = len(node_names) - 1
+    for i in range(num_links):
+        apps[node_names[i]].start(
+            responder=node_names[i + 1],
+            start_time=start_time,
+            end_time=end_time,
+            target_fidelity=target_fidelity,
+            teleported_cnot_enabled=True
+        )
+
+    tl.init()
+    tl.run()
+
+    metrics = {
+        "css_code": css_code,
+        "config_file": config_file,
+        "gate_fidelity": tl.quantum_manager.gate_fid,
+        "two_qubit_gate_fidelity": tl.quantum_manager.two_qubit_gate_fid,
+        "num_nodes": len(node_names),
+        "num_links": num_links,
+        "link_rows": [],
+        "pair_rows": [],
+        "avg_initial_phys": float("nan"),
+        "avg_link_logical": float("nan"),
+        "end_to_end_logical": float("nan"),
+    }
+
+    print("\nLink Summary")
+    initial_values = []
+    logical_values = []
+    for i in range(num_links):
+        left = node_names[i]
+        right = node_names[i + 1]
+        left_app = apps[left]
+        initial_phys = left_app._initial_link_fidelities.get(right, float("nan"))
+        logical = left_app._link_logical_fidelities.get(right, float("nan"))
+        metrics["link_rows"].append(
+            {
+                "left": left,
+                "right": right,
+                "link": f"{left}-{right}",
+                "link_index": i,
+                "initial_phys": float(initial_phys),
+                "prep": float(left_app.prep_fidelity),
+                "ft_mode": left_app.ft_prep_mode,
+                "logical": float(logical),
+            }
+        )
+        if not np.isnan(initial_phys):
+            initial_values.append(initial_phys)
+        if not np.isnan(logical):
+            logical_values.append(logical)
+        print(
+            f"{left} <-> {right} | "
+            f"initial_phys={initial_phys:.6f} | "
+            f"prep={left_app.prep_fidelity:.6f} | "
+            f"ft={left_app.ft_prep_mode} | "
+            f"logical={logical:.6f}"
+        )
+        pair_rows = left_app._post_idle_pair_fidelity_rows.get(right, [])
+        if pair_rows:
+            print(f"  Pair Diagnostics ({left} <-> {right})")
+            for row in pair_rows:
+                metrics["pair_rows"].append(
+                    {
+                        "link": f"{left}-{right}",
+                        "link_index": i,
+                        **row,
+                    }
+                )
+                print(
+                    "  "
+                    f"pair={row['pair_index']} | "
+                    f"alice_wait={row['alice_wait_time_sec']:.6e}s | "
+                    f"bob_wait={row['bob_wait_time_sec']:.6e}s | "
+                    f"alice_p_idle={row['alice_p_idle']:.6e} | "
+                    f"bob_p_idle={row['bob_p_idle']:.6e} | "
+                    f"initial_pair_fidelity={row['initial_pair_fidelity']:.6f} | "
+                    f"post_idle_pair_fidelity={row['post_idle_pair_fidelity']:.6f}"
+                )
+
+    final_app = apps[node_names[0]]
+    if final_app._final_end_to_end_fidelity is not None:
+        metrics["end_to_end_logical"] = float(final_app._final_end_to_end_fidelity)
+        print("\nEnd-to-End")
+        print(
+            f"{node_names[0]} <-> {node_names[-1]} | "
+            f"end_to_end_logical={final_app._final_end_to_end_fidelity:.6f}"
+        )
+
+    if initial_values:
+        metrics["avg_initial_phys"] = float(np.mean(initial_values))
+    if logical_values:
+        metrics["avg_link_logical"] = float(np.mean(logical_values))
+
+    print(f"\n--- {num_links}-link pipeline complete ---")
+    return {"apps": apps, "metrics": metrics}
 
 if __name__ == "__main__":
 
     # two_node_physical_pair_with_app_ketstate(verbose=False)
-    
+
     # two_node_physical_pair_with_app_stabilizer()
-    
-    two_node_logical_pair_with_app()
-        
-    pass
+
+    # two_node_logical_pair_with_app()
+
+    # test_decode_logical_measurement()
+
+    run_five_node_pair(
+        label="Steane [[7,1,3]] Code",
+        css_code="[[7,1,3]]",
+        non_ft_config='config/line_5_2G_near_term.json',
+        ft_config='config/line_5_2G_near_term_steane_minft.json',
+    )
+
+    run_five_node_pair(
+        label="Shor [[9,1,3]] Code",
+        css_code="[[9,1,3]]",
+        non_ft_config='config/line_5_2G_near_term_shor.json',
+        ft_config='config/line_5_2G_near_term_shor_minft.json',
+    )
+
+    run_five_node_pair(
+        label="Reed-Muller [[15,1,3]] Code",
+        css_code="[[15,1,3]]",
+        non_ft_config='config/line_5_2G_near_term_rm15.json',
+        ft_config='config/line_5_2G_near_term_rm15_minft.json',
+    )
+
+    run_five_node_pair(
+        label="Golay [[23,1,7]] Code",
+        css_code="[[23,1,7]]",
+        non_ft_config='config/line_5_2G_near_term_golay.json',
+        ft_config='config/line_5_2G_near_term_golay_minft.json',
+    )
+
+    run_five_node_pair(
+        label="BCH [[31,1,7]] Code",
+        css_code="[[31,1,7]]",
+        non_ft_config='config/line_5_2G_near_term_bch31.json',
+        ft_config='config/line_5_2G_near_term_bch31_minft.json',
+    )

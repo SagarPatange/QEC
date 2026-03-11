@@ -89,21 +89,11 @@ class RequestAppThroughput(RequestApp):
                 # because it applies corrections last, so circuit is complete
                 if info.remote_node != reservation.initiator:
                     return  # Skip if we're the initiator
-                
-                local_key = info.memory.qstate_key
-                remote_key = self.node.timeline.get_entity_by_name(info.remote_memo).qstate_key
-                
-                # Get the state to check key ordering
-                state = qm.states[local_key]
-                
-                # Use correct key ordering for density matrix
-                if state.keys[0] == local_key:
-                    rho = qm.compute_density_matrix([local_key, remote_key])
-                else:
-                    rho = qm.compute_density_matrix([remote_key, local_key])
-                
-                fidelity = 0.5 * np.real(rho[0,0] + rho[0,3] + rho[3,0] + rho[3,3])
-                fidelity = float(np.clip(fidelity, 0.0, 1.0))
+                # Use the protocol-maintained memory fidelity. This is the same
+                # fidelity carried through generation/swapping messages and is
+                # more reliable here than reconstructing a joint density matrix
+                # from the stabilizer manager during asynchronous callbacks.
+                fidelity = float(np.clip(info.fidelity, 0.0, 1.0))
             else:
                 # Ket formalism - use stored fidelity
                 fidelity = info.fidelity

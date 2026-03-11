@@ -24,3 +24,10 @@ QEC_protcol.py
 tmp/
 *test.json
 stim_bug.ipynb
+*.json
+*.png
+*.csv
+*.pkl
+test2.py
+CSV_SCHEMA.md
+drafts/teleported_cnot.py

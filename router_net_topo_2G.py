@@ -36,7 +36,14 @@ class RouterNetTopo2G(RouterNetTopo):
             node_type = node[Topo.TYPE]
             name = node[Topo.NAME]
             template_name = node.get(Topo.TEMPLATE, None)
-            template = self.templates.get(template_name, {})
+            template = dict(self.templates.get(template_name, {}))
+
+            # Expand "memory" shorthand to all memory component types
+            if "memory" in template:
+                mem_cfg = template.pop("memory")
+                template.setdefault("MemoryArray", {}).update(mem_cfg)
+                template.setdefault("DataMemoryArray", {}).update(mem_cfg)
+                template.setdefault("AncillaMemoryArray", {}).update(mem_cfg)
 
             if node_type == self.BSM_NODE:
                 others = self.bsm_to_router_map[name]
@@ -50,7 +57,8 @@ class RouterNetTopo2G(RouterNetTopo):
                     ancilla_memo_size = node.get("ancilla_memo_size", 6)
                     gate_fid = node.get(Topo.GATE_FIDELITY, 1.0)
                     meas_fid = node.get(Topo.MEASUREMENT_FIDELITY, 1.0)
-                    
+                    two_qubit_gate_fid = node.get("two_qubit_gate_fidelity", 1.0)
+
                     node_obj = QuantumRouter2ndGeneration(
                         name=name,
                         timeline=self.tl,
@@ -59,9 +67,16 @@ class RouterNetTopo2G(RouterNetTopo):
                         component_templates=template,
                         gate_fid=gate_fid,
                         meas_fid=meas_fid,
+                        two_qubit_gate_fid=two_qubit_gate_fid,
                         data_memo_size=data_memo_size,
                         ancilla_memo_size=ancilla_memo_size
                     )
+                    # FT prep config (from config generator, consumed by RequestLogicalPairApp)
+                    node_obj.ft_prep_mode = node.get("ft_prep_mode", "none")
+                    node_obj.ft_max_retries = node.get("ft_max_retries", 1)
+                    node_obj.ft_postselect = node.get("ft_postselect", False)
+                    node_obj.idle_decoherence_enabled = node.get("idle_decoherence_enabled", True)
+                    node_obj.idle_decoherence_debug = node.get("idle_decoherence_debug", False)
                 else:
                     # Create standard QuantumRouter
                     memo_size = node.get(self.MEMO_ARRAY_SIZE, 50)

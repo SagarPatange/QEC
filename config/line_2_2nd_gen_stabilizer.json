@@ -98,7 +98,7 @@
             "delay": -1
         }
     ],
-    "stop_time": 10000000000000,
+    "stop_time": 2000000000000,
     "formalism": "stabilizer",
     "is_parallel": false
 }

@@ -341,6 +341,77 @@ class QEC713:
         
         return corrections
     
+    @staticmethod
+    def decode_logical_measurement(x_measurements: List[int], 
+                                   z_measurements: List[int]) -> Tuple[int, int]:
+        """Decode logical BSM measurement outcomes using [[7,1,3]] error correction.
+        
+        Takes raw 7-bit measurement results from a logical Bell State Measurement
+        (X-basis on one block, Z-basis on the other), applies syndrome-based
+        single-error correction, and returns the logical outcome bits.
+        
+        Uses the Hamming [7,4,3] parity check matrix:
+            H = [[1,0,1,0,1,0,1],   (checks qubits 0,2,4,6)
+                 [0,1,1,0,0,1,1],   (checks qubits 1,2,5,6)
+                 [0,0,0,1,1,1,1]]   (checks qubits 3,4,5,6)
+        
+        Syndrome value 1-7 maps to error on qubit 0-6 (subtract 1).
+        Logical value = XOR of all 7 bits (since X_L = X^7, Z_L = Z^7).
+        
+        Args:
+            x_measurements: 7 measurement outcomes from X-basis measurement 
+                           (left block of logical BSM). Each value is 0 or 1.
+            z_measurements: 7 measurement outcomes from Z-basis measurement
+                           (right block of logical BSM). Each value is 0 or 1.
+        
+        Returns:
+            Tuple (x_logical, z_logical) where each is 0 or 1.
+            These determine the Bell state projected by the BSM:
+                (0,0) -> |Phi+>  (no correction)
+                (0,1) -> |Psi+>  (apply X_L)
+                (1,0) -> |Phi->  (apply Z_L)
+                (1,1) -> |Psi->  (apply X_L and Z_L)
+        
+        Raises:
+            AssertionError: If measurement arrays are not length 7.
+        """
+        assert len(x_measurements) == 7, f"Need 7 X measurements, got {len(x_measurements)}"
+        assert len(z_measurements) == 7, f"Need 7 Z measurements, got {len(z_measurements)}"
+        
+        # Parity check matrix row indices for syndrome computation
+        # Row 0 (s0): qubits 0, 2, 4, 6
+        # Row 1 (s1): qubits 1, 2, 5, 6
+        # Row 2 (s2): qubits 3, 4, 5, 6
+        parity_rows = [
+            [0, 2, 4, 6],
+            [1, 2, 5, 6],
+            [3, 4, 5, 6],
+        ]
+        
+        def _correct_and_decode(measurements: List[int]) -> int:
+            """Apply syndrome correction and return logical value for one block."""
+            # Compute syndrome bits
+            s0 = sum(measurements[i] for i in parity_rows[0]) % 2
+            s1 = sum(measurements[i] for i in parity_rows[1]) % 2
+            s2 = sum(measurements[i] for i in parity_rows[2]) % 2
+            syndrome = (s0, s1, s2)
+            
+            # Look up error position using existing SYNDROME_TABLE
+            error_pos = QEC713.SYNDROME_TABLE.get(syndrome)
+            
+            # Correct single-bit error if detected
+            corrected = list(measurements)
+            if error_pos is not None:
+                corrected[error_pos] ^= 1
+            
+            # Logical value = XOR (parity) of all 7 bits
+            return sum(corrected) % 2
+        
+        x_logical = _correct_and_decode(x_measurements)
+        z_logical = _correct_and_decode(z_measurements)
+        
+        return (x_logical, z_logical)
+    
     # ========================================================================
     # LEGACY METHODS (for backward compatibility - direct QM manipulation)
     # ========================================================================
