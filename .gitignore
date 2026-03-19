@@ -31,3 +31,7 @@ stim_bug.ipynb
 test2.py
 CSV_SCHEMA.md
 drafts/teleported_cnot.py
+steane_noise_step_by_step.ipynb
+tableau_workflow.mmd
+.DS_Store
+.gitignore
