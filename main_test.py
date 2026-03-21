@@ -489,8 +489,7 @@ def three_node_logical_pair_with_app(verbose=False, config_file='config/line_3_2
             responder=node_names[i + 1],
             start_time=start_time,
             end_time=end_time,
-            target_fidelity=target_fidelity,
-            teleported_cnot_enabled=True
+            target_fidelity=target_fidelity
         )
 
     # ========================================================================
@@ -587,8 +586,7 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
             responder=node_names[i + 1],
             start_time=start_time,
             end_time=end_time,
-            target_fidelity=target_fidelity,
-            teleported_cnot_enabled=True
+            target_fidelity=target_fidelity
         )
 
     # ========================================================================
@@ -685,19 +683,33 @@ def n_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G_ne
         log.track_module(module)
 
     node_names = []
-    apps = {}
+    routers_by_name = {}
     for router in routers:
         if not isinstance(router, QuantumRouter2ndGeneration):
             raise TypeError(f"Node {router.name} must be QuantumRouter2ndGeneration")
-
-        app = RequestLogicalPairApp(router, css_code=css_code)
-        apps[router.name] = app
+        routers_by_name[router.name] = router
         node_names.append(router.name)
 
     node_names.sort(key=lambda name: int(name.split('_')[-1]))
     assert len(node_names) >= 2, f"Expected at least 2 nodes, got {len(node_names)}"
 
-    swap_configs, final_swap_node = RequestLogicalPairApp.build_swap_schedule(node_names)
+    run_config = {
+        "css_code": css_code,
+        "path_node_names": list(node_names),
+        "start_time_ps": 1e12,
+        "end_time_ps": 10e12,
+        "default_target_fidelity": 0.8,
+    }
+
+    apps = {}
+    for node_name in node_names:
+        apps[node_name] = RequestLogicalPairApp(
+            routers_by_name[node_name],
+            css_code=css_code,
+            run_config=run_config,
+        )
+
+    swap_configs, final_swap_node = RequestLogicalPairApp.build_swap_schedule(run_config["path_node_names"])
     for node_name, config in swap_configs.items():
         apps[node_name].set_swap_config(config)
 
@@ -706,18 +718,10 @@ def n_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G_ne
     else:
         apps[node_names[0]].set_final_action_node()
 
-    start_time = 1e12
-    end_time = 10e12
-    target_fidelity = 0.8
-
-    num_links = len(node_names) - 1
+    num_links = len(run_config["path_node_names"]) - 1
     for i in range(num_links):
-        apps[node_names[i]].start(
-            responder=node_names[i + 1],
-            start_time=start_time,
-            end_time=end_time,
-            target_fidelity=target_fidelity,
-            teleported_cnot_enabled=True
+        apps[run_config["path_node_names"][i]].start(
+            responder=run_config["path_node_names"][i + 1],
         )
 
     tl.init()
