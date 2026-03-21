@@ -7,7 +7,7 @@ architecture and swap formalisms with minimal core changes.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 
@@ -17,6 +17,7 @@ from sequence.constants import TABLEAU_FORMALISM
 from QEC.quantum_state_tableau import TableauState
 
 import stim
+from stim import Tableau, TableauSimulator, Circuit
 
 
 @QuantumManager.register(TABLEAU_FORMALISM)
@@ -52,144 +53,28 @@ class QuantumManagerTableau(QuantumManager):
             reproducible, human-traceable per-state seeds.
         """
         super().__init__(truncation=truncation)
+        # Base seed controls deterministic per-state/per-operation seed derivation.
         self.base_seed = seed
+        # Monotonic counter used with `base_seed` to produce unique child seeds.
         self._seed_counter = 0
+        # Default fidelities are noiseless (1.0) unless explicitly overridden.
         self.gate_fid = float(kwargs.get("gate_fid", kwargs.get("single_qubit_gate_fid", 1.0)))
         self.two_qubit_gate_fid = float(kwargs.get("two_qubit_gate_fid", 1.0))
         self.measurement_fid = float(kwargs.get("measurement_fid", 1.0))
-        self._key_layout: dict[int, tuple[int, int]] = {}
+        self.gate_error_channel = str(kwargs.get("gate_error_channel", "depolarize")).lower()  # Gate-noise mode: "depolarize" (uniform) or "pauli" (weighted).
+        self.pauli_1q_weights = tuple(float(w) for w in kwargs.get("pauli_1q_weights", (1.0, 1.0, 1.0)))  # Relative PAULI_CHANNEL_1 weights in X, Y, Z order.
+        self.pauli_2q_weights = tuple(float(w) for w in kwargs.get("pauli_2q_weights", (1.0,) * 15))  # Relative PAULI_CHANNEL_2 weights in Stim's 15-term order.
 
-    def _next_seed(self) -> Optional[int]:
-        """Return next seed value or None if unseeded."""
-        if self.base_seed is None:
-            return None
-        seed = int(self.base_seed + self._seed_counter)
-        self._seed_counter += 1
-        return seed
-
-    def _rebuild_key_layout(self) -> None:
-        """Rebuild key layout as key -> (state_object_id, local_index)."""
-        layout: dict[int, tuple[int, int]] = {}
-        seen_state_ids = set()
-        for state_obj in self.states.values():
-            state_id = id(state_obj)
-            if state_id in seen_state_ids:
-                continue
-            seen_state_ids.add(state_id)
-            for local_index, key in enumerate(state_obj.keys):
-                layout[key] = (state_id, local_index)
-        self._key_layout = layout
-
-    def _sim_from_tableau(self, tableau: "stim.Tableau", num_keys: int) -> "stim.TableauSimulator":
-        """Convert a tableau into a seeded simulator state.
-
-        Args:
-            tableau (stim.Tableau): Tableau to convert.
-            num_keys (int): Expected number of qubits.
-
-        Returns:
-            stim.TableauSimulator: Simulator initialized from the supplied tableau.
-
-        Raises:
-            ValueError: If tableau qubit count does not match `num_keys`.
-        """
-        if len(tableau) != num_keys:
-            raise ValueError(
-                f"Initializer tableau has {len(tableau)} qubits but {num_keys} keys were supplied."
-            )
-        simulator = stim.TableauSimulator(seed=self._next_seed())
-        simulator.set_inverse_tableau(tableau.inverse())
-        return simulator
-
-    def _tableau_from_initializer(self, initializer: Any) -> "stim.Tableau":
-        """Convert supported initializer formats into a `stim.Tableau`."""
-        def is_pauli_sequence(values: Any) -> bool:
-            return isinstance(values, (list, tuple)) and all(
-                isinstance(v, (str, stim.PauliString)) for v in values
-            )
-
-        if isinstance(initializer, stim.Tableau):
-            return initializer
-
-        if isinstance(initializer, stim.Circuit):
-            return stim.Tableau.from_circuit(initializer)
-
-        if isinstance(initializer, str):
-            return stim.Tableau.from_named_gate(initializer)
-
-        if isinstance(initializer, Mapping):
-            # Explicit keyed initializers.
-            if "circuit" in initializer:
-                return stim.Tableau.from_circuit(initializer["circuit"])
-            if "name" in initializer:
-                return stim.Tableau.from_named_gate(initializer["name"])
-            if "stabilizers" in initializer:
-                return stim.Tableau.from_stabilizers(initializer["stabilizers"])
-            if "xs" in initializer and "zs" in initializer:
-                return stim.Tableau.from_conjugated_generators(
-                    xs=initializer["xs"],
-                    zs=initializer["zs"],
-                )
-            if "state_vector" in initializer:
-                return stim.Tableau.from_state_vector(
-                    initializer["state_vector"],
-                    endian=initializer.get("endian", "little"),
-                )
-            if "matrix" in initializer:
-                return stim.Tableau.from_unitary_matrix(
-                    initializer["matrix"],
-                    endian=initializer.get("endian", "little"),
-                )
-
-            # Fall back to Stim's from_numpy signature if keys match that API.
-            try:
-                return stim.Tableau.from_numpy(**dict(initializer))
-            except TypeError as exc:
-                raise TypeError(
-                    "Unsupported mapping initializer for tableau construction."
-                ) from exc
-
-        # from_conjugated_generators direct tuple form: (xs, zs)
-        if (
-            isinstance(initializer, tuple)
-            and len(initializer) == 2
-            and is_pauli_sequence(initializer[0])
-            and is_pauli_sequence(initializer[1])
-        ):
-            xs, zs = initializer
-            return stim.Tableau.from_conjugated_generators(xs=xs, zs=zs)
-
-        # from_stabilizers direct list/tuple form.
-        if is_pauli_sequence(initializer):
-            return stim.Tableau.from_stabilizers(initializer)
-
-        # Numpy-like matrix/vector forms:
-        # - 1D -> from_state_vector
-        # - 2D square -> from_unitary_matrix
-        if isinstance(initializer, np.ndarray) or isinstance(initializer, (list, tuple)):
-            arr = np.asarray(initializer)
-            if arr.ndim == 1 and np.issubdtype(arr.dtype, np.number):
-                return stim.Tableau.from_state_vector(arr, endian="little")
-            if arr.ndim == 2 and arr.shape[0] == arr.shape[1] and np.issubdtype(arr.dtype, np.number):
-                return stim.Tableau.from_unitary_matrix(arr, endian="little")
-
-        raise TypeError(
-            "Unsupported tableau initializer. Supported forms include: "
-            "stim.Tableau, stim.TableauSimulator, stim.Circuit, gate-name str, "
-            "stabilizer list, (xs, zs) tuple, numpy/list state vector, "
-            "numpy/list square matrix, and mapping-based initializers."
-        )
-
-    def new(self, state: Optional[Union["TableauState", "stim.Tableau", "stim.TableauSimulator", "stim.Circuit"]] = None) -> int:
+    def new(self, state: Optional[Union[TableauState, Tableau, TableauSimulator, Circuit]] = None) -> int:
         """Create and register a new tableau-backed state key.
 
         Args:
-            state (Optional[Union[TableauState, stim.Tableau, stim.TableauSimulator, stim.Circuit]]):
+            state (Optional[Union[TableauState, Tableau, TableauSimulator, Circuit]]):
                 Optional initializer:
                 - None: default seeded single-qubit simulator state.
                 - TableauState: copied and rebound to the new key.
-                - stim.TableauSimulator: copied and rebound to the new key.
-                - stim.Tableau / stim.Circuit: converted to simulator state.
+                - TableauSimulator: copied and rebound to the new key.
+                - Tableau / Circuit: converted to simulator state.
                 - Also accepts additional formats (e.g., gate-name strings,
                   stabilizer lists, numpy vectors/matrices, and mapping specs).
 
@@ -207,13 +92,12 @@ class QuantumManagerTableau(QuantumManager):
             new_state = state.copy()
             new_state.keys = [key]
             self.states[key] = new_state
-        elif isinstance(state, stim.TableauSimulator):
+        elif isinstance(state, TableauSimulator):
             sim_copy = state.copy() if hasattr(state, "copy") else state
             self.states[key] = TableauState(state=sim_copy, keys=[key])
         else:
             tableau = self._tableau_from_initializer(state)
             self.states[key] = TableauState(state=self._sim_from_tableau(tableau, num_keys=1), keys=[key])
-        self._rebuild_key_layout()
         return key
 
     def set(self, keys: list[int], amplitudes: Any) -> None:
@@ -240,28 +124,173 @@ class QuantumManagerTableau(QuantumManager):
         if isinstance(amplitudes, TableauState):
             state = amplitudes.copy()
             state.keys = list(keys)
-        elif isinstance(amplitudes, stim.TableauSimulator):
+        elif isinstance(amplitudes, TableauSimulator):
             state = TableauState(state=amplitudes, keys=list(keys))
         else:
             tableau = self._tableau_from_initializer(amplitudes)
             state = TableauState(state=self._sim_from_tableau(tableau, num_keys=len(keys)), keys=list(keys))
         for key in keys:
             self.states[key] = state
-        self._rebuild_key_layout()
+
+    def run_circuit(self, circuit, keys: list[int], meas_samp=None) -> dict[int, int]:
+        """Execute a SeQUeNCe circuit on tableau-backed states.
+
+        Args:
+            circuit: SeQUeNCe Circuit object to execute.
+            keys (list[int]): Ordered keys mapped to circuit qubit indices.
+            meas_samp: Measurement sample value used by run preparation.
+
+        Returns:
+            dict[int, int]: Measurement outcomes keyed by measured state keys.
+        """
+        # Prepare validated inputs, merged/shared topology, and key index mapping.
+        meas_samp, state_obj, key_to_local = self._prepare_circuit(circuit, keys, meas_samp)
+        if state_obj is None:
+            return {}
+
+        simulator = state_obj.state
+
+        # Apply ideal gates, then configured gate-noise channel.
+        for gate_name, indices, arg in circuit.gates:
+            mapped_targets = [key_to_local[keys[i]] for i in indices]
+            self._apply_sequence_gate(simulator, gate_name, mapped_targets, arg)
+            self._apply_gate_error(simulator, gate_name, mapped_targets)
+
+        # No measurements: topology was already prepared, so nothing else to rewrite.
+        if len(circuit.measured_qubits) == 0:
+            return {}
+
+        # Determine measured and remaining keys in deterministic order.
+        measured_keys = [keys[i] for i in circuit.measured_qubits]
+        measured_key_set = set(measured_keys)
+        remaining_keys = [key for key in state_obj.keys if key not in measured_key_set]
+
+        # Readout-fidelity noise uses deterministic RNG seeded from meas_samp.
+        rng_seed = int(float(meas_samp) * (2 ** 31 - 1))
+        rng = np.random.default_rng(rng_seed)
+
+        # Measure each requested key, report (possibly flipped) bit, and split measured states.
+        results: dict[int, int] = {}
+        for measured_key in measured_keys:
+            physical_bit = int(simulator.measure(key_to_local[measured_key]))
+
+            reported_bit = physical_bit
+            if self.measurement_fid < 1.0 and rng.random() > self.measurement_fid:
+                reported_bit ^= 1
+            results[measured_key] = reported_bit
+            collapsed = TableauSimulator(seed=self._next_seed())
+            if physical_bit == 1:
+                collapsed.x(0)
+            self.states[measured_key] = TableauState(state=collapsed, keys=[measured_key])
+
+        # Physically drop measured qubits so simulator indices stay compact for remaining keys.
+        if measured_keys:
+            simulator, remaining_keys = self._drop_keys_from_tableau_simulator(simulator, state_obj.keys, measured_keys)
+
+        # Keep unmeasured keys grouped on the shared post-measurement simulator state.
+        if remaining_keys:
+            remaining_state = TableauState(state=simulator, keys=remaining_keys)
+            for key in remaining_keys:
+                self.states[key] = remaining_state
+
+        return results
+    
+    def set_to_zero(self, key: int) -> None:
+        """Reset a single qubit to the |0⟩ computational basis state.
+
+        Args:
+            key (int): State key of the qubit to reset.
+
+        Returns:
+            None.
+        """
+        sim = TableauSimulator(seed=self._next_seed())
+        self.states[key] = TableauState(state=sim, keys=[key])
+
+    def set_to_one(self, key: int) -> None:
+        """Reset a single qubit to the |1⟩ computational basis state.
+
+        Args:
+            key (int): State key of the qubit to reset.
+
+        Returns:
+            None.
+        """
+        sim = TableauSimulator(seed=self._next_seed())
+        sim.x(0)
+        self.states[key] = TableauState(state=sim, keys=[key])
 
     def remove(self, key: int) -> None:
         """Remove a key and refresh the debug key layout map."""
         super().remove(key)
-        self._rebuild_key_layout()
+        
+    def _next_seed(self) -> Optional[int]:
+        """Return next seed value or None if unseeded."""
+        # `None` means deterministic seeding is disabled for this manager.
+        if self.base_seed is None:
+            return None
+        # Derive a reproducible child seed and advance the counter.
+        seed = int(self.base_seed + self._seed_counter)
+        self._seed_counter += 1
+        return seed
 
-    def get_readable_state(self, key: int) -> str:
-        """Return a user-friendly string representation of a stored state."""
-        qstate = self.get(key)
-        if isinstance(qstate, TableauState):
-            return qstate.readable_tableau()
-        return str(qstate)
+    def _sim_from_tableau(self, tableau: Tableau, num_keys: int) -> TableauSimulator:
+        """Convert a tableau into a seeded simulator state.
 
-    def _apply_sequence_gate(self, simulator: "stim.TableauSimulator", gate_name: str, targets: list[int], arg=None) -> None:
+        Args:
+            tableau (Tableau): Tableau to convert.
+            num_keys (int): Expected number of qubits.
+
+        Returns:
+            TableauSimulator: Simulator initialized from the supplied tableau.
+
+        Raises:
+            ValueError: If tableau qubit count does not match `num_keys`.
+        """
+        # Guard against mismatched manager key grouping vs tableau width.
+        if len(tableau) != num_keys:
+            raise ValueError(f"Initializer tableau has {len(tableau)} qubits but {num_keys} keys were supplied.")
+        # Fresh simulator gets a derived seed; this affects only future RNG behavior.
+        simulator = TableauSimulator(seed=self._next_seed())
+        # Stim simulator stores inverse tableau internally; load that representation.
+        simulator.set_inverse_tableau(tableau.inverse())
+        return simulator
+
+    def _tableau_from_initializer(self, initializer: Union[Circuit, dict[str, object], np.ndarray, list[Union[int, float, complex]], tuple[Union[int, float, complex], ...]]) -> Tableau:
+        """Convert supported initializer formats into a Stim tableau.
+
+        Args:
+            initializer (Union[Circuit, dict[str, object], np.ndarray, list[Union[int, float, complex]], tuple[Union[int, float, complex], ...]]):
+                Supported forms:
+                - `Circuit` for `Tableau.from_circuit`.
+                - 1D numeric `np.ndarray`, `list`, or `tuple` for `Tableau.from_state_vector`.
+                - `dict` of keyword args for `Tableau.from_numpy`.
+
+        Returns:
+            Tableau: Tableau constructed from the initializer.
+        """
+        # Circuit initializer: compile the circuit into an equivalent tableau.
+        if isinstance(initializer, Circuit):
+            return Tableau.from_circuit(initializer)
+
+        # Dict initializer: forward explicit kwargs to Stim's numpy-based constructor.
+        if isinstance(initializer, dict):
+            try:
+                return Tableau.from_numpy(**initializer)
+            except TypeError as exc:
+                raise TypeError("Unsupported dict initializer for Tableau.from_numpy.") from exc
+
+        # Vector initializer: treat numeric 1D input as a state vector.
+        if isinstance(initializer, (np.ndarray, list, tuple)):
+            arr = np.asarray(initializer)
+            if arr.ndim == 1 and np.issubdtype(arr.dtype, np.number):
+                return Tableau.from_state_vector(arr, endian="little")
+
+        # Everything else is intentionally rejected to keep initializer semantics strict.
+        raise TypeError("Unsupported tableau initializer. Supported forms: Circuit, "
+                        "1D numeric state vector, or dict kwargs for Tableau.from_numpy.")
+
+    def _apply_sequence_gate(self, simulator: TableauSimulator, gate_name: str, targets: list[int], arg=None) -> None:
         """Apply a SeQUeNCe gate name onto a Stim tableau simulator."""
         name = gate_name.lower()
         if name == "h":
@@ -285,154 +314,176 @@ class QuantumManagerTableau(QuantumManager):
         else:
             raise NotImplementedError(f"Gate '{gate_name}' is not supported in QuantumManagerTableau.")
 
-    def _apply_gate_error(self, simulator: "stim.TableauSimulator", gate_name: str, targets: list[int], rng) -> None:
-        """Apply gate-error noise after ideal gate application using fidelity parameters."""
+    def _apply_gate_error(self, simulator: TableauSimulator, gate_name: str, targets: list[int]) -> None:
+        """Apply gate-error noise after ideal gate application using Stim channels.
+
+        Args:
+            simulator (TableauSimulator): Active simulator to mutate.
+            gate_name (str): Name of gate that was just applied.
+            targets (list[int]): Simulator-local target indices for the gate.
+
+        Returns:
+            None.
+        """
         name = gate_name.lower()
         single_qubit_gates = {"h", "x", "y", "z", "s", "sdg"}
         two_qubit_gates = {"cx", "cz", "swap"}
+        channel = self.gate_error_channel
 
         if name in single_qubit_gates:
-            # Conversion assumes `gate_fid` is average gate fidelity F_avg and
-            # errors are modeled as a uniform non-identity Pauli channel:
-            #   F_avg = 1 - (d/(d+1)) * p_error
-            # => p_error = ((d+1)/d) * (1 - F_avg), with d = 2 for 1-qubit gates.
             p_error = max(0.0, min(1.0, 1.5 * (1.0 - self.gate_fid)))
-            if p_error > 0.0 and rng.random() < p_error:
-                pauli = ("X", "Y", "Z")[int(rng.integers(0, 3))]
-                if pauli == "X":
-                    simulator.x(targets[0])
-                elif pauli == "Y":
-                    simulator.y(targets[0])
-                else:
-                    simulator.z(targets[0])
+            if p_error <= 0.0:
+                return
+            noise = Circuit()
+            if channel == "depolarize":
+                noise.append("DEPOLARIZE1", [targets[0]], p_error)
+            elif channel in {"pauli", "paulierror", "pauli_channel"}:
+                if len(self.pauli_1q_weights) != 3:
+                    raise ValueError("pauli_1q_weights must have 3 entries for X, Y, Z.")
+                total = sum(self.pauli_1q_weights)
+                probs = [p_error / 3.0, p_error / 3.0, p_error / 3.0] if total <= 0.0 else [p_error * (w / total) for w in self.pauli_1q_weights]
+                noise.append("PAULI_CHANNEL_1", [targets[0]], probs)
+            else:
+                raise ValueError("gate_error_channel must be 'depolarize' or 'pauli'.")
+            simulator.do(noise)
             return
 
         if name in two_qubit_gates:
-            # Same formula as above, now with d = 4 for 2-qubit gates:
-            #   p_error = ((d+1)/d) * (1 - F_avg) = (5/4) * (1 - F_avg).
             p_error = max(0.0, min(1.0, 1.25 * (1.0 - self.two_qubit_gate_fid)))
-            if p_error > 0.0 and rng.random() < p_error:
-                # Uniformly sample one of the 15 non-identity two-qubit Pauli errors.
-                pauli_pairs = [
-                    ("I", "X"), ("I", "Y"), ("I", "Z"),
-                    ("X", "I"), ("X", "X"), ("X", "Y"), ("X", "Z"),
-                    ("Y", "I"), ("Y", "X"), ("Y", "Y"), ("Y", "Z"),
-                    ("Z", "I"), ("Z", "X"), ("Z", "Y"), ("Z", "Z"),
-                ]
-                p0, p1 = pauli_pairs[int(rng.integers(0, len(pauli_pairs)))]
-
-                if p0 == "X":
-                    simulator.x(targets[0])
-                elif p0 == "Y":
-                    simulator.y(targets[0])
-                elif p0 == "Z":
-                    simulator.z(targets[0])
-
-                if p1 == "X":
-                    simulator.x(targets[1])
-                elif p1 == "Y":
-                    simulator.y(targets[1])
-                elif p1 == "Z":
-                    simulator.z(targets[1])
+            if p_error <= 0.0:
+                return
+            noise = Circuit()
+            if channel == "depolarize":
+                noise.append("DEPOLARIZE2", [targets[0], targets[1]], p_error)
+            elif channel in {"pauli", "paulierror", "pauli_channel"}:
+                if len(self.pauli_2q_weights) != 15:
+                    raise ValueError("pauli_2q_weights must have 15 entries in Stim PAULI_CHANNEL_2 order.")
+                total = sum(self.pauli_2q_weights)
+                probs = ([p_error / 15.0] * 15 if total <= 0.0 else [p_error * (w / total) for w in self.pauli_2q_weights])
+                noise.append("PAULI_CHANNEL_2", [targets[0], targets[1]], probs)
+            else:
+                raise ValueError("gate_error_channel must be 'depolarize' or 'pauli'.")
+            simulator.do(noise)
             return
 
-    def run_circuit(self, circuit, keys: list[int], meas_samp=None):
-        """Execute a SeQUeNCe circuit on tableau-backed states.
+    def _prepare_circuit(self, circuit, keys: list[int], meas_samp=None) -> tuple[float | None, TableauState | None, dict[int, int]]:
+        """Validate/normalize run input and prepare state-topology context.
 
         Args:
-            circuit: Circuit object to execute (expected SeQUeNCe Circuit or
-                compatible representation).
+            circuit: SeQUeNCe Circuit object to execute.
             keys (list[int]): Ordered keys mapped to circuit qubit indices.
-            meas_samp: Optional measurement sample value used by base-manager
-                validation conventions.
+            meas_samp: Optional measurement sample from caller.
 
         Returns:
-            dict[int, int]: Measurement outcomes keyed by measured qstate keys.
-
-        Raises:
-            ValueError: If keys do not currently share one grouped state object.
-            NotImplementedError: If a circuit gate is not supported.
-
-        Notes:
-            Measured qubits are always split from remaining entangled keys
-            (Ket-style behavior).
+            tuple[float | None, TableauState | None, dict[int, int]]:
+                Normalized measurement sample, prepared shared state object (or
+                `None` for empty input), and key-to-local index mapping.
         """
-        super().run_circuit(circuit, keys, meas_samp)
+        # If caller omits measurement sample, use midpoint default.
+        if len(circuit.measured_qubits) > 0 and meas_samp is None:
+            meas_samp = 0.5
 
+        # Local contract checks for run_circuit inputs.
+        if len(keys) != circuit.size:
+            raise ValueError(f"circuit.size ({circuit.size}) must equal len(keys) ({len(keys)}).")
+        if len(circuit.measured_qubits) > 0 and meas_samp is None:
+            raise ValueError("meas_samp must be provided when measuring qubits.")
+
+        # Empty-key fast path.
         if not keys:
-            return {}
+            return meas_samp, None, {}
 
-        # Current MVP requires a single shared TableauState for all input keys.
-        # This mirrors "already grouped" semantics and avoids ambiguous merge logic.
-        state_objects = [self.states[key] for key in keys]
-        if not all(obj is state_objects[0] for obj in state_objects):
-            raise ValueError(
-                "All keys in run_circuit must currently share one TableauState object. "
-                "Group/initialize them together with set(keys, ...) first."
-            )
+        # Keys must be unique and present in manager state.
+        if len(set(keys)) != len(keys):
+            raise ValueError(f"Duplicate keys are not allowed in run_circuit: {keys}")
+        missing_keys = [key for key in keys if key not in self.states]
+        if missing_keys:
+            raise ValueError(f"Unknown key(s) in run_circuit: {missing_keys}")
 
-        state_obj = state_objects[0]
-        simulator = state_obj.state
-        gate_rng = np.random.default_rng(self._next_seed())
-        self._rebuild_key_layout()
+        # Circuit-content checks (mirrors Circuit/Ket assumptions but validates at execution boundary).
+        supported_gates = {"h", "x", "y", "z", "s", "sdg", "cx", "cz", "swap"}
 
-        # Map manager keys to simulator-local qubit indices for this shared state.
-        state_id = id(state_obj)
-        key_to_local: dict[int, int] = {}
-        for key in state_obj.keys:
-            entry = self._key_layout.get(key)
-            if entry is None or entry[0] != state_id:
-                raise RuntimeError(f"Stale key layout entry for key {key}.")
-            key_to_local[key] = entry[1]
-
-        # Apply unitary gates in circuit order.
         for gate_name, indices, arg in circuit.gates:
-            # SeQUeNCe gate indices are local to `keys`; convert into state-local indices.
-            mapped_targets = [key_to_local[keys[i]] for i in indices]
-            self._apply_sequence_gate(simulator, gate_name, mapped_targets, arg)
-            self._apply_gate_error(simulator, gate_name, mapped_targets, gate_rng)
+            if gate_name not in supported_gates:
+                raise ValueError(f"Unsupported gate '{gate_name}' for tableau manager.")
+            if len(indices) == 0:
+                raise ValueError(f"Gate '{gate_name}' must target at least one qubit.")
+            if not all(0 <= i < circuit.size for i in indices):
+                raise ValueError(f"Gate '{gate_name}' has out-of-range indices: {indices}")
+            if len(set(indices)) != len(indices):
+                raise ValueError(f"Gate '{gate_name}' has duplicate target indices: {indices}")
 
-        # Fast path: no measurements requested, only state evolution.
-        if len(circuit.measured_qubits) == 0:
-            for key in state_obj.keys:
+            if gate_name in {"h", "x", "y", "z", "s", "sdg"} and len(indices) != 1:
+                raise ValueError(f"Gate '{gate_name}' expects 1 index, got {indices}")
+            if gate_name in {"cx", "cz", "swap"} and len(indices) != 2:
+                raise ValueError(f"Gate '{gate_name}' expects 2 indices, got {indices}")
+
+        measured = circuit.measured_qubits
+        if not all(0 <= i < circuit.size for i in measured):
+            raise ValueError(f"Measured qubit index out of range: {measured}")
+        if len(set(measured)) != len(measured):
+            raise ValueError(f"Duplicate measured qubit indices are not allowed: {measured}")
+
+        # Topology prep (Ket-style): collect unique state blocks in key traversal order.
+        unique_states: list[TableauState] = []
+        seen_state_ids: set[int] = set()
+        for key in keys:
+            qstate = self.states[key]
+            if not isinstance(qstate, TableauState):
+                raise ValueError(f"Expected TableauState for key {key}, got {type(qstate)}")
+            state_id = id(qstate)
+            if state_id not in seen_state_ids:
+                seen_state_ids.add(state_id)
+                unique_states.append(qstate)
+
+        # Already grouped: reuse existing state block (supports subset keys naturally).
+        if len(unique_states) == 1:
+            state_obj = unique_states[0]
+        else:
+            # Multiple independent blocks: merge into one shared tableau state.
+            merged_keys: list[int] = []
+            merged_tableau = None
+            for qstate in unique_states:
+                merged_keys.extend(qstate.keys)
+                block_tableau = qstate.current_tableau()
+                merged_tableau = block_tableau if merged_tableau is None else (merged_tableau + block_tableau)
+
+            if len(set(merged_keys)) != len(merged_keys):
+                raise ValueError(f"Merged state contains duplicate keys: {merged_keys}")
+            merged_sim = self._sim_from_tableau(merged_tableau, num_keys=len(merged_keys))
+            state_obj = TableauState(state=merged_sim, keys=merged_keys)
+            for key in merged_keys:
                 self.states[key] = state_obj
-            self._rebuild_key_layout()
-            return {}
 
-        measured_keys = [keys[i] for i in circuit.measured_qubits]
-        remaining_keys = [k for k in state_obj.keys if k not in measured_keys]
+        key_to_local = {key: i for i, key in enumerate(state_obj.keys)}
+        return meas_samp, state_obj, key_to_local
 
-        # Use a deterministic RNG stream for readout-fidelity flips.
-        # Parent validation guarantees `meas_samp` is provided when measuring.
-        rng_seed = int(float(meas_samp) * (2 ** 31 - 1))
-        rng = np.random.default_rng(rng_seed)
+    def _drop_keys_from_tableau_simulator(self, simulator: TableauSimulator, state_keys: list[int], drop_keys: list[int]) -> tuple[TableauSimulator, list[int]]:
+        """Drop arbitrary keys by swapping them to tail and truncating qubits.
 
-        results: dict[int, int] = {}
-        physical_results: dict[int, int] = {}
+        Args:
+            simulator (TableauSimulator): Simulator to mutate in place.
+            state_keys (list[int]): Current key order mapped to simulator qubit indices.
+            drop_keys (list[int]): Keys to remove from simulator state.
 
-        for measured_key in measured_keys:
-            # This is the physical collapse result produced by the simulator.
-            physical_bit = int(simulator.measure(key_to_local[measured_key]))
-            physical_results[measured_key] = physical_bit
+        Returns:
+            tuple[TableauSimulator, list[int]]: Mutated simulator and remaining key order.
+        """
+        drop_set = set(drop_keys)
+        keep_keys = [key for key in state_keys if key not in drop_set]
+        tail_keys = [key for key in state_keys if key in drop_set]
+        desired_order = keep_keys + tail_keys
+        working_keys = list(state_keys)
 
-            # Readout infidelity applies to the reported classical bit only.
-            reported_bit = physical_bit
-            if self.measurement_fid < 1.0 and rng.random() > self.measurement_fid:
-                reported_bit ^= 1
-            results[measured_key] = reported_bit
+        # Permute simulator qubits so kept keys come first and dropped keys are at the tail.
+        for i, key in enumerate(desired_order):
+            j = working_keys.index(key)
+            if i != j:
+                simulator.swap(i, j)
+                working_keys[i], working_keys[j] = working_keys[j], working_keys[i]
 
-        # Re-assign measured keys as independent collapsed states.
-        for measured_key in measured_keys:
-            collapsed = stim.TableauSimulator(seed=self._next_seed())
-            if physical_results[measured_key] == 1:
-                collapsed.x(0)
-            self.states[measured_key] = TableauState(state=collapsed, keys=[measured_key])
+        # Truncate tail qubits to physically shrink simulator state.
+        if tail_keys:
+            simulator.set_num_qubits(len(keep_keys))
 
-        # Remaining keys share one post-measurement simulator state.
-        if remaining_keys:
-            remaining_state = TableauState(state=simulator, keys=remaining_keys)
-            for key in remaining_keys:
-                self.states[key] = remaining_state
-
-        self._rebuild_key_layout()
-        return results
+        return simulator, keep_keys
