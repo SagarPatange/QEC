@@ -27,6 +27,7 @@ class TeleportedCNOTMsgType(Enum):
     START = auto()              # Alice starts protocol execution
     ALICE_MEASUREMENT = auto()  # Alice -> Bob after Phase A
     BOB_MEASUREMENT = auto()    # Bob -> Alice after Phase B
+    TCNOT_COMPLETE = auto()     # Alice -> Bob explicit completion notification
 
 
 class TeleportedCNOTMessage(Message):
@@ -57,6 +58,8 @@ class TeleportedCNOTMessage(Message):
             self.alice_measurement_results = list(kwargs['alice_measurement_results'])
         elif msg_type is TeleportedCNOTMsgType.BOB_MEASUREMENT:
             self.bob_measurement_results = list(kwargs['bob_measurement_results'])
+        elif msg_type is TeleportedCNOTMsgType.TCNOT_COMPLETE:
+            pass
         else:
             raise ValueError(f"TeleportedCNOTMessage created with unknown msg_type: {msg_type}")
 
@@ -209,6 +212,20 @@ class TeleportedCNOTProtocol(Protocol):
             self.owner.timeline.schedule(event)
             return
 
+        if msg.msg_type == TeleportedCNOTMsgType.TCNOT_COMPLETE:
+            # Only Bob consumes explicit completion from Alice.
+            if self.role != "bob":
+                return
+
+            process = Process(
+                self.owner.request_logical_pair_app,
+                "_on_teleported_cnot_complete",
+                [src],
+            )
+            event = Event(self.owner.timeline.now() + 50, process)
+            self.owner.timeline.schedule(event)
+            return
+
         return
 
     def _alice_phase_a(self):
@@ -237,6 +254,7 @@ class TeleportedCNOTProtocol(Protocol):
         for i in range(n):
             circ.measure(n + i)    # M(comm_i) — Z basis
 
+        # Key order must match circuit indices: [data_0..data_n-1, comm_0..comm_n-1].
         keys = ([self.data_qubits[i].qstate_key for i in range(n)]
             + [self.communication_qubits[i].qstate_key for i in range(n)])
 
@@ -279,6 +297,7 @@ class TeleportedCNOTProtocol(Protocol):
                 corr.x(0)
                 qm.run_circuit(corr, [self.data_qubits[i].qstate_key])
 
+        # Key order must match circuit indices: [comm_0..comm_n-1, data_0..data_n-1].
         keys = ([self.communication_qubits[i].qstate_key for i in range(n)]
             + [self.data_qubits[i].qstate_key for i in range(n)])
 
@@ -347,10 +366,6 @@ class TeleportedCNOTProtocol(Protocol):
         event = Event(self.owner.timeline.now() + 1000, process)
         self.owner.timeline.schedule(event)
 
-        # Also notify Bob's app so middle nodes detect "both links done"
-        if self.role == 'alice' and self.bob_protocol is not None:
-            bob_app = self.bob_protocol.owner.request_logical_pair_app
-            if bob_app is not None:
-                process_bob = Process(bob_app,'_on_teleported_cnot_complete', [self.owner.name])
-                event_bob = Event(self.owner.timeline.now() + 1001, process_bob)
-                self.owner.timeline.schedule(event_bob)
+        # Explicitly notify Bob that this link finished on Alice's side.
+        if self.role == 'alice':
+            self._send_message(TeleportedCNOTMsgType.TCNOT_COMPLETE)

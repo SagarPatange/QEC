@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+import stim
 from QREProtocol import QREProtocol
 from css_codes import get_css_code
 from sequence.kernel.event import Event
@@ -64,7 +65,9 @@ class RequestLogicalPairApp:
         # Per-link qubit mapping, keyed by neighbor node name.
         self.data_qubits: dict[str, list] = {}  # neighbor -> list of n data Memory objects
         self.comm_qubits: dict[str, list] = {}  # neighbor -> list of n entangled comm Memory objects
-        self.ancilla_qubits: dict[str, list] = {}  # neighbor -> list of n ancilla Memory objects
+        self.ancilla_qubits: dict[str, list] = {}  # neighbor -> list of 4 ancilla Memory objects (FT Prep)
+        self._data_alloc_cursor: int = 0   # Next free index in DataMemoryArray.
+        self._ancilla_alloc_cursor: int = 0  # Next free index in AncillaMemoryArray.
 
         # Per-link runtime state, keyed by neighbor node name.
         self.qre_protocols: dict[str, "QREProtocol"] = {}
@@ -101,8 +104,10 @@ class RequestLogicalPairApp:
         # Compatibility flag used by existing setup helper.
         self._is_final_action_node = False
 
+        self.frame_updates_by_src: dict[str, tuple[int, int]] = {}  # src -> (frame_bx, frame_bz)
+
     def start(self, responder: str, start_t: int, end_t: int, fidelity: float) -> None:
-        """Start one link attempt by enqueueing adjacent-link generation.
+        """Start one link attempt as the initiator (lower path index).
 
         Args:
             responder: Neighbor endpoint name.
@@ -112,57 +117,29 @@ class RequestLogicalPairApp:
 
         Returns:
             None
-
-        Notes:
-            This method only schedules the first protocol phase. It does not run
-            the full protocol synchronously.
         """
+        self._allocate_data_and_ancilla(responder) # allocate data and ancilla qubits for this link before starting reservation to ensure they're ready when needed for TCNOT start.
 
-        # Use init-derived path geometry; fall back only when no chain path was provided.
-        if len(self._path_node_names) > 1:
-            path = list(self._path_node_names)
-            position = self._path_position
-            role = self._path_role
-            left_peer_name = self._left_peer_name
-            right_peer_name = self._right_peer_name
-        else:
-            path = [self.node.name, responder]
-            position = 0
-            role = "edge"
-            left_peer_name = None
-            right_peer_name = responder
+        if responder not in self.qre_protocols:
+            self.qre_protocols[responder] = QREProtocol(
+                owner=self.node,
+                app=self,
+                remote_node_name=responder,
+                memory_keys=None)
+            
+        if responder not in self.tcnot_protocols:
+            self.tcnot_protocols[responder] = TeleportedCNOTProtocol(
+                owner=self.node,
+                name=f"TeleportedCNOT_{self.node.name}_to_{responder}",
+                role="alice",
+                remote_node_name=responder,
+                data_qubits=self.data_qubits[responder],
+                communication_qubits=self.comm_qubits[responder])  # Shared list; filled by get_physical_memory().
 
-        metadata = {
-            "responder": responder,
-            "start_time": start_t,
-            "end_time": end_t,
-            "target_fidelity": fidelity,
-            "css_code": self.css_code,
-            "path_node_names": list(path),
-            "position": position,
-            "role": role,
-            "left_peer_name": left_peer_name,
-            "right_peer_name": right_peer_name,
-        }
-
-        # Allocate data qubits for this link
-        data_array_name = f"{self.node.name}.DataMemoryArray"
-        data_array = self.node.components[data_array_name]
-        data_qubits = data_array.memories[0:self.n]
-
-        # Pre-create TeleportedCNOT (comm qubits filled later by get_physical_memory)
-        name = f"TeleportedCNOT_{self.node.name}_to_{responder}"
-        tcnot = TeleportedCNOTProtocol(
-            owner=self.node, name=name, role="alice",
-            remote_node_name=responder,
-            data_qubits=data_qubits,
-            communication_qubits=[]) # Communication qubits will be assigned when physical Bell pair is ready.
-        
-        self.tcnot_protocols[responder] = tcnot
-        self.node.reserve_net_resource(responder, start_t, end_t, self.n, fidelity)
+        self.node.reserve_net_resource(responder, start_t, end_t, self.n, fidelity) # reserve physical Bell pair generation with neighbor; callback will trigger TCNOT start once reservation is approved and memories are ready.
 
     def get_physical_memory(self, info: "MemoryInfo") -> None:
-        """Route physical Bell-pair memory events to the matching protocol.
+        """Collect entangled comm qubits; launch TeleportedCNOT when all n arrive.
 
         Args:
             info: Memory update callback payload.
@@ -181,13 +158,13 @@ class RequestLogicalPairApp:
         else:
             neighbor = reservation.initiator
 
-        protocol = self.link_protocols.get(neighbor)
-        if protocol is None:
-            log.logger.warning(f"{self.name}: no protocol for neighbor={neighbor}")
-            return
-        if not protocol.is_running:
-            protocol.start()
-        protocol.on_entangled_memory(info, reservation)
+        # Collect one comm qubit per callback; start TCNOT once exactly n are ready.
+        memory = self.node.resource_manager.memory_manager[info.index]
+        self.comm_qubits[neighbor].append(memory)
+
+        if len(self.comm_qubits[neighbor]) == self.n:
+            self._initial_link_fidelities[neighbor] = self.calculate_pair_fidelity(self.node.name, neighbor, "physical")
+            self._initalize_teleported_cnot(neighbor, reservation)
 
     def received_message(self, src: str, msg: object) -> bool:
         """Route incoming messages to active protocols.
@@ -204,55 +181,6 @@ class RequestLogicalPairApp:
             if protocol.received_message(src, msg):
                 return True
         return False
-
-    def set_swap_config(self, config: dict[str, object]) -> None:
-        """Compatibility hook for existing setup code.
-
-        Args:
-            config: Swap configuration payload.
-
-        Returns:
-            None
-        """
-        # Compatibility shim; full swap config handling will move into the new flow.
-        self._swap_config = dict(config)
-
-    def set_final_action_node(self) -> None:
-        """Compatibility hook for existing setup code.
-
-        Returns:
-            None
-        """
-        self._is_final_action_node = True
-
-    @staticmethod
-    def build_swap_schedule(node_names: list[str]) -> tuple[dict[str, dict[str, object]], Optional[str]]:
-        """Return empty swap schedule placeholder.
-
-        Args:
-            node_names: Ordered chain node names.
-
-        Returns:
-            Tuple of (configs, final_swap_node). Currently returns ({}, None).
-        """
-        # Placeholder to keep existing setup code callable.
-        _ = node_names
-        return {}, None
-
-    def set_name(self, name: str) -> None:
-        """Set app name.
-
-        Args:
-            name: New app name.
-
-        Returns:
-            None
-        """
-        self.name = name
-
-    def __str__(self) -> str:
-        """Return app name."""
-        return self.name
 
     def _get_single_link_logical_pair(self, neighbor: str) -> None:
         """Start post-TCNOT QREProtocol for one adjacent link.
@@ -372,6 +300,10 @@ class RequestLogicalPairApp:
         else:
             neighbor = reservation.initiator
 
+        self._link_logical_fidelities[neighbor] = self.calculate_pair_fidelity(
+            self.node.name,
+            neighbor,
+            "logical_link")
         protocol = self.link_protocols.get(neighbor)
         if protocol is None:
             metadata = {
@@ -390,3 +322,128 @@ class RequestLogicalPairApp:
             self.link_protocols[neighbor] = protocol
 
         self.schedule_physical_bell_pair_reservation_window(reservation)
+
+    def _allocate_data_and_ancilla(self, neighbor: str) -> None:
+        """Allocate n data and 4 ancilla qubits for one link from local arrays.
+
+        Args:
+            neighbor: Remote node name this allocation is for.
+
+        Returns:
+            None
+        """
+        n_ancilla = 4  # TODO: derive from code/config when FT prep requirements change.
+
+        data_array = self.node.components[f"{self.node.name}.DataMemoryArray"]
+        d = self._data_alloc_cursor
+        self.data_qubits[neighbor] = data_array.memories[d:d + self.n]
+        self._data_alloc_cursor = d + self.n
+
+        ancilla_array = self.node.components[f"{self.node.name}.AncillaMemoryArray"]
+        a = self._ancilla_alloc_cursor
+        self.ancilla_qubits[neighbor] = ancilla_array.memories[a:a + n_ancilla]
+        self._ancilla_alloc_cursor = a + n_ancilla
+
+        self.comm_qubits[neighbor] = []
+
+    def _initalize_teleported_cnot(self, neighbor: str, reservation: "Reservation") -> None:
+        """Create and start TeleportedCNOT once all comm qubits are collected.
+
+        Args:
+            neighbor: Remote node name.
+            reservation: The reservation that produced these Bell pairs.
+
+        Returns:
+            None
+        """
+        is_initiator = reservation.initiator == self.node.name
+        role = "alice" if is_initiator else "bob"
+
+        tcnot = self.tcnot_protocols.get(neighbor)
+        if tcnot is None:
+            tcnot = TeleportedCNOTProtocol(
+                owner=self.node,
+                name=f"TeleportedCNOT_{self.node.name}_to_{neighbor}",
+                role=role,
+                remote_node_name=neighbor,
+                data_qubits=self.data_qubits[neighbor],
+                communication_qubits=self.comm_qubits[neighbor])
+            self.tcnot_protocols[neighbor] = tcnot
+        elif tcnot.role != role:
+            raise RuntimeError(f"{self.name}: TCNOT role mismatch for {neighbor}: have {tcnot.role}, expected {role}")
+
+        if tcnot.started:
+            return
+
+        tcnot.start()
+
+    def _on_qre_complete(self, neighbor: str, result: dict[str, object] | None) -> None:
+        """Handle QRE completion.
+
+        Args:
+            neighbor: Neighbor associated with the completed QRE protocol.
+            result: Optional result payload from the protocol.
+
+        Returns:
+            None
+        """
+        self._final_end_to_end_fidelity = self.calculate_pair_fidelity(
+            self._path_node_names[0],
+            self._path_node_names[-1],
+            "logical_end")
+
+      
+    def calculate_pair_fidelity(self, left_node: str, right_node: str, pair_type: str) -> float:
+        """Compute non-LOCC fidelity for a physical, one-link logical, or end-to-end logical pair.
+
+        Args:
+            left_node: Left node name.
+            right_node: Right node name.
+            pair_type: One of "physical", "logical_link", or "logical_end".
+
+        Returns:
+            float: Pair fidelity.
+        """
+        left_app = self.node.timeline.get_entity_by_name(left_node).request_logical_pair_app
+        right_app = self.node.timeline.get_entity_by_name(right_node).request_logical_pair_app
+
+        if pair_type == "physical":
+            left_keys = [left_app.comm_qubits[right_node][0].qstate_key]
+            right_keys = [right_app.comm_qubits[left_node][0].qstate_key]
+            px, py, pz = "X", "Y", "Z"
+        elif pair_type == "logical_link":
+            left_keys = [m.qstate_key for m in left_app.data_qubits[right_node]]
+            right_keys = [m.qstate_key for m in right_app.data_qubits[left_node]]
+            px = self.code.get_logical_x_string()
+            pz = self.code.get_logical_z_string()
+            py = "".join("Y" if x == "X" and z == "Z" else x if x == "X" else z for x, z in zip(px, pz))
+        elif pair_type == "logical_end":
+            left_keys = [m.qstate_key for m in left_app.data_qubits[self._path_node_names[1]]]
+            right_keys = [m.qstate_key for m in right_app.data_qubits[self._path_node_names[-2]]]
+            px = self.code.get_logical_x_string()
+            pz = self.code.get_logical_z_string()
+            py = "".join("Y" if x == "X" and z == "Z" else x if x == "X" else z for x, z in zip(px, pz))
+        else:
+            raise ValueError(f"{self.name}: unknown pair_type {pair_type}")
+
+        sim = self.node.timeline.quantum_manager.states[left_keys[0]].tableau
+
+        def corr(p: str) -> float:
+            """Evaluate one correlator.
+
+            Args:
+                p: Pauli support string.
+
+            Returns:
+                float: Correlator value.
+            """
+            obs = stim.PauliString(sim.num_qubits)
+            for key, pauli in zip(left_keys, p):
+                if pauli != "I":
+                    obs[key] = pauli
+            for key, pauli in zip(right_keys, p):
+                if pauli != "I":
+                    obs[key] = pauli
+            return float(sim.peek_observable_expectation(obs))
+
+        return (1.0 + corr(px) - corr(py) + corr(pz)) / 4.0
