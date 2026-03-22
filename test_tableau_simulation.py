@@ -32,20 +32,18 @@ BLOCK_QUBITS = {
 }
 
 # Fixed block order for ancilla assignment.
-LOGICAL_BLOCK_ORDER = [
+ANCILLA_BLOCK_ORDER = [
     "A", "B_L", "B_R", "C_L", "C_R", "D_L", "D_R", "E",
-    "A_to_BL", "BL_to_A", "BR_to_CL", "CL_to_BR",
-    "CR_to_DL", "DL_to_CR", "DR_to_E", "E_to_DR",
 ]
 
 # Four FT ancillas per logical block (enough for standard FT checks).
 # Minimal FT uses just the first ancilla in each list.
 FT_ANCILLA_QUBITS = {
     name: list(range(112 + 4 * i, 112 + 4 * i + 4))
-    for i, name in enumerate(LOGICAL_BLOCK_ORDER)
+    for i, name in enumerate(ANCILLA_BLOCK_ORDER)
 }
 
-TOTAL_QUBITS = 112 + 4 * len(LOGICAL_BLOCK_ORDER)  # 112 + 64 = 176
+TOTAL_QUBITS = 112 + 4 * len(ANCILLA_BLOCK_ORDER)  # 112 + 32 = 144
 
 # Steane parity-check equations for bit order [q0..q6].
 CHECK_ROWS = [
@@ -222,21 +220,22 @@ class SteaneTableauSimulation:
         q0, q1, q2, q3, q4, q5, q6 = data
 
         # Build |0_L> with the same Steane encoder wiring used in prior files.
-        self._h(q4)
-        self._h(q5)
-        self._h(q6)
+        self._h(q1)
+        self._h(q2)
+        self._h(q3)
 
-        self._cx(q0, q1)
-        self._cx(q0, q2)
-        self._cx(q6, q3)
-        self._cx(q6, q1)
-        self._cx(q6, q0)
-        self._cx(q5, q3)
-        self._cx(q5, q2)
-        self._cx(q5, q0)
-        self._cx(q4, q3)
-        self._cx(q4, q2)
-        self._cx(q4, q1)
+        self._cx(q1, q0)
+        self._cx(q3, q5)
+        self._cx(q2, q6)
+        self._cx(q1, q4)
+        self._cx(q2, q0)
+        self._cx(q3, q6)
+        self._cx(q1, q5)
+        self._cx(q6, q4)
+        # self._cx(q5, q0)
+        # self._cx(q4, q3)
+        # self._cx(q4, q2)
+        # self._cx(q4, q1)
 
         # FT postselection checks on prepared |0_L>.
         accepted = True
@@ -266,7 +265,7 @@ class SteaneTableauSimulation:
 
         return True
 
-    def transerse_cnot(self, control_block: str, target_block: str) -> None:
+    def tranversal_cnot(self, control_block: str, target_block: str) -> None:
         """Apply a transversal CNOT from one logical block to another.
 
         Args:
@@ -294,7 +293,6 @@ class SteaneTableauSimulation:
         control_comm_block: str,
         target_comm_block: str,
         target_data_block: str,
-        apply_corrections: bool = True,
     ) -> dict[str, object]:
         """Run one transversal teleported CNOT with pre-shared comm Bell state.
 
@@ -303,7 +301,6 @@ class SteaneTableauSimulation:
             control_comm_block: Block containing control-side communication qubits c1.
             target_comm_block: Block containing target-side communication qubits c2.
             target_data_block: Block containing target data qubits s2.
-            apply_corrections: If True, apply feedforward corrections to data rails.
 
         Returns:
             dict[str, object]: Raw measurement bits and correction bits used.
@@ -334,17 +331,21 @@ class SteaneTableauSimulation:
 
         # Feedforward from measurement outcomes:
         # Z on s1 from X(c2), X on s2 from Z(c1), per rail.
-        if apply_corrections:
-            for i in range(7):
-                if m_x_c2[i] == 1:
-                    self.sim.z(s1[i])
-                if m_z_c1[i] == 1:
-                    self.sim.x(s2[i])
+        for i in range(7):
+            if m_x_c2[i] == 1:
+                self.sim.z(s1[i])
+            if m_z_c1[i] == 1:
+                self.sim.x(s2[i])
+
+        link_fidelity = self.logical_bell_correlators(
+            left_block=control_data_block,
+            right_block=target_data_block,
+        )
 
         return {
             "m_z_c1": m_z_c1,
             "m_x_c2": m_x_c2,
-            "apply_corrections": apply_corrections,
+            "link_fidelity": link_fidelity,
         }
 
     def prepare_comm_bell_pair(self, left_comm_block: str, right_comm_block: str) -> None:
@@ -450,10 +451,22 @@ class SteaneTableauSimulation:
         # Apply classical correction to the measured bitstrings.
         x_corrected = left_x_bits.copy()
         z_corrected = right_z_bits.copy()
+
         if x_flip_qubit is not None:
             x_corrected[x_flip_qubit] ^= 1
         if z_flip_qubit is not None:
             z_corrected[z_flip_qubit] ^= 1
+
+        s_x_after = [
+            x_corrected[3] ^ x_corrected[4] ^ x_corrected[5] ^ x_corrected[6],
+            x_corrected[1] ^ x_corrected[2] ^ x_corrected[5] ^ x_corrected[6],
+            x_corrected[0] ^ x_corrected[2] ^ x_corrected[4] ^ x_corrected[6],
+        ]
+        s_z_after = [
+            z_corrected[3] ^ z_corrected[4] ^ z_corrected[5] ^ z_corrected[6],
+            z_corrected[1] ^ z_corrected[2] ^ z_corrected[5] ^ z_corrected[6],
+            z_corrected[0] ^ z_corrected[2] ^ z_corrected[4] ^ z_corrected[6],
+        ]
 
         # Compute two-bit outputs before and after classical correction.
         b_x_raw = sum(left_x_bits) & 1
@@ -472,7 +485,15 @@ class SteaneTableauSimulation:
             "b_z_raw": b_z_raw,
             "b_x_corrected": b_x_corrected,
             "b_z_corrected": b_z_corrected,
+            "s_x_after": s_x_after,
+            "s_z_after": s_z_after,
+            "frame_bx_raw_local": b_z_raw,
+            "frame_bz_raw_local": b_x_raw,
+            "frame_bx_corrected_local": b_z_corrected,
+            "frame_bz_corrected_local": b_x_corrected,
         }
+    
+    
 
     def bell_measure_middle_node(self, left_block: str, right_block: str) -> dict[str, object]:
         """Run logical Bell measurement + classical decode at one middle node.
@@ -485,7 +506,7 @@ class SteaneTableauSimulation:
             dict[str, object]: Raw BSM bits and decoded/corrected metadata.
         """
         # Entangle local left/right logical halves at this middle node.
-        self.transerse_cnot(control_block=left_block, target_block=right_block)
+        self.tranversal_cnot(control_block=left_block, target_block=right_block)
 
         # Then measure left in X basis and right in Z basis.
         left_x_bits = self.measure_block(left_block, basis="X")
@@ -606,7 +627,6 @@ class SteaneTableauSimulation:
                 control_comm_block=c1,
                 target_comm_block=c2,
                 target_data_block=target,
-                apply_corrections=True,
             )
 
         # 4) Run middle-node Bell measurements and decode syndrome bits.
@@ -621,7 +641,7 @@ class SteaneTableauSimulation:
             bx_key = "b_x_raw"
             bz_key = "b_z_raw"
 
-        # 4) Combine frame bits across swaps (xor along chain).
+        # 4.5) Combine frame bits across swaps (xor along chain).
         # IMPORTANT: For this BSM convention (left in X, right in Z),
         # the end-node Pauli frame uses swapped channels:
         # X-frame comes from Z-side parity bits, and Z-frame comes from X-side parity bits.
@@ -675,6 +695,11 @@ class SteaneTableauSimulation:
         """
         f_before: list[float] = []
         f_after: list[float] = []
+        f_ab: list[float] = []
+        f_bc: list[float] = []
+        f_cd: list[float] = []
+        f_de: list[float] = []
+
         accepted_shots = 0
 
         for shot_id in range(shots):
@@ -696,6 +721,10 @@ class SteaneTableauSimulation:
             accepted_shots += 1
             f_before.append(float(out["logical_fidelity_before"]))
             f_after.append(float(out["logical_fidelity_after"]))
+            f_ab.append(float(out["tcnot_ab"]["link_fidelity"]))
+            f_bc.append(float(out["tcnot_bc"]["link_fidelity"]))
+            f_cd.append(float(out["tcnot_cd"]["link_fidelity"]))
+            f_de.append(float(out["tcnot_de"]["link_fidelity"]))
 
         if accepted_shots == 0:
             return {
@@ -710,7 +739,12 @@ class SteaneTableauSimulation:
             "acceptance_rate": accepted_shots / shots,
             "avg_fidelity_before_frame": statistics.fmean(f_before),
             "avg_fidelity_after_frame": statistics.fmean(f_after),
+            "avg_link_fidelity_ab": statistics.fmean(f_ab),
+            "avg_link_fidelity_bc": statistics.fmean(f_bc),
+            "avg_link_fidelity_cd": statistics.fmean(f_cd),
+            "avg_link_fidelity_de": statistics.fmean(f_de),
         }
+
 
 def main() -> None:
     """Run a multi-shot sweep using per-shot seeds.
@@ -739,8 +773,8 @@ def main() -> None:
     # p_2q  -> total probability for PAULI_CHANNEL_2 after each CX.
     # p_meas-> readout bit-flip probability before each measurement.
     p_1q = 0.0001
-    p_2q = 0.0001
-    p_meas = 0.0001
+    p_2q = 0.001
+    p_meas = 0.001
 
     # Protocol toggles:
     # ft_style: "none", "minimal", or "standard"
@@ -772,10 +806,14 @@ def main() -> None:
         f"p_1q={simulation.p_1q}, p_2q={simulation.p_2q}, p_meas={simulation.p_meas}"
     )
     print("Total qubits allocated:", TOTAL_QUBITS)
-    print("FT ancillas per block:", len(next(iter(FT_ANCILLA_QUBITS.values()))))
+    print(f"Fault Tolerant State Preperation Mode Used: {ft_style}")
     print(f"accepted shots: {int(summary['accepted_shots'])}/{shots} ({summary['acceptance_rate']:.6f})")
     print(f"avg logical fidelity before frame: {summary['avg_fidelity_before_frame']:.6f}")
     print(f"avg logical fidelity after frame:  {summary['avg_fidelity_after_frame']:.6f}")
+    print(f"avg one-link fidelity A-B_L: {summary['avg_link_fidelity_ab']:.6f}")
+    print(f"avg one-link fidelity B_R-C_L: {summary['avg_link_fidelity_bc']:.6f}")
+    print(f"avg one-link fidelity C_R-D_L: {summary['avg_link_fidelity_cd']:.6f}")
+    print(f"avg one-link fidelity D_R-E:   {summary['avg_link_fidelity_de']:.6f}")
 
 
 if __name__ == "__main__":
