@@ -7,20 +7,14 @@ quantum repeater with encoding (QRE) workflow.
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Optional
-
 from sequence.message import Message
 from sequence.protocol import Protocol
 from sequence.utils import log
 from sequence.kernel.event import Event
 from sequence.kernel.process import Process
+from sequence.topology.node import QuantumRouter2ndGeneration
+from RequestLogicalPairApp import RequestLogicalPairApp
 from stim import Circuit
-
-
-if TYPE_CHECKING:
-    from RequestLogicalPairApp import RequestLogicalPairApp
-    from sequence.topology.node import QuantumRouter2ndGeneration
-
 
 class QREMsgType(Enum):
     """Message types used by QREProtocol."""
@@ -50,42 +44,68 @@ class QREMessage(Message):
             raise ValueError(f"Unknown QRE message type: {msg_type}")
         
 class QREProtocol(Protocol):
-    """Minimal protocol scaffold for one link-level QRE attempt.
+    """Link-level QRE protocol for one neighbor relationship.
+
+    This protocol runs local encoded-swapping logic on middle nodes and
+    handles frame-update aggregation/correction on endpoint nodes.
 
     Args:
         owner: Protocol owner node.
         app: Owning RequestLogicalPairApp instance.
         remote_node_name: Neighbor endpoint name.
-        memory_keys: Optional local memory keys used by this attempt.
-        metadata: Optional context metadata for this attempt.
     """
 
-    def __init__(self, owner: "QuantumRouter2ndGeneration", app: "RequestLogicalPairApp", remote_node_name: Optional[str] = None, memory_keys: Optional[list[int]] = None, metadata: Optional[dict[str, object]] = None):
-        suffix = remote_node_name if remote_node_name is not None else "unbound"
-        super().__init__(owner, name=f"{owner.name}.QRE.{suffix}")
+    def __init__(self, owner: "QuantumRouter2ndGeneration", app: "RequestLogicalPairApp", remote_node_name: str):
+        """Initialize one link-level QRE protocol instance.
+
+        Args:
+            owner: Protocol owner node.
+            app: Owning RequestLogicalPairApp instance.
+            remote_node_name: Neighbor endpoint name.
+
+        Returns:
+            None
+        """
+        super().__init__(owner, name=f"{owner.name}.QRE.{remote_node_name}")
+
+        # Stable handles for app context and neighbor identity.
         self.app = app
         self.remote_node_name = remote_node_name
-        self.memory_keys = list(memory_keys) if memory_keys is not None else []
-        self.metadata = dict(metadata) if metadata is not None else {}
-
-        self.is_running = False
-        self.is_success: Optional[bool] = None
-        self.result: dict[str, object] | None = None
-
         self.n = self.app.n
-        self.node_role = str(self.metadata.get("node_role", self.metadata.get("role", "edge")))
-        self.left_data_keys = list(self.metadata.get("left_data_keys", []))
-        self.right_data_keys = list(self.metadata.get("right_data_keys", []))
 
+        # Cached role/path values to avoid repeated app lookups in methods.
+        self.is_middle = (self.app._path_role == "middle")
+        self.is_initiator = (self.app._path_position == 0)
+        self.is_end_responder = (self.app._path_position == len(self.app._path_node_names) - 1)
+        self.initiator_name = self.app._path_node_names[0]
+        self.expected_frame_updates = len(self.app._path_node_names) - 2
+
+        # Local data-key views for left/right adjacent logical blocks.
+        left_peer = self.app._left_peer_name
+        right_peer = self.app._right_peer_name
+        self.left_data_keys = [] if left_peer is None else [m.qstate_key for m in self.app.data_qubits[left_peer]]
+        self.right_data_keys = [] if right_peer is None else [m.qstate_key for m in self.app.data_qubits[right_peer]]
+
+        # Endpoint correction target block:
+        # initiator -> right block, end responder -> left block, middle -> none.
+        if self.is_initiator:
+            self.local_data_keys = list(self.right_data_keys)
+        elif self.is_end_responder:
+            self.local_data_keys = list(self.left_data_keys)
+        else:
+            self.local_data_keys = []
+
+        # Runtime protocol state.
+        self.is_running = False
         self.current_phase = "IDLE"
-        self.local_bx = 0
-        self.local_bz = 0
-        self.frame_contrib_bx = 0
-        self.frame_contrib_bz = 0
-        self.final_bx = 0
-        self.final_bz = 0
+        self.is_success = False
 
-        #TODO: fix the retrival of data qubits and try to eliminate the metadata dependency for data qubits if possible; for now we rely on the app to pass the correct data qubit keys in metadata, but ideally the protocol should be able to determine which qubits to operate on based on the reservation and memory allocation results without needing the app to tell it explicitly which qubits are for this link and which side they're on.
+        # Frame bits used for local contribution and final aggregate correction.
+        self.bx = 0
+        self.bz = 0
+
+        # Protocol output payload forwarded to app callback.
+        self.result: dict[str, object] = {}
 
     def start(self) -> None:
         """Start QRE after TCNOT completion for this link.
@@ -100,20 +120,55 @@ class QREProtocol(Protocol):
             raise RuntimeError(f"{self.name}: start called more than once")
 
         self.is_running = True
-        self.current_phase = "SWAP_ENTRY"
+        self.current_phase = "START"
 
-        if self.node_role != "middle":
+        # Initiator owns the frame accumulator, so reset it per attempt.
+        if self.is_initiator:
+            self.app.frame_updates_by_src.clear()
+
+        # Middle-node path: execute encoded swapping locally.
+        if self.is_middle:
+            self.current_phase = "SWAP"
+            time_now = self.owner.timeline.now()
+            process = Process(self, "_run_encoded_swapping", [])
+            priority = self.owner.timeline.schedule_counter
+            event = Event(time_now, process, priority)
+            self.owner.timeline.schedule(event)
+            return
+
+        # Initiator endpoint waits for frame updates from middle nodes.
+        if self.is_initiator:
+            if self.expected_frame_updates == 0:
+                self.result = {
+                    "final_bx": 0,
+                    "final_bz": 0,
+                    "frame_updates_received": 0,
+                }
+                self.current_phase = "NO_MIDDLE_NODES"
+                time_now = self.owner.timeline.now()
+                process = Process(self, "_complete_qre", [])
+                priority = self.owner.timeline.schedule_counter
+                event = Event(time_now, process, priority)
+                self.owner.timeline.schedule(event)
+                return
+
             self.current_phase = "WAIT_FRAME_BITS"
             return
 
-        self.current_phase = "SWAP"
+        # End responder completes immediately in this message flow.
+        self.result = {
+            "final_bx": 0,
+            "final_bz": 0,
+            "frame_updates_received": 0,
+        }
+        self.current_phase = "ENDPOINT_COMPLETE"
         time_now = self.owner.timeline.now()
-        process = Process(self, "_run_encoded_swapping", [])
+        process = Process(self, "_complete_qre", [])
         priority = self.owner.timeline.schedule_counter
         event = Event(time_now, process, priority)
         self.owner.timeline.schedule(event)
 
-    def received_message(self, src: str, msg: object):
+    def received_message(self, src: str, msg: object) -> None:
         """Handle incoming QRE messages.
 
         Args:
@@ -126,13 +181,15 @@ class QREProtocol(Protocol):
         if not isinstance(msg, QREMessage):
             return
 
+        # Explicit type dispatch keeps this method extensible for future QRE messages.
         if msg.msg_type is QREMsgType.FRAME_UPDATE:
-            self.frame_contrib_bx = int(msg.frame_contrib_bx)
-            self.frame_contrib_bz = int(msg.frame_contrib_bz)
-            self.current_phase = f"FRAME_UPDATE_RECEIVED from {msg.src}"
-            self.update_pauli_frame(self.frame_contrib_bx, self.frame_contrib_bz, src)
-        else:
-            log.logger.warning(f"{self.name}: received unknown message type {msg.type} from {src}")
+            self.bx = int(msg.frame_contrib_bx)
+            self.bz = int(msg.frame_contrib_bz)
+            self.current_phase = f"FRAME_UPDATE_RECEIVED from {src}"
+            self.update_pauli_frame(src=src)
+            return
+
+        log.logger.warning(f"{self.name}: unknown message type {msg.msg_type} from {src}")
 
     def _run_encoded_swapping(self) -> None:
         """Run middle-node encoded swapping phase.
@@ -143,7 +200,7 @@ class QREProtocol(Protocol):
         Returns:
             None
         """
-        if self.node_role != "middle":
+        if not self.is_middle:
             raise RuntimeError(f"{self.name}: _run_encoded_swapping called on non-middle node")
 
         self.current_phase = "SWAP"
@@ -155,11 +212,11 @@ class QREProtocol(Protocol):
 
         circ = Circuit(2 * self.n)
 
-        # Encoded swap: transversal CX(left_i -> right_i).
+        # 1) Build encoded Bell-measurement circuit: transversal CX plus block measurements.
         for i in range(self.n):
             circ.cx(i, self.n + i)
 
-        # Logical Bell measurement: left in X basis (H+M), right in Z basis (M).
+        # Left block measured in X basis (H+M); right block measured in Z basis (M).
         for i in range(self.n):
             circ.h(i)
             circ.measure(i)
@@ -174,26 +231,37 @@ class QREProtocol(Protocol):
 
         decoded = self._decode_middle_bsm(left_x_bits, right_z_bits)
 
-        self.local_bx = int(decoded["b_x_corrected"])
-        self.local_bz = int(decoded["b_z_corrected"])
-        self.frame_contrib_bx = self.local_bz
-        self.frame_contrib_bz = self.local_bx
+        # 2) Decode Steane syndromes and map corrected parities to frame contributions.
+        # Frame convention: frame_bx <- corrected Z parity, frame_bz <- corrected X parity.
+        self.bx = int(decoded["b_z_corrected"])
+        self.bz = int(decoded["b_x_corrected"])
         self.s_x = list(decoded["s_x"])
         self.s_z = list(decoded["s_z"])
 
         self.current_phase = "SWAP_COMPLETE"
 
-        initiator_name = self.app._path_node_names[0]
+        # 3) Forward this middle-node frame contribution to the initiator.
+        initiator_name = self.initiator_name
         if initiator_name != self.owner.name:
-            msg = QREMessage(
-                QREMsgType.FRAME_UPDATE,
+            msg = QREMessage(QREMsgType.FRAME_UPDATE,
                 protocol_name=self.name,
                 sender_node=self.owner.name,
-                frame_contrib_bx=self.frame_contrib_bx,
-                frame_contrib_bz=self.frame_contrib_bz,
-            )
+                frame_contrib_bx=self.bx,
+                frame_contrib_bz=self.bz,
+                )
+            
             msg.receiver = f"{initiator_name}.QRE.{self.owner.name}"
             self.owner.send_message(initiator_name, msg)
+
+        # Middle-node QRE completes after sending its frame contribution.
+        self.result = {"frame_contrib_bx": int(self.bx), "frame_contrib_bz": int(self.bz)}
+
+        time_now = self.owner.timeline.now()
+        process = Process(self, "_complete_qre", [])
+        priority = self.owner.timeline.schedule_counter
+        event = Event(time_now, process, priority)
+        self.owner.timeline.schedule(event)
+
 
     def _decode_middle_bsm(self, left_x_bits: list[int], right_z_bits: list[int]) -> dict[str, object]:
         """Decode Steane syndromes from middle-node Bell-measurement bitstrings.
@@ -251,39 +319,41 @@ class QREProtocol(Protocol):
             "b_z_corrected": b_z_corrected,
         }
 
-    def update_pauli_frame(self, frame_contrib_bx: int, frame_contrib_bz: int, src: str, local_data_keys: list[int]) -> None:
-        """Accumulate frame contributions and apply the net logical correction.
+    def update_pauli_frame(self, src: str) -> None:
+        """Accumulate frame contributions and apply final logical correction.
 
         Args:
-            frame_contrib_bx: X-frame contribution received from one middle node.
-            frame_contrib_bz: Z-frame contribution received from one middle node.
             src: Source node name for this frame update.
-            local_data_keys: Local logical block qstate keys to correct.
 
         Returns:
             None
         """
-        self.app.frame_updates_by_src[src] = (frame_contrib_bx, frame_contrib_bz)
+        # Cache one source-tagged frame contribution.
+        self.app.frame_updates_by_src[src] = (self.bx, self.bz)
 
-        expected_updates = len(self.app._path_node_names) - 2
-        if len(self.app.frame_updates_by_src) != expected_updates:
-            log.logger.info(f"{self.name}: received frame update from {src}, waiting for {expected_updates - len(self.app.frame_updates_by_src)} more...")
+        # Wait until all middle-node contributions for this attempt are available.
+        if len(self.app.frame_updates_by_src) != self.expected_frame_updates:
             return
-        else:
-            bx = sum(bx for bx, _ in self.app.frame_updates_by_src.values()) % 2
-            bz = sum(bz for _, bz in self.app.frame_updates_by_src.values()) % 2
 
-            self.final_bx = bx
-            self.final_bz = bz
+        final_bx = sum(bx for bx, _ in self.app.frame_updates_by_src.values()) % 2
+        final_bz = sum(bz for _, bz in self.app.frame_updates_by_src.values()) % 2
 
-            if bx or bz:
-                corr = Circuit(len(local_data_keys))
-                for i in range(len(local_data_keys)):
-                    if bx:
-                        corr.x(i)
-                    if bz:
-                        corr.z(i)
-                self.owner.timeline.quantum_manager.run_circuit(corr, local_data_keys)
+        # Apply final logical frame on the local endpoint block when non-trivial.
+        if (final_bx or final_bz) and self.local_data_keys:
+            corr = Circuit(len(self.local_data_keys))
+            for i in range(len(self.local_data_keys)):
+                if final_bx:
+                    corr.x(i)
+                if final_bz:
+                    corr.z(i)
+            self.owner.timeline.quantum_manager.run_circuit(corr, self.local_data_keys)
+
+        # Persist completion payload for app-level callback/reporting.
+        self.result = {
+            "final_bx": final_bx,
+            "final_bz": final_bz,
+            "frame_updates_received": len(self.app.frame_updates_by_src),
+        }
 
         self.current_phase = "ALL_FRAME_UPDATES_RECEIVED"
         time_now = self.owner.timeline.now()
@@ -291,6 +361,7 @@ class QREProtocol(Protocol):
         priority = self.owner.timeline.schedule_counter
         event = Event(time_now, process, priority)
         self.owner.timeline.schedule(event)
+
 
     def _complete_qre(self) -> None:
         """Mark the QRE attempt complete.
@@ -303,10 +374,9 @@ class QREProtocol(Protocol):
         """
         self.is_success = True
         self.current_phase = "COMPLETE"
-        
+
         time_now = self.owner.timeline.now()
         process = Process(self.app, "_on_qre_complete", [self.remote_node_name, self.result])
         priority = self.owner.timeline.schedule_counter
         event = Event(time_now, process, priority)
         self.owner.timeline.schedule(event)
-
