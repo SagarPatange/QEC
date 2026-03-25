@@ -7,14 +7,28 @@ quantum repeater with encoding (QRE) workflow.
 from __future__ import annotations
 
 from enum import Enum, auto
+from typing import TYPE_CHECKING
 from sequence.message import Message
 from sequence.protocol import Protocol
 from sequence.utils import log
 from sequence.kernel.event import Event
 from sequence.kernel.process import Process
 from sequence.topology.node import QuantumRouter2ndGeneration
-from RequestLogicalPairApp import RequestLogicalPairApp
-from stim import Circuit
+from sequence.components.circuit import Circuit
+
+if TYPE_CHECKING:
+    from RequestLogicalPairApp import RequestLogicalPairApp
+
+DECODE_TABLE = {
+    (0, 0, 0): None,
+    (0, 0, 1): 0,
+    (0, 1, 0): 1,
+    (0, 1, 1): 2,
+    (1, 0, 0): 3,
+    (1, 0, 1): 4,
+    (1, 1, 0): 5,
+    (1, 1, 1): 6,
+}
 
 class QREMsgType(Enum):
     """Message types used by QREProtocol."""
@@ -33,7 +47,7 @@ class QREMessage(Message):
         Returns:
             None
         """
-        super().__init__(msg_type, protocol_name)
+        super().__init__(msg_type, "request_logical_pair_app")
         self.protocol_name = protocol_name
 
         if msg_type is QREMsgType.FRAME_UPDATE:
@@ -55,7 +69,7 @@ class QREProtocol(Protocol):
         remote_node_name: Neighbor endpoint name.
     """
 
-    def __init__(self, owner: "QuantumRouter2ndGeneration", app: "RequestLogicalPairApp", remote_node_name: str):
+    def __init__(self, owner: QuantumRouter2ndGeneration, app: RequestLogicalPairApp, remote_node_name: str):
         """Initialize one link-level QRE protocol instance.
 
         Args:
@@ -83,8 +97,10 @@ class QREProtocol(Protocol):
         # Local data-key views for left/right adjacent logical blocks.
         left_peer = self.app._left_peer_name
         right_peer = self.app._right_peer_name
-        self.left_data_keys = [] if left_peer is None else [m.qstate_key for m in self.app.data_qubits[left_peer]]
-        self.right_data_keys = [] if right_peer is None else [m.qstate_key for m in self.app.data_qubits[right_peer]]
+        left_memories = [] if left_peer is None else self.app.data_qubits.get(left_peer, [])
+        right_memories = [] if right_peer is None else self.app.data_qubits.get(right_peer, [])
+        self.left_data_keys = [m.qstate_key for m in left_memories]
+        self.right_data_keys = [m.qstate_key for m in right_memories]
 
         # Endpoint correction target block:
         # initiator -> right block, end responder -> left block, middle -> none.
@@ -106,6 +122,7 @@ class QREProtocol(Protocol):
 
         # Protocol output payload forwarded to app callback.
         self.result: dict[str, object] = {}
+        log.logger.debug(f"{self.name}: init middle={self.is_middle} initiator={self.is_initiator} end_responder={self.is_end_responder} expected_frame_updates={self.expected_frame_updates}")
 
     def start(self) -> None:
         """Start QRE after TCNOT completion for this link.
@@ -121,6 +138,22 @@ class QREProtocol(Protocol):
 
         self.is_running = True
         self.current_phase = "START"
+        log.logger.info(f"{self.name}: start role middle={self.is_middle} initiator={self.is_initiator} phase={self.current_phase}")
+
+        # Refresh local data-key views at start to avoid stale init-time snapshots.
+        left_peer = self.app._left_peer_name
+        right_peer = self.app._right_peer_name
+        left_memories = [] if left_peer is None else self.app.data_qubits.get(left_peer, [])
+        right_memories = [] if right_peer is None else self.app.data_qubits.get(right_peer, [])
+        self.left_data_keys = [m.qstate_key for m in left_memories]
+        self.right_data_keys = [m.qstate_key for m in right_memories]
+
+        if self.is_initiator:
+            self.local_data_keys = list(self.right_data_keys)
+        elif self.is_end_responder:
+            self.local_data_keys = list(self.left_data_keys)
+        else:
+            self.local_data_keys = []
 
         # Initiator owns the frame accumulator, so reset it per attempt.
         if self.is_initiator:
@@ -134,6 +167,7 @@ class QREProtocol(Protocol):
             priority = self.owner.timeline.schedule_counter
             event = Event(time_now, process, priority)
             self.owner.timeline.schedule(event)
+            log.logger.info(f"{self.name}: scheduling _run_encoded_swapping")
             return
 
         # Initiator endpoint waits for frame updates from middle nodes.
@@ -153,6 +187,7 @@ class QREProtocol(Protocol):
                 return
 
             self.current_phase = "WAIT_FRAME_BITS"
+            log.logger.info(f"{self.name}: waiting for frame bits expected={self.expected_frame_updates}")
             return
 
         # End responder completes immediately in this message flow.
@@ -162,6 +197,7 @@ class QREProtocol(Protocol):
             "frame_updates_received": 0,
         }
         self.current_phase = "ENDPOINT_COMPLETE"
+        log.logger.info(f"{self.name}: endpoint completes immediately")
         time_now = self.owner.timeline.now()
         process = Process(self, "_complete_qre", [])
         priority = self.owner.timeline.schedule_counter
@@ -180,6 +216,7 @@ class QREProtocol(Protocol):
         """
         if not isinstance(msg, QREMessage):
             return
+        log.logger.debug(f"{self.name}: recv src={src} type={getattr(msg, 'msg_type', type(msg).__name__)} phase={self.current_phase}")
 
         # Explicit type dispatch keeps this method extensible for future QRE messages.
         if msg.msg_type is QREMsgType.FRAME_UPDATE:
@@ -237,6 +274,7 @@ class QREProtocol(Protocol):
         self.bz = int(decoded["b_x_corrected"])
         self.s_x = list(decoded["s_x"])
         self.s_z = list(decoded["s_z"])
+        log.logger.info(f"{self.name}: swap decoded frame_contrib_bx={self.bx} frame_contrib_bz={self.bz}")
 
         self.current_phase = "SWAP_COMPLETE"
 
@@ -250,8 +288,8 @@ class QREProtocol(Protocol):
                 frame_contrib_bz=self.bz,
                 )
             
-            msg.receiver = f"{initiator_name}.QRE.{self.owner.name}"
             self.owner.send_message(initiator_name, msg)
+            log.logger.info(f"{self.name}: sending FRAME_UPDATE to initiator={initiator_name}")
 
         # Middle-node QRE completes after sending its frame contribution.
         self.result = {"frame_contrib_bx": int(self.bx), "frame_contrib_bz": int(self.bz)}
@@ -273,16 +311,6 @@ class QREProtocol(Protocol):
         Returns:
             dict[str, object]: Syndrome bits, flip indices, corrected strings, and corrected parity bits.
         """
-        decode_table = {
-            (0, 0, 0): None,
-            (0, 0, 1): 0,
-            (0, 1, 0): 1,
-            (0, 1, 1): 2,
-            (1, 0, 0): 3,
-            (1, 0, 1): 4,
-            (1, 1, 0): 5,
-            (1, 1, 1): 6,
-        }
 
         s_x = [
             left_x_bits[3] ^ left_x_bits[4] ^ left_x_bits[5] ^ left_x_bits[6],
@@ -295,8 +323,8 @@ class QREProtocol(Protocol):
             right_z_bits[0] ^ right_z_bits[2] ^ right_z_bits[4] ^ right_z_bits[6],
         ]
 
-        x_flip_qubit = decode_table[tuple(s_x)]
-        z_flip_qubit = decode_table[tuple(s_z)]
+        x_flip_qubit = DECODE_TABLE[tuple(s_x)]
+        z_flip_qubit = DECODE_TABLE[tuple(s_z)]
 
         x_corrected = list(left_x_bits)
         z_corrected = list(right_z_bits)
@@ -330,6 +358,7 @@ class QREProtocol(Protocol):
         """
         # Cache one source-tagged frame contribution.
         self.app.frame_updates_by_src[src] = (self.bx, self.bz)
+        log.logger.debug(f"{self.name}: frame update src={src} bx={self.bx} bz={self.bz} count={len(self.app.frame_updates_by_src)}/{self.expected_frame_updates}")
 
         # Wait until all middle-node contributions for this attempt are available.
         if len(self.app.frame_updates_by_src) != self.expected_frame_updates:
@@ -337,6 +366,7 @@ class QREProtocol(Protocol):
 
         final_bx = sum(bx for bx, _ in self.app.frame_updates_by_src.values()) % 2
         final_bz = sum(bz for _, bz in self.app.frame_updates_by_src.values()) % 2
+        log.logger.info(f"{self.name}: final frame final_bx={final_bx} final_bz={final_bz}")
 
         # Apply final logical frame on the local endpoint block when non-trivial.
         if (final_bx or final_bz) and self.local_data_keys:
@@ -374,9 +404,10 @@ class QREProtocol(Protocol):
         """
         self.is_success = True
         self.current_phase = "COMPLETE"
+        log.logger.info(f"{self.name}: COMPLETE result={self.result}")
 
         time_now = self.owner.timeline.now()
-        process = Process(self.app, "_on_qre_complete", [self.remote_node_name, self.result])
+        process = Process(self.app, "logical_pair_complete", [self.remote_node_name, self.result])
         priority = self.owner.timeline.schedule_counter
         event = Event(time_now, process, priority)
         self.owner.timeline.schedule(event)

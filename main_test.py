@@ -658,12 +658,8 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     return {"apps": apps, "metrics": metrics}
 
 
-def n_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G_near_term.json', css_code="[[7,1,3]]"):
+def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', css_code="[[7,1,3]]"):
     """Create end-to-end logical entanglement across an N-node linear chain."""
-
-    QuantumManager.set_global_manager_formalism(STABILIZER_FORMALISM)
-    EntanglementGenerationA.set_global_type('barret_kok_stabilizer')
-    EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
 
     log_filename = 'log/n_node_logical_pair'
     network_config = resolve_config_path(config_file)
@@ -677,8 +673,7 @@ def n_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G_ne
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
-    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager',
-               'generation', 'purification', 'swapping', 'bsm']
+    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm', 'barret_kok', 'RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
     for module in modules:
         log.track_module(module)
 
@@ -693,166 +688,145 @@ def n_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G_ne
     node_names.sort(key=lambda name: int(name.split('_')[-1]))
     assert len(node_names) >= 2, f"Expected at least 2 nodes, got {len(node_names)}"
 
-    run_config = {
-        "css_code": css_code,
-        "path_node_names": list(node_names),
-        "start_time_ps": 1e12,
-        "end_time_ps": 10e12,
-        "default_target_fidelity": 0.8,
-    }
+    start_time_ps = int(1e12)
+    end_time_ps = int(10e12)
+    default_target_fidelity = 0.8
 
     apps = {}
     for node_name in node_names:
         apps[node_name] = RequestLogicalPairApp(
             routers_by_name[node_name],
             css_code=css_code,
-            run_config=run_config,
-        )
+            path_node_names=node_names)
 
-    swap_configs, final_swap_node = RequestLogicalPairApp.build_swap_schedule(run_config["path_node_names"])
-    for node_name, config in swap_configs.items():
-        apps[node_name].set_swap_config(config)
-
-    if final_swap_node:
-        apps[final_swap_node].set_final_action_node()
-    else:
-        apps[node_names[0]].set_final_action_node()
-
-    num_links = len(run_config["path_node_names"]) - 1
+    num_links = len(node_names) - 1
     for i in range(num_links):
-        apps[run_config["path_node_names"][i]].start(
-            responder=run_config["path_node_names"][i + 1],
-        )
+        apps[node_names[i]].start(
+            responder=node_names[i + 1],
+            start_t=start_time_ps,
+            end_t=end_time_ps,
+            fidelity=default_target_fidelity)
 
     tl.init()
     tl.run()
 
-    metrics = {
-        "css_code": css_code,
-        "config_file": config_file,
-        "gate_fidelity": tl.quantum_manager.gate_fid,
-        "two_qubit_gate_fidelity": tl.quantum_manager.two_qubit_gate_fid,
-        "num_nodes": len(node_names),
-        "num_links": num_links,
-        "link_rows": [],
-        "pair_rows": [],
-        "avg_initial_phys": float("nan"),
-        "avg_link_logical": float("nan"),
-        "end_to_end_logical": float("nan"),
-    }
+    def _collect_and_print_metrics() -> dict[str, object]:
+        """Build metrics and print a compact run summary.
 
-    print("\nLink Summary")
-    initial_values = []
-    logical_values = []
-    for i in range(num_links):
-        left = node_names[i]
-        right = node_names[i + 1]
-        left_app = apps[left]
-        initial_phys = left_app._initial_link_fidelities.get(right, float("nan"))
-        logical = left_app._link_logical_fidelities.get(right, float("nan"))
-        metrics["link_rows"].append(
-            {
+        Args:
+            None.
+
+        Returns:
+            dict[str, object]: Aggregated metrics dictionary for this run.
+        """
+        metrics = {
+            "css_code": css_code,
+            "config_file": config_file,
+            "gate_fidelity": tl.quantum_manager.gate_fid,
+            "two_qubit_gate_fidelity": tl.quantum_manager.two_qubit_gate_fid,
+            "num_nodes": len(node_names),
+            "num_links": num_links,
+            "link_rows": [],
+            "pair_rows": [],
+            "avg_initial_phys": float("nan"),
+            "avg_link_logical": float("nan"),
+            "end_to_end_logical": float("nan"),
+        }
+
+        print("\nLink Summary")
+        for link_index, (left, right) in enumerate(zip(node_names[:-1], node_names[1:])):
+            left_app = apps[left]
+            initial_phys = float(left_app._initial_link_fidelities.get(right, float("nan")))
+            logical = float(left_app._link_logical_fidelities.get(right, float("nan")))
+
+            row = {
                 "left": left,
                 "right": right,
                 "link": f"{left}-{right}",
-                "link_index": i,
-                "initial_phys": float(initial_phys),
+                "link_index": link_index,
+                "initial_phys": initial_phys,
                 "prep": float(left_app.prep_fidelity),
                 "ft_mode": left_app.ft_prep_mode,
-                "logical": float(logical),
+                "logical": logical,
             }
-        )
-        if not np.isnan(initial_phys):
-            initial_values.append(initial_phys)
-        if not np.isnan(logical):
-            logical_values.append(logical)
-        print(
-            f"{left} <-> {right} | "
-            f"initial_phys={initial_phys:.6f} | "
-            f"prep={left_app.prep_fidelity:.6f} | "
-            f"ft={left_app.ft_prep_mode} | "
-            f"logical={logical:.6f}"
-        )
-        pair_rows = left_app._post_idle_pair_fidelity_rows.get(right, [])
-        if pair_rows:
-            print(f"  Pair Diagnostics ({left} <-> {right})")
-            for row in pair_rows:
-                metrics["pair_rows"].append(
-                    {
-                        "link": f"{left}-{right}",
-                        "link_index": i,
-                        **row,
-                    }
-                )
-                print(
-                    "  "
-                    f"pair={row['pair_index']} | "
-                    f"alice_wait={row['alice_wait_time_sec']:.6e}s | "
-                    f"bob_wait={row['bob_wait_time_sec']:.6e}s | "
-                    f"alice_p_idle={row['alice_p_idle']:.6e} | "
-                    f"bob_p_idle={row['bob_p_idle']:.6e} | "
-                    f"initial_pair_fidelity={row['initial_pair_fidelity']:.6f} | "
-                    f"post_idle_pair_fidelity={row['post_idle_pair_fidelity']:.6f}"
+            metrics["link_rows"].append(row)
+
+            print(
+                f"{left} <-> {right} | "
+                f"initial_phys={initial_phys:.6f} | "
+                f"prep={row['prep']:.6f} | "
+                f"ft={row['ft_mode']} | "
+                f"logical={logical:.6f}"
+            )
+
+            pair_rows = left_app._post_idle_pair_fidelity_rows.get(right, [])
+            if pair_rows:
+                print(f"  QRE Diagnostics ({left} <-> {right}): {len(pair_rows)} row(s)")
+                metrics["pair_rows"].extend(
+                    {"link": row["link"], "link_index": link_index, **pair_row}
+                    for pair_row in pair_rows
                 )
 
-    final_app = apps[node_names[0]]
-    if final_app._final_end_to_end_fidelity is not None:
-        metrics["end_to_end_logical"] = float(final_app._final_end_to_end_fidelity)
-        print("\nEnd-to-End")
-        print(
-            f"{node_names[0]} <-> {node_names[-1]} | "
-            f"end_to_end_logical={final_app._final_end_to_end_fidelity:.6f}"
-        )
+        final_app = apps[node_names[0]]
+        if final_app._final_end_to_end_fidelity is not None:
+            metrics["end_to_end_logical"] = float(final_app._final_end_to_end_fidelity)
+            print("\nEnd-to-End")
+            print(
+                f"{node_names[0]} <-> {node_names[-1]} | "
+                f"end_to_end_logical={metrics['end_to_end_logical']:.6f}"
+            )
 
-    if initial_values:
-        metrics["avg_initial_phys"] = float(np.mean(initial_values))
-    if logical_values:
-        metrics["avg_link_logical"] = float(np.mean(logical_values))
+        initial_values = [r["initial_phys"] for r in metrics["link_rows"] if not np.isnan(r["initial_phys"])]
+        logical_values = [r["logical"] for r in metrics["link_rows"] if not np.isnan(r["logical"])]
+        if initial_values:
+            metrics["avg_initial_phys"] = float(np.mean(initial_values))
+        if logical_values:
+            metrics["avg_link_logical"] = float(np.mean(logical_values))
 
+        return metrics
+
+    metrics = _collect_and_print_metrics()
     print(f"\n--- {num_links}-link pipeline complete ---")
     return {"apps": apps, "metrics": metrics}
 
 if __name__ == "__main__":
+    # ----- Legacy 5-node sweep (disabled) -----
+    # run_five_node_pair(
+    #     label="Steane [[7,1,3]] Code",
+    #     css_code="[[7,1,3]]",
+    #     non_ft_config='config/line_5_2G_near_term.json',
+    #     ft_config='config/line_5_2G_near_term_steane_minft.json',
+    # )
+    # run_five_node_pair(
+    #     label="Shor [[9,1,3]] Code",
+    #     css_code="[[9,1,3]]",
+    #     non_ft_config='config/line_5_2G_near_term_shor.json',
+    #     ft_config='config/line_5_2G_near_term_shor_minft.json',
+    # )
+    # run_five_node_pair(
+    #     label="Reed-Muller [[15,1,3]] Code",
+    #     css_code="[[15,1,3]]",
+    #     non_ft_config='config/line_5_2G_near_term_rm15.json',
+    #     ft_config='config/line_5_2G_near_term_rm15_minft.json',
+    # )
+    # run_five_node_pair(
+    #     label="Golay [[23,1,7]] Code",
+    #     css_code="[[23,1,7]]",
+    #     non_ft_config='config/line_5_2G_near_term_golay.json',
+    #     ft_config='config/line_5_2G_near_term_golay_minft.json',
+    # )
+    # run_five_node_pair(
+    #     label="BCH [[31,1,7]] Code",
+    #     css_code="[[31,1,7]]",
+    #     non_ft_config='config/line_5_2G_near_term_bch31.json',
+    #     ft_config='config/line_5_2G_near_term_bch31_minft.json',
+    # )
 
-    # two_node_physical_pair_with_app_ketstate(verbose=False)
-
-    # two_node_physical_pair_with_app_stabilizer()
-
-    # two_node_logical_pair_with_app()
-
-    # test_decode_logical_measurement()
-
-    run_five_node_pair(
-        label="Steane [[7,1,3]] Code",
+    # ----- N-node runs -----
+    n_node_logical_pair_with_app(
+        config_file='config/line_5_2G_near_term.json',
         css_code="[[7,1,3]]",
-        non_ft_config='config/line_5_2G_near_term.json',
-        ft_config='config/line_5_2G_near_term_steane_minft.json',
     )
 
-    run_five_node_pair(
-        label="Shor [[9,1,3]] Code",
-        css_code="[[9,1,3]]",
-        non_ft_config='config/line_5_2G_near_term_shor.json',
-        ft_config='config/line_5_2G_near_term_shor_minft.json',
-    )
-
-    run_five_node_pair(
-        label="Reed-Muller [[15,1,3]] Code",
-        css_code="[[15,1,3]]",
-        non_ft_config='config/line_5_2G_near_term_rm15.json',
-        ft_config='config/line_5_2G_near_term_rm15_minft.json',
-    )
-
-    run_five_node_pair(
-        label="Golay [[23,1,7]] Code",
-        css_code="[[23,1,7]]",
-        non_ft_config='config/line_5_2G_near_term_golay.json',
-        ft_config='config/line_5_2G_near_term_golay_minft.json',
-    )
-
-    run_five_node_pair(
-        label="BCH [[31,1,7]] Code",
-        css_code="[[31,1,7]]",
-        non_ft_config='config/line_5_2G_near_term_bch31.json',
-        ft_config='config/line_5_2G_near_term_bch31_minft.json',
-    )
+    # Add more N-node runs as needed:
+    # n_node_logical_pair_with_app(config_file='config/line_7_2G_near_term.json', css_code="[[9,1,3]]")
