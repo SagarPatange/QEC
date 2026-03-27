@@ -110,6 +110,11 @@ class TeleportedCNOTProtocol(Protocol):
         self.start_time = None
         self.end_time = None
         self.started = False
+        # Cache idle-noise settings from app at init; phase methods use local fields only.
+        app = owner.request_logical_pair_app
+        self.idle_pauli_weights: dict[str, float] = dict(app.idle_pauli_weights)
+        self.idle_data_coherence_time_sec = float(app.idle_data_coherence_time_sec)
+        self.idle_comm_coherence_time_sec = float(app.idle_comm_coherence_time_sec)
 
     def start(self) -> None:
         """Enter handshake mode and wait for both sides to become ready.
@@ -265,6 +270,13 @@ class TeleportedCNOTProtocol(Protocol):
         # Key order must match circuit indices: [data_0..data_n-1, comm_0..comm_n-1].
         keys = self.data_qubit_keys + self.communication_qubit_keys
 
+        # Apply time-based idle decoherence before Phase A consumes data/comm qubits.
+        now_ps = int(self.owner.timeline.now())
+        coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in self.data_qubit_keys}
+        for key in self.communication_qubit_keys:
+            coherence_time_sec_by_key[key] = self.idle_comm_coherence_time_sec
+        qm.apply_idling_decoherence(keys=keys, now_ps=now_ps, coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
+
         rnd = self.owner.get_generator().random()
         results = qm.run_circuit(circ, keys, rnd)
 
@@ -310,6 +322,13 @@ class TeleportedCNOTProtocol(Protocol):
             circ.measure(i)    # M(comm_i) in X basis
 
         keys = self.communication_qubit_keys + self.data_qubit_keys
+        # Apply time-based idle decoherence before Phase B consumes comm/data qubits.
+        now_ps = int(self.owner.timeline.now())
+        coherence_time_sec_by_key = {key: self.idle_comm_coherence_time_sec for key in self.communication_qubit_keys}
+        for key in self.data_qubit_keys:
+            coherence_time_sec_by_key[key] = self.idle_data_coherence_time_sec
+        qm.apply_idling_decoherence(keys=keys, now_ps=now_ps, coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
+
         rnd = self.owner.get_generator().random()
         results = qm.run_circuit(circ, keys, rnd)
 
@@ -345,6 +364,11 @@ class TeleportedCNOTProtocol(Protocol):
         for i in range(n):
             if int(self.bob_measurement_results[i]) == 1:
                 corr.z(i)
+
+        # Apply time-based idle decoherence before Phase C consumes data qubits.
+        now_ps = int(self.owner.timeline.now())
+        coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in self.data_qubit_keys}
+        qm.apply_idling_decoherence(keys=self.data_qubit_keys, now_ps=now_ps, coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
 
         rnd = self.owner.get_generator().random()
         qm.run_circuit(corr, self.data_qubit_keys, rnd)

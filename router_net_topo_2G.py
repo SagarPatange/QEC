@@ -58,6 +58,9 @@ class RouterNetTopo2G(RouterNetTopo):
                     gate_fid = node.get(Topo.GATE_FIDELITY, 1.0)
                     meas_fid = node.get(Topo.MEASUREMENT_FIDELITY, 1.0)
                     two_qubit_gate_fid = node.get("two_qubit_gate_fidelity", 1.0)
+                    idle_data_coherence_time_sec = float(node.get("idle_data_coherence_time_sec", 1e12))
+                    idle_comm_coherence_time_sec = float(node.get("idle_comm_coherence_time_sec", 1e12))
+                    idle_pauli_weights = dict(node.get("idle_pauli_weights", {"x": 0.05, "y": 0.05, "z": 0.90}))
 
                     node_obj = QuantumRouter2ndGeneration(
                         name=name,
@@ -77,6 +80,9 @@ class RouterNetTopo2G(RouterNetTopo):
                     node_obj.ft_postselect = node.get("ft_postselect", False)
                     node_obj.idle_decoherence_enabled = node.get("idle_decoherence_enabled", True)
                     node_obj.idle_decoherence_debug = node.get("idle_decoherence_debug", False)
+                    node_obj.idle_data_coherence_time_sec = idle_data_coherence_time_sec
+                    node_obj.idle_comm_coherence_time_sec = idle_comm_coherence_time_sec
+                    node_obj.idle_pauli_weights = idle_pauli_weights
                 else:
                     # Create standard QuantumRouter
                     memo_size = node.get(self.MEMO_ARRAY_SIZE, 50)

@@ -710,8 +710,8 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
     tl.init()
     tl.run()
 
-    def _collect_and_print_metrics() -> dict[str, object]:
-        """Build metrics and print a compact run summary.
+    def _collect_metrics() -> dict[str, object]:
+        """Build metrics for the completed run.
 
         Args:
             None.
@@ -719,6 +719,7 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
         Returns:
             dict[str, object]: Aggregated metrics dictionary for this run.
         """
+        # Run-level metadata and output containers.
         metrics = {
             "css_code": css_code,
             "config_file": config_file,
@@ -727,13 +728,17 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
             "num_nodes": len(node_names),
             "num_links": num_links,
             "link_rows": [],
+            "physical_pair_rows": [],
             "pair_rows": [],
             "avg_initial_phys": float("nan"),
             "avg_link_logical": float("nan"),
             "end_to_end_logical": float("nan"),
+            "latency_ps": float("nan"),
+            "latency_s": float("nan"),
+            "throughput_pairs_per_s": float("nan"),
         }
 
-        print("\nLink Summary")
+        # Per-link metrics from each left-side app instance.
         for link_index, (left, right) in enumerate(zip(node_names[:-1], node_names[1:])):
             left_app = apps[left]
             initial_phys = float(left_app._initial_link_fidelities.get(right, float("nan")))
@@ -751,31 +756,25 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
             }
             metrics["link_rows"].append(row)
 
-            print(
-                f"{left} <-> {right} | "
-                f"initial_phys={initial_phys:.6f} | "
-                f"prep={row['prep']:.6f} | "
-                f"ft={row['ft_mode']} | "
-                f"logical={logical:.6f}"
-            )
-
+            # QRE-level diagnostic rows (if present).
             pair_rows = left_app._post_idle_pair_fidelity_rows.get(right, [])
             if pair_rows:
-                print(f"  QRE Diagnostics ({left} <-> {right}): {len(pair_rows)} row(s)")
                 metrics["pair_rows"].extend(
                     {"link": row["link"], "link_index": link_index, **pair_row}
                     for pair_row in pair_rows
                 )
 
-        final_app = apps[node_names[0]]
-        if final_app._final_end_to_end_fidelity is not None:
-            metrics["end_to_end_logical"] = float(final_app._final_end_to_end_fidelity)
-            print("\nEnd-to-End")
-            print(
-                f"{node_names[0]} <-> {node_names[-1]} | "
-                f"end_to_end_logical={metrics['end_to_end_logical']:.6f}"
-            )
+            # Physical Bell-pair-level rows (if present).
+            physical_rows = left_app._physical_pair_fidelity_rows.get(right, [])
+            if physical_rows:
+                metrics["physical_pair_rows"].extend(
+                    {"link": row["link"], "link_index": link_index, **pair_row}
+                    for pair_row in physical_rows
+                )
 
+        final_app = apps[node_names[0]]
+
+        # Aggregate link-level averages.
         initial_values = [r["initial_phys"] for r in metrics["link_rows"] if not np.isnan(r["initial_phys"])]
         logical_values = [r["logical"] for r in metrics["link_rows"] if not np.isnan(r["logical"])]
         if initial_values:
@@ -783,10 +782,88 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
         if logical_values:
             metrics["avg_link_logical"] = float(np.mean(logical_values))
 
+        # End-to-end fidelity comes from initiator app final state.
+        if final_app._final_end_to_end_fidelity is not None:
+            metrics["end_to_end_logical"] = float(final_app._final_end_to_end_fidelity)
+
+        # Latency/throughput are derived from initiator start/completion timestamps.
+        if final_app._attempt_start_time_ps is not None and final_app._final_completion_time_ps is not None:
+            latency_ps = float(final_app._final_completion_time_ps - final_app._attempt_start_time_ps)
+            latency_s = latency_ps * 1e-12
+            throughput = 0.0 if latency_s <= 0.0 else 1.0 / latency_s
+            metrics["latency_ps"] = latency_ps
+            metrics["latency_s"] = latency_s
+            metrics["throughput_pairs_per_s"] = throughput
+
         return metrics
 
-    metrics = _collect_and_print_metrics()
-    print(f"\n--- {num_links}-link pipeline complete ---")
+    def _print_metrics_summary(metrics: dict[str, object]) -> None:
+        """Print a compact human-readable summary from collected metrics.
+
+        Args:
+            metrics: Metrics dictionary returned by _collect_metrics.
+
+        Returns:
+            None.
+        """
+        final_app = apps[node_names[0]]
+
+        # Group physical-pair rows by link for compact per-link printing.
+        physical_by_link: dict[int, list[dict[str, object]]] = {}
+        for row in metrics["physical_pair_rows"]:
+            link_index = int(row["link_index"])
+            if link_index not in physical_by_link:
+                physical_by_link[link_index] = []
+            physical_by_link[link_index].append(row)
+
+        # Header and run parameters.
+        print("\n=== Run Summary ===")
+        print(
+            f"code={css_code} | nodes={len(node_names)} | links={num_links} | "
+            f"gate_fid={metrics['gate_fidelity']:.4f} | twoq_fid={metrics['two_qubit_gate_fidelity']:.4f}"
+        )
+        print(
+            f"params: n={final_app.n} ft_mode={final_app.ft_prep_mode} "
+            f"idle_weights={final_app.idle_pauli_weights} "
+            f"data_t2={final_app.idle_data_coherence_time_sec:.3e}s "
+            f"comm_t2={final_app.idle_comm_coherence_time_sec:.3e}s"
+        )
+
+        # Link table.
+        header = f"{'Link':<18} {'Phys':>8} {'Logical':>8} {'Prep':>8} {'FT':>10}"
+        print(header)
+        print("-" * len(header))
+        for row in metrics["link_rows"]:
+            print(
+                f"{row['link']:<18} "
+                f"{row['initial_phys']:>8.4f} "
+                f"{row['logical']:>8.4f} "
+                f"{row['prep']:>8.4f} "
+                f"{str(row['ft_mode']):>10}"
+            )
+
+            # Optional per-physical-pair rows under each link.
+            for pair_row in physical_by_link.get(int(row["link_index"]), []):
+                print(
+                    f"  pair[{pair_row['pair_index']}] "
+                    f"{pair_row['left_memory']}:{pair_row['left_key']} <-> "
+                    f"{pair_row['right_memory']}:{pair_row['right_key']} "
+                    f"f={pair_row['pair_fidelity']:.6f}"
+                )
+
+        # Summary lines.
+        print(
+            f"\nAverages: phys={metrics['avg_initial_phys']:.4f} | "
+            f"logical={metrics['avg_link_logical']:.4f}"
+        )
+        if not np.isnan(metrics["end_to_end_logical"]):
+            print(f"End-to-end ({node_names[0]} <-> {node_names[-1]}): {metrics['end_to_end_logical']:.4f}")
+        if not np.isnan(metrics["latency_ps"]):
+            print(f"Latency: {metrics['latency_ps']:.0f} ps ({metrics['latency_s']:.6e} s)")
+            print(f"Throughput: {metrics['throughput_pairs_per_s']:.6e} pairs/s")
+    metrics = _collect_metrics()
+    _print_metrics_summary(metrics)
+    print(f"=== {num_links}-link pipeline complete ===")
     return {"apps": apps, "metrics": metrics}
 
 if __name__ == "__main__":

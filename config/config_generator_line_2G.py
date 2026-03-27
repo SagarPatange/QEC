@@ -43,6 +43,9 @@ def generate_2g_nodes(
     ft_prep_mode="none",
     ft_max_retries=1,
     ft_postselect=False,
+    idle_data_coherence_time_sec=1e12,
+    idle_comm_coherence_time_sec=1e12,
+    idle_pauli_weights=None,
 ):
     """Generate node configs for 2nd generation quantum routers."""
     # Start with standard nodes
@@ -69,6 +72,16 @@ def generate_2g_nodes(
             node["gate_fidelity"] = gate_fidelity
         if two_qubit_gate_fidelity is not None:
             node["two_qubit_gate_fidelity"] = two_qubit_gate_fidelity
+        node["idle_data_coherence_time_sec"] = float(idle_data_coherence_time_sec)
+        node["idle_comm_coherence_time_sec"] = float(idle_comm_coherence_time_sec)
+        if idle_pauli_weights is None:
+            node["idle_pauli_weights"] = {"x": 0.05, "y": 0.05, "z": 0.90}
+        else:
+            node["idle_pauli_weights"] = {
+                "x": float(idle_pauli_weights["x"]),
+                "y": float(idle_pauli_weights["y"]),
+                "z": float(idle_pauli_weights["z"]),
+            }
 
     return nodes
 #================================================================
@@ -85,6 +98,11 @@ parser.add_argument('--css_code', type=str, default='[[7,1,3]]', help='CSS code 
 parser.add_argument('--ft_prep_mode', type=str, default='none', choices=['none', 'minimal', 'strong'], help='Fault-tolerant prep mode for logical-state preparation')
 parser.add_argument('--ft_max_retries', type=int, default=1, help='Max retries for FT prep attempts per logical block')
 parser.add_argument('--ft_postselect', action='store_true', help='Enable detector-based postselection during FT prep')
+parser.add_argument('--idle_data_t2_sec', type=float, default=1e12, help='Data-qubit idling coherence time in seconds')
+parser.add_argument('--idle_comm_t2_sec', type=float, default=1e12, help='Communication-qubit idling coherence time in seconds')
+parser.add_argument('--idle_pauli_x', type=float, default=0.05, help='Idle Pauli X weight')
+parser.add_argument('--idle_pauli_y', type=float, default=0.05, help='Idle Pauli Y weight')
+parser.add_argument('--idle_pauli_z', type=float, default=0.90, help='Idle Pauli Z weight')
 
 #=========================== Changes ============================
 parser.add_argument('--gen2', action='store_true', help='Use 2nd generation quantum routers')
@@ -123,9 +141,11 @@ template = 'qec'
 
 if args.gen2:  # Check for 2nd generation flag (NEW)
     args.formalism = 'stabilizer'  # 2nd gen routers typically use stabilizer for QEC
+    idle_pauli_weights = {"x": args.idle_pauli_x, "y": args.idle_pauli_y, "z": args.idle_pauli_z}
     nodes = generate_2g_nodes(router_names, args.memo_size, args.data_size, args.ancilla_size,
                               template, args.gate_fid, args.two_qubit_gate_fid,
-                              args.ft_prep_mode, args.ft_max_retries, args.ft_postselect)
+                              args.ft_prep_mode, args.ft_max_retries, args.ft_postselect,
+                              args.idle_data_t2_sec, args.idle_comm_t2_sec, idle_pauli_weights)
 else:
     nodes = generate_nodes(router_names, args.memo_size, template)
 #================================================================

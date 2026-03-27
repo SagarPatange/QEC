@@ -115,6 +115,9 @@ class QREProtocol(Protocol):
         self.is_running = False
         self.current_phase = "IDLE"
         self.is_success = False
+        # Cache idle-noise settings from app once; methods use local fields.
+        self.idle_pauli_weights: dict[str, float] = dict(self.app.idle_pauli_weights)
+        self.idle_data_coherence_time_sec = float(self.app.idle_data_coherence_time_sec)
 
         # Frame bits used for local contribution and final aggregate correction.
         self.bx = 0
@@ -260,6 +263,15 @@ class QREProtocol(Protocol):
         for i in range(self.n):
             circ.measure(self.n + i)
 
+        # Apply time-based idle decoherence before encoded swapping consumes data keys.
+        now_ps = int(self.owner.timeline.now())
+        coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in run_keys}
+        self.owner.timeline.quantum_manager.apply_idling_decoherence(
+            keys=run_keys,
+            now_ps=now_ps,
+            coherence_time_sec_by_key=coherence_time_sec_by_key,
+            pauli_weights=self.idle_pauli_weights)
+
         meas_samp = self.owner.get_generator().random()
         results = self.owner.timeline.quantum_manager.run_circuit(circ, run_keys, meas_samp)
 
@@ -285,8 +297,7 @@ class QREProtocol(Protocol):
                 protocol_name=self.name,
                 sender_node=self.owner.name,
                 frame_contrib_bx=self.bx,
-                frame_contrib_bz=self.bz,
-                )
+                frame_contrib_bz=self.bz)
             
             self.owner.send_message(initiator_name, msg)
             log.logger.info(f"{self.name}: sending FRAME_UPDATE to initiator={initiator_name}")
@@ -370,6 +381,14 @@ class QREProtocol(Protocol):
 
         # Apply final logical frame on the local endpoint block when non-trivial.
         if (final_bx or final_bz) and self.local_data_keys:
+            # Apply time-based idle decoherence before endpoint frame-correction circuit.
+            now_ps = int(self.owner.timeline.now())
+            coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in self.local_data_keys}
+            self.owner.timeline.quantum_manager.apply_idling_decoherence(
+                keys=self.local_data_keys,
+                now_ps=now_ps,
+                coherence_time_sec_by_key=coherence_time_sec_by_key,
+                pauli_weights=self.idle_pauli_weights)
             corr = Circuit(len(self.local_data_keys))
             for i in range(len(self.local_data_keys)):
                 if final_bx:
