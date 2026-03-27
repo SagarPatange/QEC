@@ -658,8 +658,17 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     return {"apps": apps, "metrics": metrics}
 
 
-def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', css_code="[[7,1,3]]"):
-    """Create end-to-end logical entanglement across an N-node linear chain."""
+def n_node_logical_pair_with_app(verbose: bool = False):
+    """Create end-to-end logical entanglement across an N-node linear chain.
+
+    Args:
+        verbose: Whether to print verbose diagnostics.
+
+    Returns:
+        dict[str, object]: App objects and collected run metrics.
+    """
+    config_file = 'config/line_5_2G_near_term.json'
+    css_code = "[[7,1,3]]"
 
     log_filename = 'log/n_node_logical_pair'
     network_config = resolve_config_path(config_file)
@@ -689,7 +698,7 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
     assert len(node_names) >= 2, f"Expected at least 2 nodes, got {len(node_names)}"
 
     start_time_ps = int(1e12)
-    end_time_ps = int(10e12)
+    end_time_ps = start_time_ps + int(9e11)
     default_target_fidelity = 0.8
 
     apps = {}
@@ -773,7 +782,6 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
                 )
 
         final_app = apps[node_names[0]]
-
         # Aggregate link-level averages.
         initial_values = [r["initial_phys"] for r in metrics["link_rows"] if not np.isnan(r["initial_phys"])]
         logical_values = [r["logical"] for r in metrics["link_rows"] if not np.isnan(r["logical"])]
@@ -843,13 +851,14 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
             )
 
             # Optional per-physical-pair rows under each link.
-            for pair_row in physical_by_link.get(int(row["link_index"]), []):
-                print(
-                    f"  pair[{pair_row['pair_index']}] "
-                    f"{pair_row['left_memory']}:{pair_row['left_key']} <-> "
-                    f"{pair_row['right_memory']}:{pair_row['right_key']} "
-                    f"f={pair_row['pair_fidelity']:.6f}"
-                )
+            if verbose:
+                for pair_row in physical_by_link.get(int(row["link_index"]), []):
+                    print(
+                        f"  pair[{pair_row['pair_index']}] "
+                        f"{pair_row['left_memory']}:{pair_row['left_key']} <-> "
+                        f"{pair_row['right_memory']}:{pair_row['right_key']} "
+                        f"f={pair_row['pair_fidelity']:.6f}"
+                    )
 
         # Summary lines.
         print(
@@ -859,7 +868,7 @@ def n_node_logical_pair_with_app(config_file='config/line_5_2G_near_term.json', 
         if not np.isnan(metrics["end_to_end_logical"]):
             print(f"End-to-end ({node_names[0]} <-> {node_names[-1]}): {metrics['end_to_end_logical']:.4f}")
         if not np.isnan(metrics["latency_ps"]):
-            print(f"Latency: {metrics['latency_ps']:.0f} ps ({metrics['latency_s']:.6e} s)")
+            print(f"Latency: {metrics['latency_ps']:.0f} ps ({metrics['latency_s']:.6e} s, {metrics['latency_ps'] * 1e-9:.6f} ms)")
             print(f"Throughput: {metrics['throughput_pairs_per_s']:.6e} pairs/s")
     metrics = _collect_metrics()
     _print_metrics_summary(metrics)
@@ -900,10 +909,7 @@ if __name__ == "__main__":
     # )
 
     # ----- N-node runs -----
-    n_node_logical_pair_with_app(
-        config_file='config/line_5_2G_near_term.json',
-        css_code="[[7,1,3]]",
-    )
+    n_node_logical_pair_with_app(verbose=False)
 
     # Add more N-node runs as needed:
-    # n_node_logical_pair_with_app(config_file='config/line_7_2G_near_term.json', css_code="[[9,1,3]]")
+    # n_node_logical_pair_with_app(verbose=True)
