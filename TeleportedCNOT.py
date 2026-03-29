@@ -390,8 +390,7 @@ class TeleportedCNOTProtocol(Protocol):
         self.end_time = self.owner.timeline.now()
         self.current_phase = 'COMPLETE'
 
-        log.logger.info(f"[{self.name}] Teleported CNOT complete "
-                        f"(duration: {self.end_time - self.start_time:,} ps)")
+        log.logger.info(f"[{self.name}] Teleported CNOT complete (duration: {self.end_time - self.start_time:,} ps)")
 
         # Local app callback for this node's link bookkeeping.
         process = Process(self.app, "on_teleported_cnot_complete", [self.remote_node_name])

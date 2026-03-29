@@ -686,8 +686,8 @@ def n_node_logical_pair_with_app(verbose: bool = False):
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
     idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
-    idle_data_coherence_time_sec = 1e30
-    idle_comm_coherence_time_sec = 1e30
+    idle_data_coherence_time_sec = 1e-1
+    idle_comm_coherence_time_sec = 1e-1
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -710,7 +710,7 @@ def n_node_logical_pair_with_app(verbose: bool = False):
     window_duration_ps = int(1e9)
     round_spacing_ps = int(5e9)
     default_target_fidelity = 0.8
-    num_logical_pairs = 3
+    num_logical_pairs = 30
 
     apps = {}
     for node_name in node_names:
@@ -752,15 +752,16 @@ def n_node_logical_pair_with_app(verbose: bool = False):
             "two_qubit_gate_fidelity": tl.quantum_manager.two_qubit_gate_fid,
             "num_nodes": len(node_names),
             "num_links": num_links,
+            "num_logical_pairs_requested": num_logical_pairs,
+            "num_logical_pairs_completed": 0,
             "link_rows": [],
-            "physical_pair_rows": [],
-            "pair_rows": [],
+            "end_to_end_rows": [],
             "avg_initial_phys": float("nan"),
             "avg_link_logical": float("nan"),
-            "end_to_end_logical": float("nan"),
-            "latency_ps": float("nan"),
-            "latency_s": float("nan"),
-            "throughput_pairs_per_s": float("nan"),
+            "avg_end_to_end_logical": float("nan"),
+            "avg_latency_ps": float("nan"),
+            "avg_latency_s": float("nan"),
+            "avg_throughput_pairs_per_s": float("nan"),
         }
 
         # Per-link metrics from each left-side app instance.
@@ -789,27 +790,20 @@ def n_node_logical_pair_with_app(verbose: bool = False):
             }
             metrics["link_rows"].append(row)
 
-            # QRE-level diagnostic rows (if present).
-            pair_rows = [] if left_run_stats is None else left_run_stats["post_idle_pair_fidelity_rows"].get(right, [])
-            if pair_rows:
-                metrics["pair_rows"].extend(
-                    {"link": row["link"], "link_index": link_index, **pair_row}
-                    for pair_row in pair_rows
-                )
-
-            # Physical Bell-pair-level rows (if present).
-            physical_rows = [] if left_run_stats is None else left_run_stats["physical_pair_fidelity_rows"].get(right, [])
-            if physical_rows:
-                metrics["physical_pair_rows"].extend(
-                    {"link": row["link"], "link_index": link_index, **pair_row}
-                    for pair_row in physical_rows
-                )
-
         final_app = apps[node_names[0]]
-        latest_run_stats = None
         if final_app.run_stats:
-            latest_run_id = max(final_app.run_stats)
-            latest_run_stats = final_app.run_stats[latest_run_id]
+            for run_id in sorted(final_app.run_stats):
+                run_stats = final_app.run_stats[run_id]
+                latency_ps = run_stats["latency_ps"]
+                latency_s = float("nan")
+                throughput_pairs_per_s = float("nan")
+                if latency_ps is not None:
+                    latency_ps = float(latency_ps)
+                    latency_s = latency_ps * 1e-12
+                    throughput_pairs_per_s = 0.0 if latency_s <= 0.0 else 1.0 / latency_s
+
+                metrics["end_to_end_rows"].append({"run_id": int(run_id), "fidelity": float(run_stats["final_end_to_end_fidelity"]) if run_stats["final_end_to_end_fidelity"] is not None else float("nan"), "latency_ps": latency_ps if latency_ps is not None else float("nan"), "latency_s": latency_s, "throughput_pairs_per_s": throughput_pairs_per_s})
+        metrics["num_logical_pairs_completed"] = len(metrics["end_to_end_rows"])
         # Aggregate link-level averages.
         initial_values = [r["initial_phys"] for r in metrics["link_rows"] if not np.isnan(r["initial_phys"])]
         logical_values = [r["logical"] for r in metrics["link_rows"] if not np.isnan(r["logical"])]
@@ -817,19 +811,16 @@ def n_node_logical_pair_with_app(verbose: bool = False):
             metrics["avg_initial_phys"] = float(np.mean(initial_values))
         if logical_values:
             metrics["avg_link_logical"] = float(np.mean(logical_values))
-
-        # End-to-end fidelity comes from the latest completed initiator run.
-        if latest_run_stats is not None and latest_run_stats["final_end_to_end_fidelity"] is not None:
-            metrics["end_to_end_logical"] = float(latest_run_stats["final_end_to_end_fidelity"])
-
-        # Latency/throughput come from the latest completed initiator run.
-        if latest_run_stats is not None and latest_run_stats["latency_ps"] is not None:
-            latency_ps = float(latest_run_stats["latency_ps"])
-            latency_s = latency_ps * 1e-12
-            throughput = 0.0 if latency_s <= 0.0 else 1.0 / latency_s
-            metrics["latency_ps"] = latency_ps
-            metrics["latency_s"] = latency_s
-            metrics["throughput_pairs_per_s"] = throughput
+        e2e_values = [r["fidelity"] for r in metrics["end_to_end_rows"] if not np.isnan(r["fidelity"])]
+        latency_values = [r["latency_ps"] for r in metrics["end_to_end_rows"] if not np.isnan(r["latency_ps"])]
+        throughput_values = [r["throughput_pairs_per_s"] for r in metrics["end_to_end_rows"] if not np.isnan(r["throughput_pairs_per_s"])]
+        if e2e_values:
+            metrics["avg_end_to_end_logical"] = float(np.mean(e2e_values))
+        if latency_values:
+            metrics["avg_latency_ps"] = float(np.mean(latency_values))
+            metrics["avg_latency_s"] = metrics["avg_latency_ps"] * 1e-12
+        if throughput_values:
+            metrics["avg_throughput_pairs_per_s"] = float(np.mean(throughput_values))
 
         return metrics
 
@@ -844,97 +835,40 @@ def n_node_logical_pair_with_app(verbose: bool = False):
         """
         final_app = apps[node_names[0]]
 
-        # Group physical-pair rows by link for compact per-link printing.
-        physical_by_link: dict[int, list[dict[str, object]]] = {}
-        for row in metrics["physical_pair_rows"]:
-            link_index = int(row["link_index"])
-            if link_index not in physical_by_link:
-                physical_by_link[link_index] = []
-            physical_by_link[link_index].append(row)
-
         # Header and run parameters.
         print("\n=== Run Summary ===")
-        print(
-            f"code={css_code} | nodes={len(node_names)} | links={num_links} | "
-            f"gate_fid={metrics['gate_fidelity']:.4f} | twoq_fid={metrics['two_qubit_gate_fidelity']:.4f}"
-        )
-        print(
-            f"params: n={final_app.n} ft_mode={final_app.ft_prep_mode} "
-            f"idle_weights={final_app.idle_pauli_weights} "
-            f"data_t2={final_app.idle_data_coherence_time_sec:.3e}s "
-            f"comm_t2={final_app.idle_comm_coherence_time_sec:.3e}s"
-        )
+        print(f"code={css_code} | nodes={len(node_names)} | links={num_links} | gate_fid={metrics['gate_fidelity']:.4f} | twoq_fid={metrics['two_qubit_gate_fidelity']:.4f}")
+        print(f"params: n={final_app.n} ft_mode={final_app.ft_prep_mode} idle_weights={final_app.idle_pauli_weights} data_t2={final_app.idle_data_coherence_time_sec:.3e}s comm_t2={final_app.idle_comm_coherence_time_sec:.3e}s")
+        print(f"logical_pairs: requested={metrics['num_logical_pairs_requested']} completed={metrics['num_logical_pairs_completed']}")
 
-        # Link table.
-        header = f"{'Link':<18} {'Phys':>8} {'Logical':>8} {'Prep':>8} {'FT':>10}"
-        print(header)
-        print("-" * len(header))
-        for row in metrics["link_rows"]:
-            print(
-                f"{row['link']:<18} "
-                f"{row['initial_phys']:>8.4f} "
-                f"{row['logical']:>8.4f} "
-                f"{row['prep']:>8.4f} "
-                f"{str(row['ft_mode']):>10}"
-            )
+        if verbose:
+            header = f"{'Link':<18} {'Phys':>8} {'Logical':>8} {'Prep':>8} {'FT':>10}"
+            print(header)
+            print("-" * len(header))
+            for row in metrics["link_rows"]:
+                print(f"{row['link']:<18} {row['initial_phys']:>8.4f} {row['logical']:>8.4f} {row['prep']:>8.4f} {str(row['ft_mode']):>10}")
+            print(f"\nAverages: phys={metrics['avg_initial_phys']:.4f} | logical={metrics['avg_link_logical']:.4f}")
+        if verbose and metrics["end_to_end_rows"]:
+            print(f"\nLogical Pair Runs ({node_names[0]} <-> {node_names[-1]})")
+            header = f"{'Run':>4} {'E2E Fid':>10} {'Latency (ps)':>14} {'Latency (ms)':>14} {'Throughput':>14}"
+            print(header)
+            print("-" * len(header))
+            for row in metrics["end_to_end_rows"]:
+                print(f"{row['run_id']:>4d} {row['fidelity']:>10.4f} {row['latency_ps']:>14.0f} {row['latency_ps'] * 1e-9:>14.6f} {row['throughput_pairs_per_s']:>14.6e}")
 
-            # Optional per-physical-pair rows under each link.
-            if verbose:
-                for pair_row in physical_by_link.get(int(row["link_index"]), []):
-                    print(
-                        f"  pair[{pair_row['pair_index']}] "
-                        f"{pair_row['left_memory']}:{pair_row['left_key']} <-> "
-                        f"{pair_row['right_memory']}:{pair_row['right_key']} "
-                        f"f={pair_row['pair_fidelity']:.6f}"
-                    )
-
-        # Summary lines.
-        print(
-            f"\nAverages: phys={metrics['avg_initial_phys']:.4f} | "
-            f"logical={metrics['avg_link_logical']:.4f}"
-        )
-        if not np.isnan(metrics["end_to_end_logical"]):
-            print(f"End-to-end ({node_names[0]} <-> {node_names[-1]}): {metrics['end_to_end_logical']:.4f}")
-        if not np.isnan(metrics["latency_ps"]):
-            print(f"Latency: {metrics['latency_ps']:.0f} ps ({metrics['latency_s']:.6e} s, {metrics['latency_ps'] * 1e-9:.6f} ms)")
-            print(f"Throughput: {metrics['throughput_pairs_per_s']:.6e} pairs/s")
+            print(f"{'Avg':>4} {metrics['avg_end_to_end_logical']:>10.4f} {metrics['avg_latency_ps']:>14.0f} {metrics['avg_latency_ps'] * 1e-9:>14.6f} {metrics['avg_throughput_pairs_per_s']:>14.6e}")
+        if not np.isnan(metrics["avg_end_to_end_logical"]):
+            print(f"Avg end-to-end ({node_names[0]} <-> {node_names[-1]}): {metrics['avg_end_to_end_logical']:.4f}")
+        if not np.isnan(metrics["avg_latency_ps"]):
+            print(f"Avg latency: {metrics['avg_latency_ps']:.0f} ps ({metrics['avg_latency_s']:.6e} s, {metrics['avg_latency_ps'] * 1e-9:.6f} ms)")
+            print(f"Avg throughput: {metrics['avg_throughput_pairs_per_s']:.6e} pairs/s")
+    
     metrics = _collect_metrics()
     _print_metrics_summary(metrics)
     print(f"=== {num_links}-link pipeline complete ===")
     return {"apps": apps, "metrics": metrics}
 
 if __name__ == "__main__":
-    # ----- Legacy 5-node sweep (disabled) -----
-    # run_five_node_pair(
-    #     label="Steane [[7,1,3]] Code",
-    #     css_code="[[7,1,3]]",
-    #     non_ft_config='config/line_5_2G_near_term.json',
-    #     ft_config='config/line_5_2G_near_term_steane_minft.json',
-    # )
-    # run_five_node_pair(
-    #     label="Shor [[9,1,3]] Code",
-    #     css_code="[[9,1,3]]",
-    #     non_ft_config='config/line_5_2G_near_term_shor.json',
-    #     ft_config='config/line_5_2G_near_term_shor_minft.json',
-    # )
-    # run_five_node_pair(
-    #     label="Reed-Muller [[15,1,3]] Code",
-    #     css_code="[[15,1,3]]",
-    #     non_ft_config='config/line_5_2G_near_term_rm15.json',
-    #     ft_config='config/line_5_2G_near_term_rm15_minft.json',
-    # )
-    # run_five_node_pair(
-    #     label="Golay [[23,1,7]] Code",
-    #     css_code="[[23,1,7]]",
-    #     non_ft_config='config/line_5_2G_near_term_golay.json',
-    #     ft_config='config/line_5_2G_near_term_golay_minft.json',
-    # )
-    # run_five_node_pair(
-    #     label="BCH [[31,1,7]] Code",
-    #     css_code="[[31,1,7]]",
-    #     non_ft_config='config/line_5_2G_near_term_bch31.json',
-    #     ft_config='config/line_5_2G_near_term_bch31_minft.json',
-    # )
 
     # ----- N-node runs -----
     n_node_logical_pair_with_app(verbose=False)
