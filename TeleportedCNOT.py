@@ -110,8 +110,10 @@ class TeleportedCNOTProtocol(Protocol):
         self.start_time = None
         self.end_time = None
         self.started = False
+        # Cache app handle once so protocol code has one anchor point.
+        self.app = owner.request_logical_pair_app
         # Cache idle-noise settings from app at init; phase methods use local fields only.
-        app = owner.request_logical_pair_app
+        app = self.app
         self.idle_pauli_weights: dict[str, float] = dict(app.idle_pauli_weights)
         self.idle_data_coherence_time_sec = float(app.idle_data_coherence_time_sec)
         self.idle_comm_coherence_time_sec = float(app.idle_comm_coherence_time_sec)
@@ -236,7 +238,7 @@ class TeleportedCNOTProtocol(Protocol):
             self.current_phase = "COMPLETE"
             log.logger.info(f"[{self.name}] TCNOT_COMPLETE received from {src}")
 
-            process = Process(self.owner.request_logical_pair_app, "on_teleported_cnot_complete", [src])
+            process = Process(self.app, "on_teleported_cnot_complete", [src])
             event = Event(self.owner.timeline.now() + 50, process)
             self.owner.timeline.schedule(event)
             return
@@ -392,7 +394,7 @@ class TeleportedCNOTProtocol(Protocol):
                         f"(duration: {self.end_time - self.start_time:,} ps)")
 
         # Local app callback for this node's link bookkeeping.
-        process = Process(self.owner.request_logical_pair_app, "on_teleported_cnot_complete", [self.remote_node_name])
+        process = Process(self.app, "on_teleported_cnot_complete", [self.remote_node_name])
         event = Event(self.owner.timeline.now() + 1000, process)
         self.owner.timeline.schedule(event)
 

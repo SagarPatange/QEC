@@ -434,6 +434,9 @@ def three_node_logical_pair_with_app(verbose=False, config_file='config/line_3_2
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+    idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
+    idle_data_coherence_time_sec = 1e30
+    idle_comm_coherence_time_sec = 1e30
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -532,6 +535,9 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+    idle_pauli_weights = {"x": 0.0, "y": 0.0, "z": 0.0}
+    idle_data_coherence_time_sec = 1e12
+    idle_comm_coherence_time_sec = 1e12
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -613,8 +619,8 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
         left = node_names[i]
         right = node_names[i + 1]
         left_app = apps[left]
-        initial_phys = left_app._initial_link_fidelities.get(right, float("nan"))
-        logical = left_app._link_logical_fidelities.get(right, float("nan"))
+        initial_phys = left_app.current_run["initial_link_fidelities"].get(right, float("nan"))
+        logical = left_app.current_run["link_logical_fidelities"].get(right, float("nan"))
         metrics["link_rows"].append(
             {
                 "left": left,
@@ -640,12 +646,12 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
         )
 
     final_app = apps[node_names[0]]
-    if final_app._final_end_to_end_fidelity is not None:
-        metrics["end_to_end_logical"] = float(final_app._final_end_to_end_fidelity)
+    if final_app.current_run["final_end_to_end_fidelity"] is not None:
+        metrics["end_to_end_logical"] = float(final_app.current_run["final_end_to_end_fidelity"])
         print("\nEnd-to-End")
         print(
             f"{node_names[0]} <-> {node_names[-1]} | "
-            f"end_to_end_logical={final_app._final_end_to_end_fidelity:.6f}"
+            f"end_to_end_logical={final_app.current_run['final_end_to_end_fidelity']:.6f}"
         )
 
     if initial_values:
@@ -679,6 +685,9 @@ def n_node_logical_pair_with_app(verbose: bool = False):
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+    idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
+    idle_data_coherence_time_sec = 1e30
+    idle_comm_coherence_time_sec = 1e30
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -698,11 +707,16 @@ def n_node_logical_pair_with_app(verbose: bool = False):
     assert len(node_names) >= 2, f"Expected at least 2 nodes, got {len(node_names)}"
 
     start_time_ps = int(1e12)
-    end_time_ps = start_time_ps + int(9e11)
+    window_duration_ps = int(1e9)
+    round_spacing_ps = int(5e9)
     default_target_fidelity = 0.8
+    num_logical_pairs = 3
 
     apps = {}
     for node_name in node_names:
+        routers_by_name[node_name].idle_pauli_weights = dict(idle_pauli_weights)
+        routers_by_name[node_name].idle_data_coherence_time_sec = float(idle_data_coherence_time_sec)
+        routers_by_name[node_name].idle_comm_coherence_time_sec = float(idle_comm_coherence_time_sec)
         apps[node_name] = RequestLogicalPairApp(
             routers_by_name[node_name],
             css_code=css_code,
@@ -713,8 +727,10 @@ def n_node_logical_pair_with_app(verbose: bool = False):
         apps[node_names[i]].start(
             responder=node_names[i + 1],
             start_t=start_time_ps,
-            end_t=end_time_ps,
-            fidelity=default_target_fidelity)
+            end_t=start_time_ps + window_duration_ps,
+            fidelity=default_target_fidelity,
+            num_logical_pairs=num_logical_pairs,
+            round_spacing_ps=round_spacing_ps)
 
     tl.init()
     tl.run()
@@ -750,8 +766,16 @@ def n_node_logical_pair_with_app(verbose: bool = False):
         # Per-link metrics from each left-side app instance.
         for link_index, (left, right) in enumerate(zip(node_names[:-1], node_names[1:])):
             left_app = apps[left]
-            initial_phys = float(left_app._initial_link_fidelities.get(right, float("nan")))
-            logical = float(left_app._link_logical_fidelities.get(right, float("nan")))
+            left_run_stats = None
+            if left_app.run_stats:
+                left_latest_run_id = max(left_app.run_stats)
+                left_run_stats = left_app.run_stats[left_latest_run_id]
+
+            initial_phys = float("nan")
+            logical = float("nan")
+            if left_run_stats is not None:
+                initial_phys = float(left_run_stats["initial_link_fidelities"].get(right, float("nan")))
+                logical = float(left_run_stats["link_logical_fidelities"].get(right, float("nan")))
 
             row = {
                 "left": left,
@@ -766,7 +790,7 @@ def n_node_logical_pair_with_app(verbose: bool = False):
             metrics["link_rows"].append(row)
 
             # QRE-level diagnostic rows (if present).
-            pair_rows = left_app._post_idle_pair_fidelity_rows.get(right, [])
+            pair_rows = [] if left_run_stats is None else left_run_stats["post_idle_pair_fidelity_rows"].get(right, [])
             if pair_rows:
                 metrics["pair_rows"].extend(
                     {"link": row["link"], "link_index": link_index, **pair_row}
@@ -774,7 +798,7 @@ def n_node_logical_pair_with_app(verbose: bool = False):
                 )
 
             # Physical Bell-pair-level rows (if present).
-            physical_rows = left_app._physical_pair_fidelity_rows.get(right, [])
+            physical_rows = [] if left_run_stats is None else left_run_stats["physical_pair_fidelity_rows"].get(right, [])
             if physical_rows:
                 metrics["physical_pair_rows"].extend(
                     {"link": row["link"], "link_index": link_index, **pair_row}
@@ -782,6 +806,10 @@ def n_node_logical_pair_with_app(verbose: bool = False):
                 )
 
         final_app = apps[node_names[0]]
+        latest_run_stats = None
+        if final_app.run_stats:
+            latest_run_id = max(final_app.run_stats)
+            latest_run_stats = final_app.run_stats[latest_run_id]
         # Aggregate link-level averages.
         initial_values = [r["initial_phys"] for r in metrics["link_rows"] if not np.isnan(r["initial_phys"])]
         logical_values = [r["logical"] for r in metrics["link_rows"] if not np.isnan(r["logical"])]
@@ -790,13 +818,13 @@ def n_node_logical_pair_with_app(verbose: bool = False):
         if logical_values:
             metrics["avg_link_logical"] = float(np.mean(logical_values))
 
-        # End-to-end fidelity comes from initiator app final state.
-        if final_app._final_end_to_end_fidelity is not None:
-            metrics["end_to_end_logical"] = float(final_app._final_end_to_end_fidelity)
+        # End-to-end fidelity comes from the latest completed initiator run.
+        if latest_run_stats is not None and latest_run_stats["final_end_to_end_fidelity"] is not None:
+            metrics["end_to_end_logical"] = float(latest_run_stats["final_end_to_end_fidelity"])
 
-        # Latency/throughput are derived from initiator start/completion timestamps.
-        if final_app._attempt_start_time_ps is not None and final_app._final_completion_time_ps is not None:
-            latency_ps = float(final_app._final_completion_time_ps - final_app._attempt_start_time_ps)
+        # Latency/throughput come from the latest completed initiator run.
+        if latest_run_stats is not None and latest_run_stats["latency_ps"] is not None:
+            latency_ps = float(latest_run_stats["latency_ps"])
             latency_s = latency_ps * 1e-12
             throughput = 0.0 if latency_s <= 0.0 else 1.0 / latency_s
             metrics["latency_ps"] = latency_ps

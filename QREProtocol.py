@@ -82,7 +82,7 @@ class QREProtocol(Protocol):
         """
         super().__init__(owner, name=f"{owner.name}.QRE.{remote_node_name}")
 
-        # Stable handles for app context and neighbor identity.
+        # Stable handles for app context and remote peer.
         self.app = app
         self.remote_node_name = remote_node_name
         self.n = self.app.n
@@ -157,10 +157,15 @@ class QREProtocol(Protocol):
             self.local_data_keys = list(self.left_data_keys)
         else:
             self.local_data_keys = []
+        log.logger.info(
+            f"{self.name}: qre_start run_id={self.app.current_run['run_id']} "
+            f"initiator={self.is_initiator} middle={self.is_middle} "
+            f"expected_updates={self.expected_frame_updates} local_data_keys={self.local_data_keys}"
+        )
 
         # Initiator owns the frame accumulator, so reset it per attempt.
         if self.is_initiator:
-            self.app.frame_updates_by_src.clear()
+            self.app.current_run["frame_updates_by_src"].clear()
 
         # Middle-node path: execute encoded swapping locally.
         if self.is_middle:
@@ -279,11 +284,22 @@ class QREProtocol(Protocol):
         right_z_bits = [int(results[self.right_data_keys[i]]) for i in range(self.n)]
 
         decoded = self._decode_middle_bsm(left_x_bits, right_z_bits)
+        log.logger.info(
+            f"{self.name}: swap_decode raw_left_x={left_x_bits} raw_right_z={right_z_bits} "
+            f"s_x={decoded['s_x']} s_z={decoded['s_z']} "
+            f"x_flip={decoded['x_flip_qubit']} z_flip={decoded['z_flip_qubit']} "
+            f"x_corrected={decoded['x_corrected']} z_corrected={decoded['z_corrected']} "
+            f"b_x_corrected={decoded['b_x_corrected']} b_z_corrected={decoded['b_z_corrected']}"
+        )
 
         # 2) Decode Steane syndromes and map corrected parities to frame contributions.
         # Frame convention: frame_bx <- corrected Z parity, frame_bz <- corrected X parity.
         self.bx = int(decoded["b_z_corrected"])
         self.bz = int(decoded["b_x_corrected"])
+        log.logger.info(
+            f"{self.name}: frame_mapping b_x_corrected={decoded['b_x_corrected']} "
+            f"b_z_corrected={decoded['b_z_corrected']} mapped_bx={self.bx} mapped_bz={self.bz}"
+        )
         self.s_x = list(decoded["s_x"])
         self.s_z = list(decoded["s_z"])
         log.logger.info(f"{self.name}: swap decoded frame_contrib_bx={self.bx} frame_contrib_bz={self.bz}")
@@ -300,7 +316,10 @@ class QREProtocol(Protocol):
                 frame_contrib_bz=self.bz)
             
             self.owner.send_message(initiator_name, msg)
-            log.logger.info(f"{self.name}: sending FRAME_UPDATE to initiator={initiator_name}")
+            log.logger.info(
+                f"{self.name}: emit_frame_update run_id={self.app.current_run['run_id']} "
+                f"initiator={initiator_name} bx={self.bx} bz={self.bz}"
+            )
 
         # Middle-node QRE completes after sending its frame contribution.
         self.result = {"frame_contrib_bx": int(self.bx), "frame_contrib_bz": int(self.bz)}
@@ -368,16 +387,30 @@ class QREProtocol(Protocol):
             None
         """
         # Cache one source-tagged frame contribution.
-        self.app.frame_updates_by_src[src] = (self.bx, self.bz)
-        log.logger.debug(f"{self.name}: frame update src={src} bx={self.bx} bz={self.bz} count={len(self.app.frame_updates_by_src)}/{self.expected_frame_updates}")
+        self.app.current_run["frame_updates_by_src"][src] = (self.bx, self.bz)
+        log.logger.info(
+            f"{self.name}: frame_accumulate run_id={self.app.current_run['run_id']} "
+            f"src={src} stored={self.app.current_run['frame_updates_by_src']} "
+            f"count={len(self.app.current_run['frame_updates_by_src'])}/{self.expected_frame_updates}"
+        )
 
         # Wait until all middle-node contributions for this attempt are available.
-        if len(self.app.frame_updates_by_src) != self.expected_frame_updates:
+        if len(self.app.current_run["frame_updates_by_src"]) != self.expected_frame_updates:
             return
 
-        final_bx = sum(bx for bx, _ in self.app.frame_updates_by_src.values()) % 2
-        final_bz = sum(bz for _, bz in self.app.frame_updates_by_src.values()) % 2
-        log.logger.info(f"{self.name}: final frame final_bx={final_bx} final_bz={final_bz}")
+        final_bx = sum(bx for bx, _ in self.app.current_run["frame_updates_by_src"].values()) % 2
+        final_bz = sum(bz for _, bz in self.app.current_run["frame_updates_by_src"].values()) % 2
+        log.logger.info(
+            f"{self.name}: frame_final run_id={self.app.current_run['run_id']} "
+            f"final_bx={final_bx} final_bz={final_bz} local_data_keys={self.local_data_keys}"
+        )
+        if self.is_initiator:
+            before_fidelity = self.app.calculate_pair_fidelity(
+                self.app._path_node_names[0],
+                self.app._path_node_names[-1],
+                "logical_end",
+            )
+            log.logger.info(f"{self.name}: final_frame_effect before_fidelity={before_fidelity:.6f}")
 
         # Apply final logical frame on the local endpoint block when non-trivial.
         if (final_bx or final_bz) and self.local_data_keys:
@@ -395,13 +428,24 @@ class QREProtocol(Protocol):
                     corr.x(i)
                 if final_bz:
                     corr.z(i)
+            log.logger.info(
+                f"{self.name}: apply_final_frame final_bx={final_bx} final_bz={final_bz} "
+                f"local_data_keys={self.local_data_keys}"
+            )
             self.owner.timeline.quantum_manager.run_circuit(corr, self.local_data_keys)
+            if self.is_initiator:
+                after_fidelity = self.app.calculate_pair_fidelity(
+                    self.app._path_node_names[0],
+                    self.app._path_node_names[-1],
+                    "logical_end",
+                )
+                log.logger.info(f"{self.name}: final_frame_effect after_fidelity={after_fidelity:.6f}")
 
         # Persist completion payload for app-level callback/reporting.
         self.result = {
             "final_bx": final_bx,
             "final_bz": final_bz,
-            "frame_updates_received": len(self.app.frame_updates_by_src),
+            "frame_updates_received": len(self.app.current_run["frame_updates_by_src"]),
         }
 
         self.current_phase = "ALL_FRAME_UPDATES_RECEIVED"

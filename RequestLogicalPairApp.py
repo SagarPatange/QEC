@@ -62,16 +62,9 @@ class RequestLogicalPairApp:
         self._left_peer_name = self._path_node_names[self._path_position - 1] if self._path_position > 0 else None  # Immediate left neighbor.
         self._right_peer_name = (self._path_node_names[self._path_position + 1] if self._path_position < last_index else None)  # Immediate right neighbor.
 
-        # Per-link qubit mapping, keyed by neighbor node name.
+        # App-owned local qubit resources, keyed by neighbor node name.
         self.data_qubits: dict[str, list] = {}  # neighbor -> list of n data Memory objects
-        self.comm_qubits: dict[str, list] = {}  # neighbor -> list of n entangled comm Memory objects
-        self.ancilla_qubits: dict[str, list] = {}  # neighbor -> list of 4 ancilla Memory objects (FT Prep)
-
-        # Per-link runtime state, keyed by neighbor node name.
-        self.qre_protocols: dict[str, "QREProtocol"] = {}
-        self.tcnot_protocols: dict[str, "TeleportedCNOTProtocol"] = {}
-        self.link_ready: set[str] = set()  # Links that are ready to produce one adjacent logical Bell pair.
-        self.tcnot_done: set[str] = set()  # Links whose TeleportedCNOT phase has completed.
+        self.ancilla_qubits: dict[str, list] = {}  # neighbor -> list of local ancilla Memory objects
 
         # Reservation tracking for physical-link callbacks.
         self.memo_to_reservation: dict[int, "Reservation"] = {}
@@ -81,13 +74,31 @@ class RequestLogicalPairApp:
         self.get_other_reservation = self.get_other_physical_reservation
         self.get_memory = self.get_physical_memory
 
-        # Backward-compatible report fields, pre-seeded until real values are computed.
-        self._initial_link_fidelities: dict[str, float] = {}
-        self._link_logical_fidelities: dict[str, float] = {}
-        self._physical_pair_fidelity_rows: dict[str, list[dict[str, object]]] = {}
-        self._post_idle_pair_fidelity_rows: dict[str, list[dict[str, object]]] = {}
-        self._final_end_to_end_fidelity: Optional[float] = None
-        self._attempt_start_time_ps: int | None = None
+        # Current-run state and metadata.
+        self.current_run: dict[str, object] = {
+            "run_id": 0,
+            "status": "idle",
+            "comm_qubits": {},
+            "qre_protocols": {},
+            "tcnot_protocols": {},
+            "pending_tcnot_messages": {},
+            "link_ready": set(),
+            "tcnot_done": set(),
+            "frame_updates_by_src": {},
+            "initial_link_fidelities": {},
+            "link_logical_fidelities": {},
+            "physical_pair_fidelity_rows": {},
+            "post_idle_pair_fidelity_rows": {},
+            "final_end_to_end_fidelity": None,
+            "success": None,
+            "start_time": None,
+            "end_time": None,
+            "completion_time": None,
+        }
+        self.run_stats: dict[int, dict[str, object]] = {}
+        self.scheduled_run_starts: list[int] = []
+        self.next_run_id = 1
+        self.start_time: int | None = None
         self._final_completion_time_ps: int | None = None
 
         # FT preparation setting used by encode_data_qubits.
@@ -106,43 +117,131 @@ class RequestLogicalPairApp:
         else:
             self.prep_fidelity = 1.0
 
-        self.frame_updates_by_src: dict[str, tuple[int, int]] = {}  # src -> (frame_bx, frame_bz)
-
-    def start(self, responder: str, start_t: int, end_t: int, fidelity: float) -> None:
-        """Start one link reservation as the initiator.
+    def reset_run(self) -> None:
+        """Reset all live state for the completed run.
 
         Args:
-            responder: Neighbor endpoint name.
-            start_t: Link start time in picoseconds.
-            end_t: Link end time in picoseconds.
-            fidelity: Requested target fidelity.
+            None.
 
         Returns:
             None
         """
-        log.logger.info(f"{self.name}: start responder={responder} window=({int(start_t)},{int(end_t)}) fidelity={fidelity:.4f}")
+        resource_manager = self.node.resource_manager
+        quantum_manager = self.node.timeline.quantum_manager
+
+        for memories in self.current_run["comm_qubits"].values():
+            for memory in memories:
+                resource_manager.update(None, memory, "RAW")
+
+        for memories in self.data_qubits.values():
+            for memory in memories:
+                quantum_manager.set_to_zero(memory.qstate_key)
+
+        for memories in self.ancilla_qubits.values():
+            for memory in memories:
+                quantum_manager.set_to_zero(memory.qstate_key)
+
+        self.data_qubits.clear()
+        self.ancilla_qubits.clear()
+        self.current_run = {
+            "run_id": 0,
+            "status": "idle",
+            "comm_qubits": {},
+            "qre_protocols": {},
+            "tcnot_protocols": {},
+            "pending_tcnot_messages": {},
+            "link_ready": set(),
+            "tcnot_done": set(),
+            "frame_updates_by_src": {},
+            "initial_link_fidelities": {},
+            "link_logical_fidelities": {},
+            "physical_pair_fidelity_rows": {},
+            "post_idle_pair_fidelity_rows": {},
+            "final_end_to_end_fidelity": None,
+            "success": None,
+            "start_time": None,
+            "end_time": None,
+            "completion_time": None,
+        }
+
+    def begin_run(self, start_t: int, end_t: int) -> None:
+        """Initialize live state for one scheduled run window.
+
+        Args:
+            start_t: Run start time in picoseconds.
+            end_t: Run end time in picoseconds.
+
+        Returns:
+            None
+        """
+        if self.current_run["start_time"] == int(start_t) and self.current_run["status"] != "idle":
+            return
+
+        self.current_run = {
+            "run_id": self.next_run_id,
+            "status": "active",
+            "comm_qubits": {},
+            "qre_protocols": {},
+            "tcnot_protocols": {},
+            "pending_tcnot_messages": {},
+            "link_ready": set(),
+            "tcnot_done": set(),
+            "frame_updates_by_src": {},
+            "initial_link_fidelities": {},
+            "link_logical_fidelities": {},
+            "physical_pair_fidelity_rows": {},
+            "post_idle_pair_fidelity_rows": {},
+            "final_end_to_end_fidelity": None,
+            "success": None,
+            "start_time": int(start_t),
+            "end_time": int(end_t),
+            "completion_time": None,
+        }
+        self.next_run_id += 1
+
+        active_neighbors = [neighbor for neighbor in (self._left_peer_name, self._right_peer_name) if neighbor is not None]
+        for neighbor in active_neighbors:
+            if neighbor not in self.data_qubits:
+                self._allocate_data_and_ancilla(neighbor)
+            if neighbor not in self.current_run["qre_protocols"]:
+                self.current_run["qre_protocols"][neighbor] = QREProtocol(owner=self.node, app=self, remote_node_name=neighbor)
+
+    def start(self, responder: str, start_t: int, end_t: int, fidelity: float, num_logical_pairs: int, round_spacing_ps: int) -> None:
+        """Schedule one or more logical-pair run windows.
+
+        Args:
+            responder: Neighbor endpoint name.
+            start_t: First run start time in picoseconds.
+            end_t: First run end time in picoseconds.
+            fidelity: Requested target fidelity.
+            num_logical_pairs: Number of logical-pair runs to schedule.
+            round_spacing_ps: Gap between run windows in picoseconds.
+
+        Returns:
+            None
+        """
+        log.logger.info(
+            f"{self.name}: start responder={responder} first_window=({int(start_t)},{int(end_t)}) "
+            f"fidelity={fidelity:.4f} num_logical_pairs={num_logical_pairs} round_spacing_ps={int(round_spacing_ps)}"
+        )
         if int(end_t) <= int(start_t):
             raise RuntimeError(f"{self.name}: end_t must be > start_t")
+        if num_logical_pairs < 1:
+            raise RuntimeError(f"{self.name}: num_logical_pairs must be >= 1")
+        if int(round_spacing_ps) < 0:
+            raise RuntimeError(f"{self.name}: round_spacing_ps must be >= 0")
 
-        # Track earliest request start for run-level latency reporting.
-        if self._attempt_start_time_ps is None or int(start_t) < self._attempt_start_time_ps:
-            self._attempt_start_time_ps = int(start_t)
+        window_duration_ps = int(end_t) - int(start_t)
+        for run_index in range(num_logical_pairs):
+            run_start_t = int(start_t) + run_index * (window_duration_ps + int(round_spacing_ps))
+            run_end_t = run_start_t + window_duration_ps
+            self.scheduled_run_starts.append(run_start_t)
 
-        # Ensure local data/ancilla blocks exist for links this node must serve.
-        if responder not in self.data_qubits:
-            self._allocate_data_and_ancilla(responder)  # allocate local block for initiator-side link
-        if self._path_role == "middle" and self._left_peer_name is not None:
-            if self._left_peer_name not in self.data_qubits:
-                self._allocate_data_and_ancilla(self._left_peer_name)  # pre-allocate other adjacent block for middle node
+            process = Process(self, "begin_run", [run_start_t, run_end_t])
+            event = Event(run_start_t, process, self.node.timeline.schedule_counter)
+            self.node.timeline.schedule(event)
 
-        # Create per-link QRE object once; QRE starts only after TCNOT barrier.
-        if responder not in self.qre_protocols:
-            self.qre_protocols[responder] = QREProtocol(
-                owner=self.node,
-                app=self,
-                remote_node_name=responder)
-
-        self.node.reserve_net_resource(responder, int(start_t), int(end_t), self.n, fidelity)
+            self.node.reserve_net_resource(responder, run_start_t, run_end_t, self.n, fidelity)
 
     def received_message(self, src: str, msg: object) -> bool:
         """Route incoming messages to active protocols.
@@ -159,16 +258,26 @@ class RequestLogicalPairApp:
 
         # TCNOT routing is link-local: source node identifies the protocol.
         if isinstance(msg, TeleportedCNOTMessage):
-            protocol = self.tcnot_protocols.get(src)
+            protocol = self.current_run["tcnot_protocols"].get(src)
             if protocol is None:
-                log.logger.warning(f"{self.name}: missing TCNOT protocol for src={src}")
-                return False
+                pending_tcnot_messages = self.current_run["pending_tcnot_messages"].setdefault(src, [])
+                pending_tcnot_messages.append(msg)  # Preserve early TCNOT handshake messages until the local protocol exists.
+                log.logger.info(
+                    f"{self.name}: buffered TCNOT message src={src} "
+                    f"type={msg.msg_type} pending={len(pending_tcnot_messages)}"
+                )
+                return True
             protocol.received_message(src, msg)
             return True
 
         # QRE frame updates are consumed by the currently running local QRE instance.
         if isinstance(msg, QREMessage):
-            for protocol in self.qre_protocols.values():
+            log.logger.info(
+                f"{self.name}: qre_msg src={src} run_id={self.current_run['run_id']} "
+                f"protocols={[{'peer': peer, 'running': proto.is_running, 'phase': proto.current_phase} for peer, proto in self.current_run['qre_protocols'].items()]} "
+                f"frame_updates={self.current_run['frame_updates_by_src']}"
+            )
+            for protocol in self.current_run["qre_protocols"].values():
                 if protocol.is_running:
                     protocol.received_message(src, msg)
                     return True
@@ -273,11 +382,19 @@ class RequestLogicalPairApp:
                         obs[key_to_local[key]] = pauli
                 return float(sim.peek_observable_expectation(obs))
 
-            return (1.0 + corr(px) - corr(py) + corr(pz)) / 4.0
+            cx = corr(px)
+            cy = corr(py)
+            cz = corr(pz)
+            value = (1.0 + cx - cy + cz) / 4.0
+            log.logger.info(
+                f"{self.name}: fidelity_components pair_type={pair_type} "
+                f"left={left_node} right={right_node} cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} value={value:.6f}"
+            )
+            return value
 
         if pair_type == "physical":
             # Physical pair fidelity is computed pair-by-pair, then averaged over n pairs.
-            left_memories = left_app.comm_qubits[right_node]
+            left_memories = left_app.current_run["comm_qubits"][right_node]
             if len(left_memories) == 0:
                 raise RuntimeError(f"{self.name}: no physical pairs for {left_node}<->{right_node}")
 
@@ -307,7 +424,7 @@ class RequestLogicalPairApp:
                         "pair_fidelity": float(pair_f),
                     }
                 )
-            left_app._physical_pair_fidelity_rows[right_node] = pair_rows
+            left_app.current_run["physical_pair_fidelity_rows"][right_node] = pair_rows
             avg_f = float(sum(pair_values) / len(pair_values))
             log.logger.info(
                 f"{self.name}: physical_avg left={left_node} right={right_node} "
@@ -356,7 +473,7 @@ class RequestLogicalPairApp:
             raise RuntimeError(f"{self.name}: insufficient ancilla memories for {neighbor} (need {required_ancillas}, got {len(ancilla_block)})")
         self.ancilla_qubits[neighbor] = ancilla_block
 
-        self.comm_qubits[neighbor] = []
+        self.current_run["comm_qubits"][neighbor] = []
 
 # ---------- Physical bell pair generation phase ----------
 
@@ -381,22 +498,26 @@ class RequestLogicalPairApp:
         else:
             neighbor = reservation.initiator
 
+        # Create the run-local comm bucket on first memory arrival for this neighbor.
+        if neighbor not in self.current_run["comm_qubits"]:
+            self.current_run["comm_qubits"][neighbor] = []
+
         # Cache local comm memory; once n are collected, schedule link-finalization barrier check.
-        self.comm_qubits[neighbor].append(info.memory)
+        self.current_run["comm_qubits"][neighbor].append(info.memory)
         # Comm key became active now; initialize idle-time baseline at current sim time.
         now_ps = int(self.node.timeline.now())
         self.node.timeline.quantum_manager.last_idle_time_ps_by_key[info.memory.qstate_key] = now_ps
-        local_names = [m.name for m in self.comm_qubits[neighbor]]
-        remote_names = [str(m.entangled_memory["memo_id"]) for m in self.comm_qubits[neighbor]]
+        local_names = [m.name for m in self.current_run["comm_qubits"][neighbor]]
+        remote_names = [str(m.entangled_memory["memo_id"]) for m in self.current_run["comm_qubits"][neighbor]]
         log.logger.info(
             f"{self.name}: physical_progress neighbor={neighbor} "
             f"count={len(local_names)}/{self.n} "
             f"unique_local={len(set(local_names))} unique_remote={len(set(remote_names))} "
             f"last={info.memory.name}->{info.memory.entangled_memory['memo_id']}"
         )
-        log.logger.debug(f"{self.name}: entangled comm memory neighbor={neighbor} count={len(self.comm_qubits[neighbor])}/{self.n} index={info.index}")
+        log.logger.debug(f"{self.name}: entangled comm memory neighbor={neighbor} count={len(self.current_run['comm_qubits'][neighbor])}/{self.n} index={info.index}")
 
-        if len(self.comm_qubits[neighbor]) != self.n:
+        if len(self.current_run["comm_qubits"][neighbor]) != self.n:
             return
 
         process = Process(self, "_finalize_physical_link_ready", [neighbor])
@@ -412,29 +533,19 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        if neighbor in self.link_ready:
+        if neighbor in self.current_run["link_ready"]:
             return
 
-        local_count = len(self.comm_qubits.get(neighbor, []))
+        local_count = len(self.current_run["comm_qubits"].get(neighbor, []))
         if local_count != self.n:
             return
 
-        # Symmetric barrier: wait until both endpoints have n comm memories for this link.
-        remote_router = self.node.timeline.get_entity_by_name(neighbor)
-        remote_app = remote_router.request_logical_pair_app
-        remote_count = len(remote_app.comm_qubits.get(self.node.name, []))
-        if remote_count != self.n:
-            process = Process(self, "_finalize_physical_link_ready", [neighbor])
-            event = Event(self.node.timeline.now() + 10, process, self.node.timeline.schedule_counter)
-            self.node.timeline.schedule(event)
-            return
-
-        self._initial_link_fidelities[neighbor] = self.calculate_pair_fidelity(self.node.name, neighbor, "physical")
-        self.link_ready.add(neighbor)
-        log.logger.info(f"{self.name}: link_ready neighbor={neighbor} ready_links={sorted(self.link_ready)}")
+        self.current_run["initial_link_fidelities"][neighbor] = self.calculate_pair_fidelity(self.node.name, neighbor, "physical")
+        self.current_run["link_ready"].add(neighbor)
+        log.logger.info(f"{self.name}: link_ready neighbor={neighbor} ready_links={sorted(self.current_run['link_ready'])}")
 
         expected_ready = {n for n in (self._left_peer_name, self._right_peer_name) if n is not None}
-        if not self.link_ready.issuperset(expected_ready):
+        if not self.current_run["link_ready"].issuperset(expected_ready):
             return
 
         # Build node-local data blocks for encode stage once all required links are physically ready.
@@ -466,12 +577,6 @@ class RequestLogicalPairApp:
         else:
             neighbor = reservation.initiator
 
-        # Sanity check: initiator path expects QRE object to exist from start().
-        # Initiator path expects per-link QRE protocol pre-created in start().
-        protocol = self.qre_protocols.get(neighbor)
-        if protocol is None:
-            raise RuntimeError(f"{self.name}: missing QREProtocol for {neighbor}; initialize in start()")
-
         # Reservation window bookkeeping:
         # map memory_index -> reservation at start, then remove at end.
         reservation_protocol = self.node.network_manager.protocol_stack[1]
@@ -499,18 +604,9 @@ class RequestLogicalPairApp:
         else:
             neighbor = reservation.initiator
 
-        # Responder lazily allocates local qubits and QRE object when counterpart request is approved.
-        # Responder path allocates local qubits for this link if not present yet.
-        if neighbor not in self.data_qubits:
-            self._allocate_data_and_ancilla(neighbor)
-
-        # Responder path also needs a local QRE protocol object for later phases.
-        if neighbor not in self.qre_protocols:
-            self.qre_protocols[neighbor] = QREProtocol(
-                owner=self.node,
-                app=self,
-                remote_node_name=neighbor,
-            )
+        process = Process(self, "begin_run", [int(reservation.start_time), int(reservation.end_time)])
+        event = Event(int(reservation.start_time), process, self.node.timeline.schedule_counter)
+        self.node.timeline.schedule(event)
 
         # Same reservation window bookkeeping as initiator path.
         reservation_protocol = self.node.network_manager.protocol_stack[1]
@@ -622,7 +718,7 @@ class RequestLogicalPairApp:
                 qm.last_idle_time_ps_by_key[key] = now_ps
 
         # TCNOT starts per ready link after local encode/FT-prep finishes.
-        for ready_neighbor in list(self.link_ready):
+        for ready_neighbor in list(self.current_run["link_ready"]):
             reservation_for_neighbor = None
             for res in self.memo_to_reservation.values():
                 other = res.responder if res.initiator == self.node.name else res.initiator
@@ -650,9 +746,9 @@ class RequestLogicalPairApp:
         """
         is_initiator = reservation.initiator == self.node.name
         role = "alice" if is_initiator else "bob"
-        log.logger.info(f"{self.name}: initialize_tcnot neighbor={neighbor} role={role} comm={len(self.comm_qubits[neighbor])} data={len(self.data_qubits[neighbor])}")
+        log.logger.info(f"{self.name}: initialize_tcnot neighbor={neighbor} role={role} comm={len(self.current_run['comm_qubits'][neighbor])} data={len(self.data_qubits[neighbor])}")
 
-        tcnot = self.tcnot_protocols.get(neighbor)
+        tcnot = self.current_run["tcnot_protocols"].get(neighbor)
         if tcnot is None:
             tcnot = TeleportedCNOTProtocol(
                 owner=self.node,
@@ -660,13 +756,22 @@ class RequestLogicalPairApp:
                 role=role,
                 remote_node_name=neighbor,
                 data_qubit_keys=[m.qstate_key for m in self.data_qubits[neighbor]],
-                communication_qubit_keys=[m.qstate_key for m in self.comm_qubits[neighbor]])
-            self.tcnot_protocols[neighbor] = tcnot
+                communication_qubit_keys=[m.qstate_key for m in self.current_run["comm_qubits"][neighbor]])
+            self.current_run["tcnot_protocols"][neighbor] = tcnot
         elif tcnot.role != role:
             raise RuntimeError(f"{self.name}: TCNOT role mismatch for {neighbor}: have {tcnot.role}, expected {role}")
 
         if tcnot.started:
             return
+
+        pending_tcnot_messages = self.current_run["pending_tcnot_messages"].pop(neighbor, [])
+        if pending_tcnot_messages:
+            log.logger.info(
+                f"{self.name}: replay buffered TCNOT messages neighbor={neighbor} "
+                f"count={len(pending_tcnot_messages)}"
+            )
+            for pending_msg in pending_tcnot_messages:
+                tcnot.received_message(neighbor, pending_msg)  # Deliver queued handshake messages before local start().
 
         tcnot.start()
 
@@ -710,19 +815,28 @@ class RequestLogicalPairApp:
         # Record one-link logical fidelity only on one designated side.
         neighbor_pos = self._path_node_names.index(neighbor)
         if self._path_position < neighbor_pos:
-            self._link_logical_fidelities[neighbor] = self.calculate_pair_fidelity(
+            measured_fidelity = self.calculate_pair_fidelity(
                 self.node.name,
                 neighbor,
                 "logical_link",
             )
+            self.current_run["link_logical_fidelities"][neighbor] = measured_fidelity
+            log.logger.info(
+                f"{self.name}: logical_link_fidelity run_id={self.current_run['run_id']} "
+                f"neighbor={neighbor} value={measured_fidelity:.6f}"
+            )
 
         # QRE barrier: this node launches QRE only after all its adjacent TCNOT links complete.
-        self.tcnot_done.add(neighbor)
+        self.current_run["tcnot_done"].add(neighbor)
         required_tcnot = {n for n in (self._left_peer_name, self._right_peer_name) if n is not None}
-        if not self.tcnot_done.issuperset(required_tcnot):
+        log.logger.info(
+            f"{self.name}: tcnot_barrier run_id={self.current_run['run_id']} "
+            f"done={self.current_run['tcnot_done']} required={required_tcnot} role={self._path_role}"
+        )
+        if not self.current_run["tcnot_done"].issuperset(required_tcnot):
             log.logger.info(
                 f"{self.name}: waiting_for_tcnot_barrier "
-                f"done={self.tcnot_done} required={required_tcnot}")
+                f"done={self.current_run['tcnot_done']} required={required_tcnot}")
             return
 
         for peer in required_tcnot:
@@ -753,7 +867,7 @@ class RequestLogicalPairApp:
             None
         """
         log.logger.info(f"{self.name}: start_qre_for_link neighbor={neighbor}")
-        protocol = self.qre_protocols.get(neighbor)
+        protocol = self.current_run["qre_protocols"].get(neighbor)
         if protocol is None:
             raise RuntimeError(f"{self.name}: missing QREProtocol for {neighbor}")
         if protocol.is_running:
@@ -781,14 +895,14 @@ class RequestLogicalPairApp:
         log.logger.info(f"{self.name}: logical_pair_complete neighbor={neighbor} result_keys={list(result.keys()) if result else []}")
         # Cache per-link QRE output if provided.
         if result is not None:
-            self._post_idle_pair_fidelity_rows[neighbor] = [result]
+            self.current_run["post_idle_pair_fidelity_rows"][neighbor] = [result]
 
         # Only protocols that actually started belong to the current attempt.
         # Middle nodes keep a second neighbor-scoped QRE object in IDLE, and
         # that object should not block attempt completion.
         active_protocols = [
             protocol
-            for protocol in self.qre_protocols.values()
+            for protocol in self.current_run["qre_protocols"].values()
             if protocol.is_running or protocol.current_phase == "COMPLETE"
         ]
         if len(active_protocols) == 0:
@@ -801,16 +915,63 @@ class RequestLogicalPairApp:
 
         # Initiator-only: compute end-to-end logical fidelity for this attempt.
         if self._path_position == 0:
-            self._final_end_to_end_fidelity = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
+            final_fidelity = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
+            log.logger.info(
+                f"{self.name}: final_e2e_measure run_id={self.current_run['run_id']} "
+                f"fidelity={final_fidelity:.6f} frame_updates={self.current_run['frame_updates_by_src']}"
+            )
+            self.current_run["final_end_to_end_fidelity"] = final_fidelity  # Persist the run result in one place.
             self._final_completion_time_ps = int(self.node.timeline.now())
+            self.current_run["completion_time"] = self._final_completion_time_ps
+            self.current_run["status"] = "complete"
 
-        # Non-initiator nodes stop after completion bookkeeping.
+        # Record compact stats for this completed local run.
+        final_fidelity = self.current_run["final_end_to_end_fidelity"]
+        meets_target = (
+            final_fidelity >= self.required_end_to_end_logical_fidelity
+            if final_fidelity is not None
+            else True
+        )
+        self.current_run["success"] = bool(meets_target)
+        self.run_stats[int(self.current_run["run_id"])] = {
+            "run_id": int(self.current_run["run_id"]),
+            "start_time": self.current_run["start_time"],
+            "end_time": self.current_run["end_time"],
+            "completion_time": self.current_run["completion_time"],
+            "latency_ps": (
+                None
+                if self.current_run["start_time"] is None or self.current_run["completion_time"] is None
+                else int(self.current_run["completion_time"]) - int(self.current_run["start_time"])
+            ),
+            "status": self.current_run["status"],
+            "success": self.current_run["success"],
+            "final_end_to_end_fidelity": final_fidelity,
+            "initial_link_fidelities": dict(self.current_run["initial_link_fidelities"]),
+            "link_logical_fidelities": dict(self.current_run["link_logical_fidelities"]),
+            "physical_pair_fidelity_rows": {
+                peer: list(rows) for peer, rows in self.current_run["physical_pair_fidelity_rows"].items()
+            },
+            "post_idle_pair_fidelity_rows": {
+                peer: list(rows) for peer, rows in self.current_run["post_idle_pair_fidelity_rows"].items()
+            },
+        }
+
+        current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1
+        current_end_t = int(self.current_run["end_time"]) if self.current_run["end_time"] is not None else int(self.node.timeline.now())
+        next_start_t = min((start_t for start_t in self.scheduled_run_starts if start_t > current_start_t), default=None)
+        if next_start_t is None:
+            cleanup_time = current_end_t
+        else:
+            cleanup_time = max(0, int(next_start_t) - 1)
+
+        process = Process(self, "reset_run", [])
+        event = Event(cleanup_time, process, self.node.timeline.schedule_counter)
+        self.node.timeline.schedule(event)
+
         if self._path_position != 0:
             return
 
-        # Compare against configured target and log outcome.
-        meets_target = self._final_end_to_end_fidelity >= self.required_end_to_end_logical_fidelity
         if meets_target:
-            log.logger.info(f"{self.name}: logical pair complete with end-to-end fidelity {self._final_end_to_end_fidelity:.4f} (target={self.required_end_to_end_logical_fidelity:.4f})")
+            log.logger.info(f"{self.name}: logical pair complete with end-to-end fidelity {final_fidelity:.4f} (target={self.required_end_to_end_logical_fidelity:.4f})")
         else:
-            log.logger.warning(f"{self.name}: logical pair fidelity below target (final={self._final_end_to_end_fidelity:.4f}, target={self.required_end_to_end_logical_fidelity:.4f})")
+            log.logger.warning(f"{self.name}: logical pair fidelity below target (final={final_fidelity:.4f}, target={self.required_end_to_end_logical_fidelity:.4f})")
