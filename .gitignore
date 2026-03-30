@@ -35,3 +35,6 @@ steane_noise_step_by_step.ipynb
 tableau_workflow.mmd
 .DS_Store
 .gitignore
+RequestLogicalPairApp_old.py
+drafts/
+

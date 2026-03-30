@@ -82,48 +82,37 @@ class QREProtocol(Protocol):
         """
         super().__init__(owner, name=f"{owner.name}.QRE.{remote_node_name}")
 
-        # Stable handles for app context and remote peer.
+        # Protocol context for message routing and app callbacks.
         self.app = app
         self.remote_node_name = remote_node_name
         self.n = self.app.n
 
-        # Cached role/path values to avoid repeated app lookups in methods.
+        # Cached path-role metadata for phase control.
         self.is_middle = (self.app._path_role == "middle")
         self.is_initiator = (self.app._path_position == 0)
         self.is_end_responder = (self.app._path_position == len(self.app._path_node_names) - 1)
         self.initiator_name = self.app._path_node_names[0]
         self.expected_frame_updates = len(self.app._path_node_names) - 2
 
-        # Local data-key views for left/right adjacent logical blocks.
-        left_peer = self.app._left_peer_name
-        right_peer = self.app._right_peer_name
-        left_memories = [] if left_peer is None else self.app.data_qubits.get(left_peer, [])
-        right_memories = [] if right_peer is None else self.app.data_qubits.get(right_peer, [])
-        self.left_data_keys = [m.qstate_key for m in left_memories]
-        self.right_data_keys = [m.qstate_key for m in right_memories]
+        # Store data key allocations for QRE phases.
+        self.left_data_keys: list[int] = []
+        self.right_data_keys: list[int] = []
+        self.local_data_keys: list[int] = []
 
-        # Endpoint correction target block:
-        # initiator -> right block, end responder -> left block, middle -> none.
-        if self.is_initiator:
-            self.local_data_keys = list(self.right_data_keys)
-        elif self.is_end_responder:
-            self.local_data_keys = list(self.left_data_keys)
-        else:
-            self.local_data_keys = []
-
-        # Runtime protocol state.
+        # Per-run protocol execution state.
         self.is_running = False
         self.current_phase = "IDLE"
         self.is_success = False
-        # Cache idle-noise settings from app once; methods use local fields.
+
+        # Idle-noise parameters derived from the app.
         self.idle_pauli_weights: dict[str, float] = dict(self.app.idle_pauli_weights)
         self.idle_data_coherence_time_sec = float(self.app.idle_data_coherence_time_sec)
 
-        # Frame bits used for local contribution and final aggregate correction.
+        # Frame contributions for local and final corrections.
         self.bx = 0
         self.bz = 0
 
-        # Protocol output payload forwarded to app callback.
+        # Result data returned to the app when QRE completes.
         self.result: dict[str, object] = {}
         log.logger.debug(f"{self.name}: init middle={self.is_middle} initiator={self.is_initiator} end_responder={self.is_end_responder} expected_frame_updates={self.expected_frame_updates}")
 
@@ -139,18 +128,20 @@ class QREProtocol(Protocol):
         if self.is_running:
             raise RuntimeError(f"{self.name}: start called more than once")
 
+        # Starting phase
         self.is_running = True
         self.current_phase = "START"
         log.logger.info(f"{self.name}: start role middle={self.is_middle} initiator={self.is_initiator} phase={self.current_phase}")
 
-        # Refresh local data-key views at start to avoid stale init-time snapshots.
+        # Snapshot the local data blocks at start so QRE uses the current run's allocations.
         left_peer = self.app._left_peer_name
         right_peer = self.app._right_peer_name
-        left_memories = [] if left_peer is None else self.app.data_qubits.get(left_peer, [])
-        right_memories = [] if right_peer is None else self.app.data_qubits.get(right_peer, [])
+        left_memories = [] if left_peer is None else self.app.data_qubits.get(left_peer, [])     # Own memories associated with left neighbor
+        right_memories = [] if right_peer is None else self.app.data_qubits.get(right_peer, [])  # Own memories associated with right neighbor
         self.left_data_keys = [m.qstate_key for m in left_memories]
         self.right_data_keys = [m.qstate_key for m in right_memories]
 
+        # Endpoints keep the local block that may receive the final frame correction.
         if self.is_initiator:
             self.local_data_keys = list(self.right_data_keys)
         elif self.is_end_responder:
@@ -177,12 +168,7 @@ class QREProtocol(Protocol):
         # Initiator endpoint waits for frame updates from middle nodes.
         if self.is_initiator:
             if self.expected_frame_updates == 0:
-                self.result = {
-                    "final_bx": 0,
-                    "final_bz": 0,
-                    "frame_updates_received": 0,
-                }
-                self.current_phase = "NO_MIDDLE_NODES"
+                self.result = {"final_bx": 0, "final_bz": 0, "frame_updates_received": 0}
                 time_now = self.owner.timeline.now()
                 process = Process(self, "complete_qre", [])
                 priority = self.owner.timeline.schedule_counter
@@ -195,11 +181,7 @@ class QREProtocol(Protocol):
             return
 
         # End responder completes immediately in this message flow.
-        self.result = {
-            "final_bx": 0,
-            "final_bz": 0,
-            "frame_updates_received": 0,
-        }
+        self.result = { "final_bx": 0, "final_bz": 0, "frame_updates_received": 0,}
         self.current_phase = "ENDPOINT_COMPLETE"
         log.logger.info(f"{self.name}: endpoint completes immediately")
         time_now = self.owner.timeline.now()
@@ -316,7 +298,7 @@ class QREProtocol(Protocol):
         event = Event(time_now, process, priority)
         self.owner.timeline.schedule(event)
 
-    def decode_middle_bsm(self, left_x_bits: list[int], right_z_bits: list[int]) -> dict[str, object]:
+    def decode_middle_bsm(self, left_x_bits: list[int], right_z_bits: list[int]) -> dict[str, object]: # TODO: move this to CSS codes
         """Decode Steane syndromes from middle-node Bell-measurement bitstrings.
 
         Args:
@@ -326,7 +308,7 @@ class QREProtocol(Protocol):
         Returns:
             dict[str, object]: Syndrome bits, flip indices, corrected strings, and corrected parity bits.
         """
-
+        
         s_x = [
             left_x_bits[3] ^ left_x_bits[4] ^ left_x_bits[5] ^ left_x_bits[6],
             left_x_bits[1] ^ left_x_bits[2] ^ left_x_bits[5] ^ left_x_bits[6],
@@ -391,27 +373,18 @@ class QREProtocol(Protocol):
             # Apply time-based idle decoherence before endpoint frame-correction circuit.
             now_ps = int(self.owner.timeline.now())
             coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in self.local_data_keys}
-            self.owner.timeline.quantum_manager.apply_idling_decoherence(
-                keys=self.local_data_keys,
-                now_ps=now_ps,
-                coherence_time_sec_by_key=coherence_time_sec_by_key,
-                pauli_weights=self.idle_pauli_weights)
-            corr = Circuit(len(self.local_data_keys))
+            self.owner.timeline.quantum_manager.apply_idling_decoherence(keys=self.local_data_keys, now_ps=now_ps, coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
+            correction_circuit = Circuit(len(self.local_data_keys))
             for i in range(len(self.local_data_keys)):
                 if final_bx:
-                    corr.x(i)
+                    correction_circuit.x(i)
                 if final_bz:
-                    corr.z(i)
+                    correction_circuit.z(i)
             log.logger.info(f"{self.name}: apply_final_frame final_bx={final_bx} final_bz={final_bz} local_data_keys={self.local_data_keys}")
-            self.owner.timeline.quantum_manager.run_circuit(corr, self.local_data_keys)
+            self.owner.timeline.quantum_manager.run_circuit(correction_circuit, self.local_data_keys)
 
         # Persist completion payload for app-level callback/reporting.
-        self.result = {
-            "final_bx": final_bx,
-            "final_bz": final_bz,
-            "frame_updates_received": len(self.app.current_run["frame_updates_by_src"]),
-        }
-
+        self.result = {"final_bx": final_bx, "final_bz": final_bz, "frame_updates_received": len(self.app.current_run["frame_updates_by_src"])}
         self.current_phase = "ALL_FRAME_UPDATES_RECEIVED"
         time_now = self.owner.timeline.now()
         process = Process(self, "complete_qre", [])
@@ -428,10 +401,12 @@ class QREProtocol(Protocol):
         Returns:
             None
         """
+        # Mark the QRE attempt as successful.
         self.is_success = True
         self.current_phase = "COMPLETE"
         log.logger.info(f"{self.name}: COMPLETE result={self.result}")
 
+        # Schedule the completion event.
         time_now = self.owner.timeline.now()
         process = Process(self.app, "logical_pair_complete", [self.remote_node_name, self.result])
         priority = self.owner.timeline.schedule_counter

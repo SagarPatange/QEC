@@ -664,19 +664,23 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     return {"apps": apps, "metrics": metrics}
 
 
-def n_node_logical_pair_with_app(verbose: bool = False):
+def n_node_logical_pair_with_app(
+    verbose: bool = False,
+    config_file: str = "config/line_5_2G_near_term.json",
+    css_code: str = "[[7,1,3]]",
+    log_filename: str = "log/n_node_logical_pair",
+) -> dict[str, object]:
     """Create end-to-end logical entanglement across an N-node linear chain.
 
     Args:
         verbose: Whether to print verbose diagnostics.
+        config_file: Topology config file path.
+        css_code: CSS code label for the run.
+        log_filename: Log file prefix.
 
     Returns:
         dict[str, object]: App objects and collected run metrics.
     """
-    config_file = 'config/line_5_2G_near_term.json'
-    css_code = "[[7,1,3]]"
-
-    log_filename = 'log/n_node_logical_pair'
     network_config = resolve_config_path(config_file)
 
     network_topo = RouterNetTopo2G(network_config)
@@ -708,7 +712,6 @@ def n_node_logical_pair_with_app(verbose: bool = False):
 
     start_time_ps = int(1e12)
     window_duration_ps = int(1e9)
-    round_spacing_ps = int(5e9)
     default_target_fidelity = 0.8
     num_logical_pairs = 30
 
@@ -729,8 +732,7 @@ def n_node_logical_pair_with_app(verbose: bool = False):
             start_t=start_time_ps,
             end_t=start_time_ps + window_duration_ps,
             fidelity=default_target_fidelity,
-            num_logical_pairs=num_logical_pairs,
-            round_spacing_ps=round_spacing_ps)
+            num_logical_pairs=num_logical_pairs)
 
     tl.init()
     tl.run()

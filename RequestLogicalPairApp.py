@@ -41,30 +41,29 @@ class RequestLogicalPairApp:
 
 # ---------- Initialization and configuration ----------
     def __init__(self, node: "QuantumRouter2ndGeneration", css_code: str = "[[7,1,3]]", required_end_to_end_logical_fidelity: float = 0.8, path_node_names: list[str] | None = None):
-        self.node = node  # Owner router for this app instance.
-        self.node.set_app(self)  # Register app for reservation and memory callbacks.
-        self.node.request_logical_pair_app = self  # Node-level handle for protocol lookup.
+        self.node = node
+        self.node.set_app(self)
+        self.node.request_logical_pair_app = self
 
-        self.name = f"{self.node.name}.RequestLogicalPairApp"  # Stable app identifier.
-        self.css_code = css_code  # Requested CSS code label (e.g. [[7,1,3]]).
-        self.code = get_css_code(css_code)  # Parsed code object used by protocol phases.
-        self.n = self.code.n  # Physical qubits per logical block.
-        self.required_end_to_end_logical_fidelity = float(required_end_to_end_logical_fidelity)  # Default chain target.
-        self._path_node_names = list(path_node_names) if path_node_names else [self.node.name]  # Canonical path view for this app.
+        self.name = f"{self.node.name}.RequestLogicalPairApp"
+        self.css_code = css_code
+        self.code = get_css_code(css_code)
+        self.n = self.code.n
+        self.required_end_to_end_logical_fidelity = float(required_end_to_end_logical_fidelity)
+        self._path_node_names = list(path_node_names) if path_node_names else [self.node.name]
 
         # Precompute local path geometry so start() does minimal work.
         if self.node.name in self._path_node_names:
-            self._path_position = self._path_node_names.index(self.node.name)  # Local index in chain path.
+            self._path_position = self._path_node_names.index(self.node.name)
         else:
-            self._path_position = 0  # Fallback when node is missing from provided path.
+            self._path_position = 0
         last_index = len(self._path_node_names) - 1
-        self._path_role = "edge" if self._path_position == 0 or self._path_position == last_index else "middle"  # Local role in chain.
-        self._left_peer_name = self._path_node_names[self._path_position - 1] if self._path_position > 0 else None  # Immediate left neighbor.
-        self._right_peer_name = (self._path_node_names[self._path_position + 1] if self._path_position < last_index else None)  # Immediate right neighbor.
+        self._path_role = "edge" if self._path_position == 0 or self._path_position == last_index else "middle"
+        self._left_peer_name = self._path_node_names[self._path_position - 1] if self._path_position > 0 else None
+        self._right_peer_name = self._path_node_names[self._path_position + 1] if self._path_position < last_index else None
 
-        # App-owned local qubit resources, keyed by neighbor node name.
-        self.data_qubits: dict[str, list] = {}  # neighbor -> list of n data Memory objects
-        self.ancilla_qubits: dict[str, list] = {}  # neighbor -> list of local ancilla Memory objects
+        self.data_qubits: dict[str, list] = {}
+        self.ancilla_qubits: dict[str, list] = {}
 
         # Reservation tracking for physical-link callbacks.
         self.memo_to_reservation: dict[int, "Reservation"] = {}
@@ -99,8 +98,6 @@ class RequestLogicalPairApp:
         self.run_stats: dict[int, dict[str, object]] = {}
         self.scheduled_run_starts: list[int] = []
         self.next_run_id = 1
-        self.start_time: int | None = None
-        self._final_completion_time_ps: int | None = None
 
         # FT preparation setting used by encode_data_qubits.
         self.ft_prep_mode = getattr(node, "ft_prep_mode", "none")
@@ -177,9 +174,11 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
+        # Prevents overlapping runs   
         if self.current_run["start_time"] == int(start_t) and self.current_run["status"] != "idle":
             return
 
+        # Set up live state for this run; previous run should have been reset by now.
         self.current_run = {
             "run_id": self.next_run_id,
             "status": "active",
@@ -203,6 +202,7 @@ class RequestLogicalPairApp:
         }
         self.next_run_id += 1
 
+        # Allocate resources for active neighbors
         active_neighbors = [neighbor for neighbor in (self._left_peer_name, self._right_peer_name) if neighbor is not None]
         for neighbor in active_neighbors:
             if neighbor not in self.data_qubits:
@@ -210,7 +210,7 @@ class RequestLogicalPairApp:
             if neighbor not in self.current_run["qre_protocols"]:
                 self.current_run["qre_protocols"][neighbor] = QREProtocol(owner=self.node, app=self, remote_node_name=neighbor)
 
-    def start(self, responder: str, start_t: int, end_t: int, fidelity: float, num_logical_pairs: int, round_spacing_ps: int) -> None:
+    def start(self, responder: str, start_t: int, end_t: int, fidelity: float, num_logical_pairs: int) -> None:
         """Schedule one or more logical-pair run windows.
 
         Args:
@@ -219,22 +219,19 @@ class RequestLogicalPairApp:
             end_t: First run end time in picoseconds.
             fidelity: Requested target fidelity.
             num_logical_pairs: Number of logical-pair runs to schedule.
-            round_spacing_ps: Gap between run windows in picoseconds.
 
         Returns:
             None
         """
-        log.logger.info(f"{self.name}: start responder={responder} first_window=({int(start_t)},{int(end_t)}) fidelity={fidelity:.4f} num_logical_pairs={num_logical_pairs} round_spacing_ps={int(round_spacing_ps)}")
+        log.logger.info(f"{self.name}: start responder={responder} first_window=({int(start_t)},{int(end_t)}) fidelity={fidelity:.4f} num_logical_pairs={num_logical_pairs}")
         if int(end_t) <= int(start_t):
             raise RuntimeError(f"{self.name}: end_t must be > start_t")
         if num_logical_pairs < 1:
             raise RuntimeError(f"{self.name}: num_logical_pairs must be >= 1")
-        if int(round_spacing_ps) < 0:
-            raise RuntimeError(f"{self.name}: round_spacing_ps must be >= 0")
 
         window_duration_ps = int(end_t) - int(start_t)
         for run_index in range(num_logical_pairs):
-            run_start_t = int(start_t) + run_index * (window_duration_ps + int(round_spacing_ps))
+            run_start_t = int(start_t) + run_index * window_duration_ps
             run_end_t = run_start_t + window_duration_ps
             self.scheduled_run_starts.append(run_start_t)
 
@@ -242,6 +239,7 @@ class RequestLogicalPairApp:
             event = Event(run_start_t, process, self.node.timeline.schedule_counter)
             self.node.timeline.schedule(event)
 
+            # Schedule reservations for this run. 
             self.node.reserve_net_resource(responder, run_start_t, run_end_t, self.n, fidelity)
 
     def received_message(self, src: str, msg: object) -> bool:
@@ -296,7 +294,7 @@ class RequestLogicalPairApp:
         right_app = self.node.timeline.get_entity_by_name(right_node).request_logical_pair_app
         qm = self.node.timeline.quantum_manager
 
-        def readonly_simulator_from_keys(keys: list[int]) -> tuple[stim.TableauSimulator, dict[int, int]]:
+        def build_simulator_from_keys(keys: list[int]) -> tuple[stim.TableauSimulator, dict[int, int]]:
             """Build a temporary simulator view for keys without mutating manager state.
 
             Args:
@@ -316,10 +314,8 @@ class RequestLogicalPairApp:
 
             if len(unique_states) == 1:
                 state_obj = unique_states[0]
-                simulator = qm._sim_from_tableau(
-                    state_obj.current_tableau(),
-                    num_keys=len(state_obj.keys),
-                )
+                simulator = stim.TableauSimulator()
+                simulator.set_inverse_tableau(state_obj.current_inverse_tableau())
                 key_to_local = {key: idx for idx, key in enumerate(state_obj.keys)}
                 return simulator, key_to_local
 
@@ -328,18 +324,13 @@ class RequestLogicalPairApp:
             for qstate in unique_states:
                 merged_keys.extend(qstate.keys)
                 block_tableau = qstate.current_tableau()
-                merged_tableau = (
-                    block_tableau
-                    if merged_tableau is None
-                    else merged_tableau + block_tableau
-                )
+                merged_tableau = block_tableau if merged_tableau is None else merged_tableau + block_tableau
 
             if len(set(merged_keys)) != len(merged_keys):
-                raise RuntimeError(
-                    f"{self.name}: duplicate keys in read-only tableau merge: {merged_keys}"
-                )
+                raise RuntimeError(f"{self.name}: duplicate keys in read-only tableau merge: {merged_keys}")
 
-            simulator = qm._sim_from_tableau(merged_tableau, num_keys=len(merged_keys))
+            simulator = stim.TableauSimulator()
+            simulator.set_inverse_tableau(merged_tableau.inverse())
             key_to_local = {key: idx for idx, key in enumerate(merged_keys)}
             return simulator, key_to_local
 
@@ -357,7 +348,7 @@ class RequestLogicalPairApp:
                 float: Fidelity value.
             """
             all_keys = left_keys + right_keys
-            sim, key_to_local = readonly_simulator_from_keys(all_keys)
+            sim, key_to_local = build_simulator_from_keys(all_keys)
 
             def corr(pauli_support: str) -> float:
                 """Evaluate one correlator.
@@ -444,17 +435,17 @@ class RequestLogicalPairApp:
         """
         required_ancillas = self.code.get_ft_required_ancillas(self.ft_prep_mode)
 
-        # Allocation is monotonic by slice: next free block starts after already-assigned blocks.
+        # Allocation of data and ancilla qubits
         data_array = self.node.components[f"{self.node.name}.DataMemoryArray"]
-        d = sum(len(block) for block in self.data_qubits.values())
-        data_block = data_array.memories[d:d + self.n]
+        data_offset = sum(len(block) for block in self.data_qubits.values())
+        data_block = data_array.memories[data_offset:data_offset + self.n]
         if len(data_block) != self.n:
             raise RuntimeError(f"{self.name}: insufficient data memories for {neighbor} (need {self.n}, got {len(data_block)})")
         self.data_qubits[neighbor] = data_block
 
         ancilla_array = self.node.components[f"{self.node.name}.AncillaMemoryArray"]
-        a = sum(len(block) for block in self.ancilla_qubits.values())
-        ancilla_block = ancilla_array.memories[a:a + required_ancillas]
+        ancilla_offset = sum(len(block) for block in self.ancilla_qubits.values())
+        ancilla_block = ancilla_array.memories[ancilla_offset:ancilla_offset + required_ancillas]
         if required_ancillas > 0 and len(ancilla_block) < required_ancillas:
             raise RuntimeError(f"{self.name}: insufficient ancilla memories for {neighbor} (need {required_ancillas}, got {len(ancilla_block)})")
         self.ancilla_qubits[neighbor] = ancilla_block
@@ -580,10 +571,6 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        if reservation.initiator == self.node.name:
-            neighbor = reservation.responder
-        else:
-            neighbor = reservation.initiator
 
         if int(reservation.start_time) not in self.scheduled_run_starts:
             self.scheduled_run_starts.append(int(reservation.start_time))  # Keep responder reset timing aligned with initiators.
@@ -682,13 +669,7 @@ class RequestLogicalPairApp:
             q = [key_to_local[key] for key in block_keys]
             ancilla_locals = [key_to_local[key] for key in ancilla_keys]
 
-            accepted = self.code.run_encode_ft_prep(
-                simulator=state_obj.state,
-                data_locals=q,
-                ancilla_locals=ancilla_locals,
-                ft_prep_mode=ft_prep_mode,
-                max_ft_prep_shots=max_ft_prep_shots,
-                logical_state=logical_state)
+            accepted = self.code.run_encode_ft_prep(simulator=state_obj.state, data_locals=q, ancilla_locals=ancilla_locals, ft_prep_mode=ft_prep_mode, max_ft_prep_shots=max_ft_prep_shots, logical_state=logical_state)
             log.logger.info(f"{self.name}: block encode accepted={accepted} ft_prep_mode={ft_prep_mode}")
             
             if not accepted:
@@ -780,11 +761,7 @@ class RequestLogicalPairApp:
         # Record one-link logical fidelity only on one designated side.
         neighbor_pos = self._path_node_names.index(neighbor)
         if self._path_position < neighbor_pos:
-            measured_fidelity = self.calculate_pair_fidelity(
-                self.node.name,
-                neighbor,
-                "logical_link",
-            )
+            measured_fidelity = self.calculate_pair_fidelity(self.node.name, neighbor, "logical_link")
             self.current_run["link_logical_fidelities"][neighbor] = measured_fidelity
             log.logger.info(f"{self.name}: logical_link_fidelity run_id={self.current_run['run_id']} neighbor={neighbor} value={measured_fidelity:.6f}")
 
@@ -866,17 +843,10 @@ class RequestLogicalPairApp:
         # Only protocols that actually started belong to the current attempt.
         # Middle nodes keep a second neighbor-scoped QRE object in IDLE, and
         # that object should not block attempt completion.
-        active_protocols = [
-            protocol
-            for protocol in self.current_run["qre_protocols"].values()
-            if protocol.is_running or protocol.current_phase == "COMPLETE"
-        ]
+        active_protocols = [protocol for protocol in self.current_run["qre_protocols"].values() if protocol.is_running or protocol.current_phase == "COMPLETE"]
         if len(active_protocols) == 0:
             return
-        if not all(
-            protocol.current_phase == "COMPLETE"
-            for protocol in active_protocols
-        ):
+        if not all(protocol.current_phase == "COMPLETE" for protocol in active_protocols):
             return
 
         # Initiator-only: compute end-to-end logical fidelity for this attempt.
@@ -884,39 +854,27 @@ class RequestLogicalPairApp:
             final_fidelity = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
             log.logger.info(f"{self.name}: final_e2e_measure run_id={self.current_run['run_id']} fidelity={final_fidelity:.6f} frame_updates={self.current_run['frame_updates_by_src']}")
             self.current_run["final_end_to_end_fidelity"] = final_fidelity  # Persist the run result in one place.
-            self._final_completion_time_ps = int(self.node.timeline.now())
-            self.current_run["completion_time"] = self._final_completion_time_ps
+            self.current_run["completion_time"] = int(self.node.timeline.now())
             self.current_run["status"] = "complete"
 
         # Record compact stats for this completed local run.
         final_fidelity = self.current_run["final_end_to_end_fidelity"]
-        meets_target = (
-            final_fidelity >= self.required_end_to_end_logical_fidelity
-            if final_fidelity is not None
-            else True
-        )
+        meets_target = (final_fidelity >= self.required_end_to_end_logical_fidelity if final_fidelity is not None else True)
         self.current_run["success"] = bool(meets_target)
+
         self.run_stats[int(self.current_run["run_id"])] = {
             "run_id": int(self.current_run["run_id"]),
             "start_time": self.current_run["start_time"],
             "end_time": self.current_run["end_time"],
             "completion_time": self.current_run["completion_time"],
-            "latency_ps": (
-                None
-                if self.current_run["start_time"] is None or self.current_run["completion_time"] is None
-                else int(self.current_run["completion_time"]) - int(self.current_run["start_time"])
-            ),
+            "latency_ps": (None if self.current_run["start_time"] is None or self.current_run["completion_time"] is None else int(self.current_run["completion_time"]) - int(self.current_run["start_time"])),
             "status": self.current_run["status"],
             "success": self.current_run["success"],
             "final_end_to_end_fidelity": final_fidelity,
             "initial_link_fidelities": dict(self.current_run["initial_link_fidelities"]),
             "link_logical_fidelities": dict(self.current_run["link_logical_fidelities"]),
-            "physical_pair_fidelity_rows": {
-                peer: list(rows) for peer, rows in self.current_run["physical_pair_fidelity_rows"].items()
-            },
-            "post_idle_pair_fidelity_rows": {
-                peer: list(rows) for peer, rows in self.current_run["post_idle_pair_fidelity_rows"].items()
-            },
+            "physical_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["physical_pair_fidelity_rows"].items()},
+            "post_idle_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["post_idle_pair_fidelity_rows"].items()},
         }
 
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1

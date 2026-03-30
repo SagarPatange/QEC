@@ -164,14 +164,14 @@ class TeleportedCNOTProtocol(Protocol):
         # Handshake messages: READY / READY_ACK / START.
         if msg.msg_type == TeleportedCNOTMsgType.READY:
             # Symmetric handshake: acknowledge peer readiness.
-            msg_out = TeleportedCNOTMessage(TeleportedCNOTMsgType.READY_ACK, protocol_name=self.name)
-            self.owner.send_message(self.remote_node_name, msg_out)
+            ready_ack_msg = TeleportedCNOTMessage(TeleportedCNOTMsgType.READY_ACK, protocol_name=self.name)
+            self.owner.send_message(self.remote_node_name, ready_ack_msg)
             log.logger.debug(f"[{self.name}] READY handled -> sent READY_ACK")
 
             # Alice can also start when peer READY arrives (handles lost early READY case).
             if self.role == "alice" and self.started and self.current_phase in ("HANDSHAKE", "WAITING_READY"):
-                msg_start = TeleportedCNOTMessage(TeleportedCNOTMsgType.START, protocol_name=self.name)
-                self.owner.send_message(self.remote_node_name, msg_start)
+                start_msg = TeleportedCNOTMessage(TeleportedCNOTMsgType.START, protocol_name=self.name)
+                self.owner.send_message(self.remote_node_name, start_msg)
 
                 process = Process(self, "alice_phase_a", [])
                 event = Event(self.owner.timeline.now() + 50, process)
@@ -183,8 +183,8 @@ class TeleportedCNOTProtocol(Protocol):
         if msg.msg_type == TeleportedCNOTMsgType.READY_ACK:
             # Only Alice transitions from handshake to execution.
             if self.role == "alice" and self.started and self.current_phase in ("HANDSHAKE", "WAITING_READY"):
-                msg_out = TeleportedCNOTMessage(TeleportedCNOTMsgType.START, protocol_name=self.name)
-                self.owner.send_message(self.remote_node_name, msg_out)
+                start_msg = TeleportedCNOTMessage(TeleportedCNOTMsgType.START, protocol_name=self.name)
+                self.owner.send_message(self.remote_node_name, start_msg)
 
                 # Event-driven: schedule Phase A on the local timeline.
                 process = Process(self, "alice_phase_a", [])
@@ -362,10 +362,10 @@ class TeleportedCNOTProtocol(Protocol):
             raise RuntimeError(f"{self.name}: expected {n} Bob bits, got {len(self.bob_measurement_results)}")
 
         # Single circuit for entire Alice correction phase.
-        corr = Circuit(n)
+        correction_circuit = Circuit(n)
         for i in range(n):
             if int(self.bob_measurement_results[i]) == 1:
-                corr.z(i)
+                correction_circuit.z(i)
 
         # Apply time-based idle decoherence before Phase C consumes data qubits.
         now_ps = int(self.owner.timeline.now())
@@ -373,7 +373,7 @@ class TeleportedCNOTProtocol(Protocol):
         qm.apply_idling_decoherence(keys=self.data_qubit_keys, now_ps=now_ps, coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
 
         rnd = self.owner.get_generator().random()
-        qm.run_circuit(corr, self.data_qubit_keys, rnd)
+        qm.run_circuit(correction_circuit, self.data_qubit_keys, rnd)
 
         log.logger.info(f"[{self.name}] Phase C: single-circuit Z correction run")
         self.protocol_complete()
