@@ -713,7 +713,7 @@ def n_node_logical_pair_with_app(
     start_time_ps = int(1e12)
     window_duration_ps = int(1e9)
     default_target_fidelity = 0.8
-    num_logical_pairs = 30
+    num_logical_pairs = 300
 
     apps = {}
     for node_name in node_names:

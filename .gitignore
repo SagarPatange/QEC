@@ -13,7 +13,6 @@ algo_cooling.py
 **/stim_sequence_v2/
 .claude
 .vscode
-log/
 test.py
 test.ipynb
 QEC_713.py
@@ -38,3 +37,6 @@ tableau_workflow.mmd
 RequestLogicalPairApp_old.py
 drafts/
 
+log/
+.tmp/
+.mplconfig/

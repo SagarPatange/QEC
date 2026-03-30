@@ -140,7 +140,7 @@ template = 'qec'
 #=========================== MODIFIED SECTION ============================
 
 if args.gen2:  # Check for 2nd generation flag (NEW)
-    args.formalism = 'stabilizer'  # 2nd gen routers typically use stabilizer for QEC
+    args.formalism = 'tableau'
     idle_pauli_weights = {"x": args.idle_pauli_x, "y": args.idle_pauli_y, "z": args.idle_pauli_z}
     nodes = generate_2g_nodes(router_names, args.memo_size, args.data_size, args.ancilla_size,
                               template, args.gate_fid, args.two_qubit_gate_fid,

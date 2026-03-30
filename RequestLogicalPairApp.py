@@ -223,7 +223,8 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        log.logger.info(f"{self.name}: start responder={responder} first_window=({int(start_t)},{int(end_t)}) fidelity={fidelity:.4f} num_logical_pairs={num_logical_pairs}")
+        round_spacing_ps = int(1e9)
+        log.logger.info(f"{self.name}: start responder={responder} first_window=({int(start_t)},{int(end_t)}) fidelity={fidelity:.4f} num_logical_pairs={num_logical_pairs} round_spacing_ps={round_spacing_ps}")
         if int(end_t) <= int(start_t):
             raise RuntimeError(f"{self.name}: end_t must be > start_t")
         if num_logical_pairs < 1:
@@ -231,7 +232,7 @@ class RequestLogicalPairApp:
 
         window_duration_ps = int(end_t) - int(start_t)
         for run_index in range(num_logical_pairs):
-            run_start_t = int(start_t) + run_index * window_duration_ps
+            run_start_t = int(start_t) + run_index * (window_duration_ps + round_spacing_ps)
             run_end_t = run_start_t + window_duration_ps
             self.scheduled_run_starts.append(run_start_t)
 

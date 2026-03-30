@@ -1,4 +1,6 @@
 import time
+import sys
+from pathlib import Path
 from subprocess import PIPE, Popen
 
 
@@ -51,27 +53,49 @@ def main() -> None:
         None.
     """
     tasks = []
-    command = ["python", "main.py"]
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
     base_args = ["--log_directory", "log/runner"]
 
-    config_files = ["config/line_5_2G_near_term.json"]
+    config_files = ["config/standard_configs/line_2_2G.json", "config/standard_configs/line_3_2G.json", "config/standard_configs/line_5_2G.json", "config/standard_configs/line_10_2G.json", "config/standard_configs/line_20_2G.json"]
     css_codes = ["[[7,1,3]]"]
     target_fidelities = [0.8]
     num_logical_pairs_list = [30]
-    seeds = list(range(3))
+    link_distances_km = [1.0, 10.0]
+    gate_fidelities = [1.0]
+    two_qubit_gate_fidelities = [1.0]
+    idle_data_coherence_times = [1e12]
+    idle_comm_coherence_times = [1e12]
+    ft_prep_modes = ["minimal"]
+    idle_pauli_weight_sets = [(0.05, 0.05, 0.9)]
+    seeds = [0]
 
     for config_file in config_files:
         for css_code in css_codes:
             for target_fidelity in target_fidelities:
                 for num_logical_pairs in num_logical_pairs_list:
-                    for seed in seeds:
-                        args = list(base_args)
-                        args = set_config_file(args, config_file)
-                        args = set_css_code(args, css_code)
-                        args = set_target_fidelity(args, target_fidelity)
-                        args = set_num_logical_pairs(args, num_logical_pairs)
-                        args = set_log_directory(args, f"log/runner/seed_{seed}")
-                        tasks.append(command + args)
+                    for link_distance_km in link_distances_km:
+                        for gate_fidelity in gate_fidelities:
+                            for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
+                                for idle_data_coherence_time_sec in idle_data_coherence_times:
+                                    for idle_comm_coherence_time_sec in idle_comm_coherence_times:
+                                        for ft_prep_mode in ft_prep_modes:
+                                            for idle_pauli_x, idle_pauli_y, idle_pauli_z in idle_pauli_weight_sets:
+                                                for seed in seeds:
+                                                    args = list(base_args)
+                                                    args = set_config_file(args, config_file)
+                                                    args = set_css_code(args, css_code)
+                                                    args = set_target_fidelity(args, target_fidelity)
+                                                    args = set_num_logical_pairs(args, num_logical_pairs)
+                                                    args = set_log_directory(args, f"log/runner/seed_{seed}")
+                                                    args += ["--link_distance_km", str(link_distance_km)]
+                                                    args += ["--gate_fidelity", str(gate_fidelity)]
+                                                    args += ["--two_qubit_gate_fidelity", str(two_qubit_gate_fidelity)]
+                                                    args += ["--idle_data_coherence_time_sec", str(idle_data_coherence_time_sec)]
+                                                    args += ["--idle_comm_coherence_time_sec", str(idle_comm_coherence_time_sec)]
+                                                    args += ["--ft_prep_mode", ft_prep_mode]
+                                                    args += ["--idle_pauli_x", str(idle_pauli_x), "--idle_pauli_y", str(idle_pauli_y), "--idle_pauli_z", str(idle_pauli_z)]
+                                                    tasks.append(command + args)
 
     parallel = 12
     processes = []
@@ -80,7 +104,7 @@ def main() -> None:
         if len(processes) < parallel and len(tasks) > 0:
             task = tasks.pop(0)
             print(task, f"{len(tasks)} still in queue")
-            processes.append(Popen(task, stdout=PIPE, stderr=PIPE))
+            processes.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
         else:
             time.sleep(0.05)
 
