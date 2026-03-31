@@ -1,38 +1,18 @@
-import time
 import sys
+import time
 from pathlib import Path
 from subprocess import PIPE, Popen
 
 
-def set_config_file(args: list[str], config_file: str) -> list[str]:
-    return args + ["--config_file", config_file]
-
-
-def set_css_code(args: list[str], css_code: str) -> list[str]:
-    return args + ["--css_code", css_code]
-
-
-def set_log_directory(args: list[str], log_directory: str) -> list[str]:
-    return args + ["--log_directory", log_directory]
-
-
-def set_start_time_s(args: list[str], start_time_s: float) -> list[str]:
-    return args + ["--start_time_s", str(start_time_s)]
-
-
-def set_window_time_ms(args: list[str], window_time_ms: float) -> list[str]:
-    return args + ["--window_time_ms", str(window_time_ms)]
-
-
-def set_target_fidelity(args: list[str], target_fidelity: float) -> list[str]:
-    return args + ["--target_fidelity", str(target_fidelity)]
-
-
-def set_num_logical_pairs(args: list[str], num_logical_pairs: int) -> list[str]:
-    return args + ["--num_logical_pairs", str(num_logical_pairs)]
-
-
 def get_output(process: Popen) -> None:
+    """Print subprocess stdout and stderr.
+
+    Args:
+        process: Completed subprocess.
+
+    Returns:
+        None.
+    """
     stderr = process.stderr.readlines()
     if stderr:
         for line in stderr:
@@ -43,8 +23,8 @@ def get_output(process: Popen) -> None:
             print(line.decode().rstrip())
 
 
-def main() -> None:
-    """Run batches of logical-pair experiments.
+def main_node_count_sweep() -> None:
+    """Run a node-count sweep at fixed distance and hardware settings.
 
     Args:
         None.
@@ -55,67 +35,314 @@ def main() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--log_directory", "log/runner"]
+    base_args = ["--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_data_coherence_time_sec", "1000000000000.0", "--idle_comm_coherence_time_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/node_count_sweep"]
 
-    config_files = ["config/standard_configs/line_2_2G.json", "config/standard_configs/line_3_2G.json", "config/standard_configs/line_5_2G.json", "config/standard_configs/line_10_2G.json", "config/standard_configs/line_20_2G.json"]
-    css_codes = ["[[7,1,3]]"]
-    target_fidelities = [0.8]
-    num_logical_pairs_list = [30]
-    link_distances_km = [1.0, 10.0]
-    gate_fidelities = [1.0]
-    two_qubit_gate_fidelities = [1.0]
-    idle_data_coherence_times = [1e12]
-    idle_comm_coherence_times = [1e12]
-    ft_prep_modes = ["minimal"]
-    idle_pauli_weight_sets = [(0.05, 0.05, 0.9)]
-    seeds = [0]
-
+    config_files = ["config/standard_configs/line_2_2G.json", "config/standard_configs/line_3_2G.json", "config/standard_configs/line_5_2G.json", "config/standard_configs/line_10_2G.json", "config/standard_configs/line_20_2G.json"]  # Sweep topology size with fixed physical-layer settings.
     for config_file in config_files:
-        for css_code in css_codes:
-            for target_fidelity in target_fidelities:
-                for num_logical_pairs in num_logical_pairs_list:
-                    for link_distance_km in link_distances_km:
-                        for gate_fidelity in gate_fidelities:
-                            for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
-                                for idle_data_coherence_time_sec in idle_data_coherence_times:
-                                    for idle_comm_coherence_time_sec in idle_comm_coherence_times:
-                                        for ft_prep_mode in ft_prep_modes:
-                                            for idle_pauli_x, idle_pauli_y, idle_pauli_z in idle_pauli_weight_sets:
-                                                for seed in seeds:
-                                                    args = list(base_args)
-                                                    args = set_config_file(args, config_file)
-                                                    args = set_css_code(args, css_code)
-                                                    args = set_target_fidelity(args, target_fidelity)
-                                                    args = set_num_logical_pairs(args, num_logical_pairs)
-                                                    args = set_log_directory(args, f"log/runner/seed_{seed}")
-                                                    args += ["--link_distance_km", str(link_distance_km)]
-                                                    args += ["--gate_fidelity", str(gate_fidelity)]
-                                                    args += ["--two_qubit_gate_fidelity", str(two_qubit_gate_fidelity)]
-                                                    args += ["--idle_data_coherence_time_sec", str(idle_data_coherence_time_sec)]
-                                                    args += ["--idle_comm_coherence_time_sec", str(idle_comm_coherence_time_sec)]
-                                                    args += ["--ft_prep_mode", ft_prep_mode]
-                                                    args += ["--idle_pauli_x", str(idle_pauli_x), "--idle_pauli_y", str(idle_pauli_y), "--idle_pauli_z", str(idle_pauli_z)]
-                                                    tasks.append(command + args)
+        args = ["--config_file", config_file]
+        tasks.append(command + base_args + args)
 
     parallel = 12
-    processes = []
-
-    while len(tasks) > 0 or len(processes) > 0:
-        if len(processes) < parallel and len(tasks) > 0:
+    ps = []  # Currently running subprocesses.
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
             task = tasks.pop(0)
             print(task, f"{len(tasks)} still in queue")
-            processes.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
         else:
             time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
 
-        new_processes = []
-        for process in processes:
-            if process.poll() is None:
-                new_processes.append(process)
-            else:
-                get_output(process)
-        processes = new_processes
+
+def main_distance_sweep() -> None:
+    """Run a distance sweep at fixed node count and hardware settings.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_data_coherence_time_sec", "1000000000000.0", "--idle_comm_coherence_time_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/distance_sweep"]
+
+    distance_duration_pairs = [(1.0, 1000.0), (10.0, 10000.0), (50.0, 50000.0), (100.0, 100000.0)]  # Pair each distance with a run duration large enough for that regime.
+    for link_distance_km, run_duration_ms in distance_duration_pairs:
+        args = ["--link_distance_km", str(link_distance_km), "--run_duration_ms", str(run_duration_ms)]
+        tasks.append(command + base_args + args)
+
+    parallel = 12
+    ps = []  # Currently running subprocesses.
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
+            task = tasks.pop(0)
+            print(task, f"{len(tasks)} still in queue")
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+        else:
+            time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
+
+
+def main_two_qubit_gate_sweep() -> None:
+    """Run a two-qubit gate-fidelity sweep at fixed topology and distance.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "100", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--idle_data_coherence_time_sec", "1000000000000.0", "--idle_comm_coherence_time_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/two_qubit_gate_sweep"]
+
+    two_qubit_gate_fidelities = [1.0, 0.9999, 0.9995, 0.999, 0.998, 0.995]  # Sweep only the two-qubit gate fidelity.
+    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
+        args = ["--two_qubit_gate_fidelity", str(two_qubit_gate_fidelity)]
+        tasks.append(command + base_args + args)
+
+    parallel = 12
+    ps = []  # Currently running subprocesses.
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
+            task = tasks.pop(0)
+            print(task, f"{len(tasks)} still in queue")
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+        else:
+            time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
+
+
+def main_ft_mode_sweep() -> None:
+    """Run an FT-preparation-mode sweep at fixed topology and hardware settings.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_data_coherence_time_sec", "1000000000000.0", "--idle_comm_coherence_time_sec", "1000000000000.0", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/ft_mode_sweep"]
+
+    ft_prep_modes = ["none", "minimal", "standard"]  # Sweep only FT preparation mode.
+    for ft_prep_mode in ft_prep_modes:
+        args = ["--ft_prep_mode", ft_prep_mode]
+        tasks.append(command + base_args + args)
+
+    parallel = 12
+    ps = []  # Currently running subprocesses.
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
+            task = tasks.pop(0)
+            print(task, f"{len(tasks)} still in queue")
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+        else:
+            time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
+
+
+def main_data_coherence_sweep() -> None:
+    """Run a data-memory coherence sweep at fixed topology and hardware settings.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_comm_coherence_time_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/data_coherence_sweep"]
+
+    idle_data_coherence_times = [1000000000000.0, 1.0, 0.1, 0.01, 0.001]  # Sweep only data-memory coherence time in seconds.
+    for idle_data_coherence_time_sec in idle_data_coherence_times:
+        args = ["--idle_data_coherence_time_sec", str(idle_data_coherence_time_sec)]
+        tasks.append(command + base_args + args)
+
+    parallel = 12
+    ps = []  # Currently running subprocesses.
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
+            task = tasks.pop(0)
+            print(task, f"{len(tasks)} still in queue")
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+        else:
+            time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
+
+
+def main_css_code_sweep() -> None:
+    """Run a CSS-code sweep at fixed topology and hardware settings.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_data_coherence_time_sec", "1000000000000.0", "--idle_comm_coherence_time_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/css_code_sweep"]
+
+    css_codes = ["[[7,1,3]]"]  # Add more CSS codes here when they are available.
+    for css_code in css_codes:
+        args = ["--css_code", css_code]
+        tasks.append(command + base_args + args)
+
+    parallel = 12
+    ps = []  # Currently running subprocesses.
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
+            task = tasks.pop(0)
+            print(task, f"{len(tasks)} still in queue")
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+        else:
+            time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
+
+
+def main_distance_twoq_code_sweep() -> None:
+    """Run a sweep over link distance, two-qubit gate fidelity, and CSS code.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--gate_fidelity", "1.0", "--idle_data_coherence_time_sec", "1000000000000.0", "--idle_comm_coherence_time_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/distance_twoq_code_sweep"]
+
+    distance_duration_pairs = [(1.0, 1000.0), (10.0, 10000.0), (50.0, 50000.0), (100.0, 100000.0)]
+    two_qubit_gate_fidelities = [1.0, 0.9999, 0.9995, 0.999, 0.998, 0.995]
+    css_codes = ["[[7,1,3]]"]  # Add more codes here when available.
+    for link_distance_km, run_duration_ms in distance_duration_pairs:
+        for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
+            for css_code in css_codes:
+                args = ["--link_distance_km", str(link_distance_km), "--run_duration_ms", str(run_duration_ms), "--two_qubit_gate_fidelity", str(two_qubit_gate_fidelity), "--css_code", css_code]
+                tasks.append(command + base_args + args)
+
+    parallel = 12
+    ps = []  # Currently running subprocesses.
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
+            task = tasks.pop(0)
+            print(task, f"{len(tasks)} still in queue")
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+        else:
+            time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
+
+
+def main_apply_classical_correction_sweep() -> None:
+    """Run a sweep over classical correction and two-qubit gate fidelity.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "100", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--idle_data_coherence_time_sec", "1e-1", "--idle_comm_coherence_time_sec", "1e-1", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/apply_classical_correction_sweep"]
+
+    two_qubit_gate_fidelities = [1.0, 0.9999, 0.9995, 0.999, 0.998, 0.995]  # Sweep gate quality alongside classical correction.
+    apply_classical_correction_values = [0, 1]
+    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
+        for apply_classical_correction in apply_classical_correction_values:
+            args = ["--two_qubit_gate_fidelity", str(two_qubit_gate_fidelity), "--apply_classical_correction", str(apply_classical_correction)]
+            tasks.append(command + base_args + args)
+
+    parallel = 12
+    ps = []  # Currently running subprocesses.
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
+            task = tasks.pop(0)
+            print(task, f"{len(tasks)} still in queue")
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+        else:
+            time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
 
 
 if __name__ == "__main__":
-    main()
+
+    # Run all sweeps in sequence. Comment out any that you don't want to run.
+
+    # main_two_qubit_gate_sweep()
+
+    # main_distance_sweep()
+
+    # main_distance_twoq_code_sweep()
+
+    # main_ft_mode_sweep()
+
+    # main_data_coherence_sweep()
+
+    # main_node_count_sweep()
+
+    # main_css_code_sweep()
+
+    main_apply_classical_correction_sweep()
+
+    pass

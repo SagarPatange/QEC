@@ -664,12 +664,7 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     return {"apps": apps, "metrics": metrics}
 
 
-def n_node_logical_pair_with_app(
-    verbose: bool = False,
-    config_file: str = "config/line_5_2G_near_term.json",
-    css_code: str = "[[7,1,3]]",
-    log_filename: str = "log/n_node_logical_pair",
-) -> dict[str, object]:
+def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "config/line_5_2G_near_term.json", css_code: str = "[[7,1,3]]", log_filename: str = "log/n_node_logical_pair") -> dict[str, object]:
     """Create end-to-end logical entanglement across an N-node linear chain.
 
     Args:
@@ -690,8 +685,8 @@ def n_node_logical_pair_with_app(
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
     idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
-    idle_data_coherence_time_sec = 1e-1
-    idle_comm_coherence_time_sec = 1e-1
+    idle_data_coherence_time_sec = 1e-2
+    idle_comm_coherence_time_sec = 1e-2
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -713,7 +708,7 @@ def n_node_logical_pair_with_app(
     start_time_ps = int(1e12)
     window_duration_ps = int(1e9)
     default_target_fidelity = 0.8
-    num_logical_pairs = 300
+    num_logical_pairs = 100
 
     apps = {}
     for node_name in node_names:

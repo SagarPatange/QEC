@@ -106,6 +106,7 @@ class RequestLogicalPairApp:
         self.idle_pauli_weights: dict[str, float] = dict(getattr(node, "idle_pauli_weights", {"x": 0.05, "y": 0.05, "z": 0.90}))  # Biased idle Pauli weights.
         self.idle_data_coherence_time_sec = float(getattr(node, "idle_data_coherence_time_sec", 1e12))  # Data-qubit idle coherence.
         self.idle_comm_coherence_time_sec = float(getattr(node, "idle_comm_coherence_time_sec", 1e12))  # Comm-qubit idle coherence.
+        self.apply_classical_correction = bool(getattr(node, "apply_classical_correction", True))
         
         # Baseline prep fidelity for logical encoding, derived from data memory quality or defaulting to 1.0 if not available.
         data_array_name = f"{self.node.name}.DataMemoryArray"
@@ -211,7 +212,7 @@ class RequestLogicalPairApp:
                 self.current_run["qre_protocols"][neighbor] = QREProtocol(owner=self.node, app=self, remote_node_name=neighbor)
 
     def start(self, responder: str, start_t: int, end_t: int, fidelity: float, num_logical_pairs: int) -> None:
-        """Schedule one or more logical-pair run windows.
+        """Schedule one or more logical-pair runs.
 
         Args:
             responder: Neighbor endpoint name.
@@ -223,17 +224,17 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        round_spacing_ps = int(1e9)
+        round_spacing_ps = int(getattr(self.node, "round_spacing_ps", int(1e9)))
         log.logger.info(f"{self.name}: start responder={responder} first_window=({int(start_t)},{int(end_t)}) fidelity={fidelity:.4f} num_logical_pairs={num_logical_pairs} round_spacing_ps={round_spacing_ps}")
         if int(end_t) <= int(start_t):
             raise RuntimeError(f"{self.name}: end_t must be > start_t")
         if num_logical_pairs < 1:
             raise RuntimeError(f"{self.name}: num_logical_pairs must be >= 1")
 
-        window_duration_ps = int(end_t) - int(start_t)
+        run_duration_ps = int(end_t) - int(start_t)
         for run_index in range(num_logical_pairs):
-            run_start_t = int(start_t) + run_index * (window_duration_ps + round_spacing_ps)
-            run_end_t = run_start_t + window_duration_ps
+            run_start_t = int(start_t) + run_index * (run_duration_ps + round_spacing_ps)
+            run_end_t = run_start_t + run_duration_ps
             self.scheduled_run_starts.append(run_start_t)
 
             process = Process(self, "begin_run", [run_start_t, run_end_t])

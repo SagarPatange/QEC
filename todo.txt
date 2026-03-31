@@ -1,5 +1,2 @@
-1. show where the parity checks are (how to get the 2 bit pauli frame)
-2. debug each and every line of code and make sure you understand what each line is doing (don't be an idiot)
-3. In the paper, note the challenges of simulation. It needs to appear to be solid and can't be too hackish. (The challege of measuring duing the circuit in Stim)
-4. Logical bell state measurement = bsm of all physical qubits inside the logical qubit.
-5. The classical decoding happens after the logical bsm - want to make it clear that this is not QEC. (look at what syndrome means in the context classical vs quantum. Syndrome implies QEC? )
+1. start_time and end_time should govern the simulation and can be changed to represent case
+2. Check how the Idling decoherence has been applied

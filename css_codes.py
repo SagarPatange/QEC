@@ -276,6 +276,19 @@ class CSSCode(ABC):
             Dict[tuple[int, int, int], int | None]: Syndrome->qubit map.
         """
         return {}
+
+    def decode_middle_bsm(self, left_x_bits: List[int], right_z_bits: List[int], apply_classical_correction: bool) -> dict[str, object]:
+        """Decode middle-node BSM bitstrings into corrected parity data.
+
+        Args:
+            left_x_bits: X-basis measurement bits from the left logical block.
+            right_z_bits: Z-basis measurement bits from the right logical block.
+            apply_classical_correction: Whether to apply syndrome-based bitstring correction before parity extraction.
+
+        Returns:
+            dict[str, object]: Syndrome bits, flip indices, corrected strings, and corrected parity bits.
+        """
+        raise NotImplementedError(f"{self.name}: middle-node BSM decoding is not implemented")
     
     def get_ft_required_ancillas(self, mode: str) -> int:
         """Return required ancilla count for FT prep mode.
@@ -448,6 +461,57 @@ class Steane713(CSSCode):
             (1, 0, 1): 4,
             (1, 1, 0): 5,
             (1, 1, 1): 6,
+        }
+
+    def decode_middle_bsm(self, left_x_bits: List[int], right_z_bits: List[int], apply_classical_correction: bool) -> dict[str, object]:
+        """Decode Steane syndromes from middle-node Bell-measurement bitstrings.
+
+        Args:
+            left_x_bits: Seven X-basis bits from the left logical block.
+            right_z_bits: Seven Z-basis bits from the right logical block.
+            apply_classical_correction: Whether to apply Steane syndrome decoding before parity extraction.
+
+        Returns:
+            dict[str, object]: Syndrome bits, flip indices, corrected strings, and corrected parity bits.
+        """
+        x_corrected = list(left_x_bits)
+        z_corrected = list(right_z_bits)
+        s_x: List[int] = []
+        s_z: List[int] = []
+        x_flip_qubit: int | None = None
+        z_flip_qubit: int | None = None
+        if apply_classical_correction:
+            s_x = [
+                left_x_bits[3] ^ left_x_bits[4] ^ left_x_bits[5] ^ left_x_bits[6],
+                left_x_bits[1] ^ left_x_bits[2] ^ left_x_bits[5] ^ left_x_bits[6],
+                left_x_bits[0] ^ left_x_bits[2] ^ left_x_bits[4] ^ left_x_bits[6],
+            ]
+            s_z = [
+                right_z_bits[3] ^ right_z_bits[4] ^ right_z_bits[5] ^ right_z_bits[6],
+                right_z_bits[1] ^ right_z_bits[2] ^ right_z_bits[5] ^ right_z_bits[6],
+                right_z_bits[0] ^ right_z_bits[2] ^ right_z_bits[4] ^ right_z_bits[6],
+            ]
+
+            decode_table = self.get_decode_table()
+            x_flip_qubit = decode_table[tuple(s_x)]
+            z_flip_qubit = decode_table[tuple(s_z)]
+            if x_flip_qubit is not None:
+                x_corrected[x_flip_qubit] ^= 1
+            if z_flip_qubit is not None:
+                z_corrected[z_flip_qubit] ^= 1
+
+        b_x_corrected = sum(x_corrected) & 1
+        b_z_corrected = sum(z_corrected) & 1
+
+        return {
+            "s_x": s_x,
+            "s_z": s_z,
+            "x_flip_qubit": x_flip_qubit,
+            "z_flip_qubit": z_flip_qubit,
+            "x_corrected": x_corrected,
+            "z_corrected": z_corrected,
+            "b_x_corrected": b_x_corrected,
+            "b_z_corrected": b_z_corrected,
         }
 
 

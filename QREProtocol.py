@@ -19,17 +19,6 @@ from sequence.components.circuit import Circuit
 if TYPE_CHECKING:
     from RequestLogicalPairApp import RequestLogicalPairApp
 
-DECODE_TABLE = {
-    (0, 0, 0): None,
-    (0, 0, 1): 0,
-    (0, 1, 0): 1,
-    (0, 1, 1): 2,
-    (1, 0, 0): 3,
-    (1, 0, 1): 4,
-    (1, 1, 0): 5,
-    (1, 1, 1): 6,
-}
-
 class QREMsgType(Enum):
     """Message types used by QREProtocol."""
     FRAME_UPDATE = auto()
@@ -107,6 +96,7 @@ class QREProtocol(Protocol):
         # Idle-noise parameters derived from the app.
         self.idle_pauli_weights: dict[str, float] = dict(self.app.idle_pauli_weights)
         self.idle_data_coherence_time_sec = float(self.app.idle_data_coherence_time_sec)
+        self.apply_classical_correction = bool(self.app.apply_classical_correction)
 
         # Frame contributions for local and final corrections.
         self.bx = 0
@@ -251,11 +241,7 @@ class QREProtocol(Protocol):
         # Apply time-based idle decoherence before encoded swapping consumes data keys.
         now_ps = int(self.owner.timeline.now())
         coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in run_keys}
-        self.owner.timeline.quantum_manager.apply_idling_decoherence(
-            keys=run_keys,
-            now_ps=now_ps,
-            coherence_time_sec_by_key=coherence_time_sec_by_key,
-            pauli_weights=self.idle_pauli_weights)
+        self.owner.timeline.quantum_manager.apply_idling_decoherence(keys=run_keys, now_ps=now_ps,coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
 
         meas_samp = self.owner.get_generator().random()
         results = self.owner.timeline.quantum_manager.run_circuit(circ, run_keys, meas_samp)
@@ -263,7 +249,7 @@ class QREProtocol(Protocol):
         left_x_bits = [int(results[self.left_data_keys[i]]) for i in range(self.n)]
         right_z_bits = [int(results[self.right_data_keys[i]]) for i in range(self.n)]
 
-        decoded = self.decode_middle_bsm(left_x_bits, right_z_bits)
+        decoded = self.app.code.decode_middle_bsm(left_x_bits, right_z_bits, self.apply_classical_correction)
         log.logger.info(f"{self.name}: swap_decode raw_left_x={left_x_bits} raw_right_z={right_z_bits} s_x={decoded['s_x']} s_z={decoded['s_z']} x_flip={decoded['x_flip_qubit']} z_flip={decoded['z_flip_qubit']} x_corrected={decoded['x_corrected']} z_corrected={decoded['z_corrected']} b_x_corrected={decoded['b_x_corrected']} b_z_corrected={decoded['b_z_corrected']}")
 
         # 2) Decode Steane syndromes and map corrected parities to frame contributions.
@@ -297,52 +283,6 @@ class QREProtocol(Protocol):
         priority = self.owner.timeline.schedule_counter
         event = Event(time_now, process, priority)
         self.owner.timeline.schedule(event)
-
-    def decode_middle_bsm(self, left_x_bits: list[int], right_z_bits: list[int]) -> dict[str, object]: # TODO: move this to CSS codes
-        """Decode Steane syndromes from middle-node Bell-measurement bitstrings.
-
-        Args:
-            left_x_bits: Seven X-basis bits from left logical block.
-            right_z_bits: Seven Z-basis bits from right logical block.
-
-        Returns:
-            dict[str, object]: Syndrome bits, flip indices, corrected strings, and corrected parity bits.
-        """
-        
-        s_x = [
-            left_x_bits[3] ^ left_x_bits[4] ^ left_x_bits[5] ^ left_x_bits[6],
-            left_x_bits[1] ^ left_x_bits[2] ^ left_x_bits[5] ^ left_x_bits[6],
-            left_x_bits[0] ^ left_x_bits[2] ^ left_x_bits[4] ^ left_x_bits[6],
-        ]
-        s_z = [
-            right_z_bits[3] ^ right_z_bits[4] ^ right_z_bits[5] ^ right_z_bits[6],
-            right_z_bits[1] ^ right_z_bits[2] ^ right_z_bits[5] ^ right_z_bits[6],
-            right_z_bits[0] ^ right_z_bits[2] ^ right_z_bits[4] ^ right_z_bits[6],
-        ]
-
-        x_flip_qubit = DECODE_TABLE[tuple(s_x)]
-        z_flip_qubit = DECODE_TABLE[tuple(s_z)]
-
-        x_corrected = list(left_x_bits)
-        z_corrected = list(right_z_bits)
-        if x_flip_qubit is not None:
-            x_corrected[x_flip_qubit] ^= 1
-        if z_flip_qubit is not None:
-            z_corrected[z_flip_qubit] ^= 1
-
-        b_x_corrected = sum(x_corrected) & 1
-        b_z_corrected = sum(z_corrected) & 1
-
-        return {
-            "s_x": s_x,
-            "s_z": s_z,
-            "x_flip_qubit": x_flip_qubit,
-            "z_flip_qubit": z_flip_qubit,
-            "x_corrected": x_corrected,
-            "z_corrected": z_corrected,
-            "b_x_corrected": b_x_corrected,
-            "b_z_corrected": b_z_corrected,
-        }
 
     def update_pauli_frame(self, src: str, bx: int, bz: int) -> None:
         """Accumulate frame contributions and apply final logical correction.

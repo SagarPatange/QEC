@@ -41,12 +41,18 @@ def main() -> None:
     parser.add_argument("--log_directory", type=str, default="log")
     parser.add_argument("--log_level", type=str, default="DEBUG")
     parser.add_argument("--start_time_s", type=float, default=1.0)
-    parser.add_argument("--window_time_ms", type=float, default=1e5)
+    parser.add_argument("--run_duration_ms", type=float, default=1e5)
+    parser.add_argument("--round_spacing_ms", type=float, default=1.0)
+    parser.add_argument("--apply_classical_correction", type=int, choices=[0, 1], default=1)
     parser.add_argument("--target_fidelity", type=float, default=0.8)
     parser.add_argument("--num_logical_pairs", type=int, default=30)
     parser.add_argument("--link_distance_km", type=float)
     parser.add_argument("--gate_fidelity", type=float)
     parser.add_argument("--two_qubit_gate_fidelity", type=float)
+    parser.add_argument("--measurement_fidelity", type=float)
+    parser.add_argument("--gate_error_channel", type=str, choices=["depolarize", "pauli"])
+    parser.add_argument("--pauli_1q_weights", type=float, nargs=3)
+    parser.add_argument("--pauli_2q_weights", type=float, nargs=15)
     parser.add_argument("--idle_data_coherence_time_sec", type=float)
     parser.add_argument("--idle_comm_coherence_time_sec", type=float)
     parser.add_argument("--ft_prep_mode", type=str, choices=["none", "minimal", "standard"])
@@ -62,6 +68,10 @@ def main() -> None:
 
     if (args.idle_pauli_x is None) != (args.idle_pauli_y is None) or (args.idle_pauli_x is None) != (args.idle_pauli_z is None):
         raise RuntimeError("idle_pauli_x, idle_pauli_y, idle_pauli_z must be set together")
+    if args.pauli_1q_weights is not None and len(args.pauli_1q_weights) != 3:
+        raise RuntimeError("pauli_1q_weights must have 3 entries")
+    if args.pauli_2q_weights is not None and len(args.pauli_2q_weights) != 15:
+        raise RuntimeError("pauli_2q_weights must have 15 entries")
 
     with open(config_file, "r", encoding="utf-8") as file:
         config = json.load(file)
@@ -73,6 +83,8 @@ def main() -> None:
             node["gate_fidelity"] = float(args.gate_fidelity)
         if args.two_qubit_gate_fidelity is not None:
             node["two_qubit_gate_fidelity"] = float(args.two_qubit_gate_fidelity)
+        if args.measurement_fidelity is not None:
+            node["measurement_fidelity"] = float(args.measurement_fidelity)
         if args.idle_data_coherence_time_sec is not None:
             node["idle_data_coherence_time_sec"] = float(args.idle_data_coherence_time_sec)
         if args.idle_comm_coherence_time_sec is not None:
@@ -90,6 +102,11 @@ def main() -> None:
             if "distance" in cchannel:
                 cchannel["distance"] = half_distance_m
 
+    start_time_ps = int(args.start_time_s * SECOND)
+    run_duration_ps = int(args.run_duration_ms * MILLISECOND)
+    round_spacing_ps = int(args.round_spacing_ms * MILLISECOND)
+    config["stop_time"] = start_time_ps + args.num_logical_pairs * (run_duration_ps + round_spacing_ps) + run_duration_ps
+
     temp_config = tempfile.NamedTemporaryFile(mode="w", suffix=".json", dir=TMP_DIR, delete=False, encoding="utf-8")
     json.dump(config, temp_config, indent=4)
     temp_config.write("\n")
@@ -105,11 +122,12 @@ def main() -> None:
     comm_t2_tag = "cfg" if args.idle_comm_coherence_time_sec is None else str(args.idle_comm_coherence_time_sec)
     ft_tag = "cfg" if args.ft_prep_mode is None else args.ft_prep_mode
     pauli_tag = "cfg" if args.idle_pauli_x is None else f"{args.idle_pauli_x}_{args.idle_pauli_y}_{args.idle_pauli_z}"
+    correction_tag = "on" if args.apply_classical_correction == 1 else "off"
 
     network_topo = RouterNetTopo2G(temp_config.name)
     tl = network_topo.get_timeline()
 
-    log_filename = f"{args.log_directory}/{config_tag},code={args.css_code},dist={dist_tag},gate={gate_tag},twoq={twoq_tag},dataT2={data_t2_tag},commT2={comm_t2_tag},ft={ft_tag},pauli={pauli_tag}"
+    log_filename = f"{args.log_directory}/{config_tag},code={args.css_code},dist={dist_tag},gate={gate_tag},twoq={twoq_tag},dataT2={data_t2_tag},commT2={comm_t2_tag},ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag}"
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level(args.log_level)
     modules = ["main"]
@@ -120,19 +138,27 @@ def main() -> None:
     routers = network_topo.get_nodes_by_type(RouterNetTopo2G.QUANTUM_ROUTER)
     routers.sort(key=lambda router: int(router.name.split("_")[-1]))
     node_names = [router.name for router in routers]
+    tl.quantum_manager.gate_fid = getattr(routers[0], "gate_fid", 1.0)
+    tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], "two_qubit_gate_fid", 1.0)
+    tl.quantum_manager.measurement_fid = getattr(routers[0], "meas_fid", 1.0)
+    if args.gate_error_channel is not None:
+        tl.quantum_manager.gate_error_channel = args.gate_error_channel
+    if args.pauli_1q_weights is not None:
+        tl.quantum_manager.pauli_1q_weights = tuple(float(w) for w in args.pauli_1q_weights)
+    if args.pauli_2q_weights is not None:
+        tl.quantum_manager.pauli_2q_weights = tuple(float(w) for w in args.pauli_2q_weights)
 
     for router in routers:
+        router.round_spacing_ps = round_spacing_ps
+        router.apply_classical_correction = bool(args.apply_classical_correction)
         app = RequestLogicalPairApp(router, css_code=args.css_code, path_node_names=node_names)
         name_to_apps[router.name] = app
-
-    start_time_ps = int(args.start_time_s * SECOND)
-    window_duration_ps = int(args.window_time_ms * MILLISECOND)
 
     for i in range(len(node_names) - 1):
         name_to_apps[node_names[i]].start(
             responder=node_names[i + 1],
             start_t=start_time_ps,
-            end_t=start_time_ps + window_duration_ps,
+            end_t=start_time_ps + run_duration_ps,
             fidelity=args.target_fidelity,
             num_logical_pairs=args.num_logical_pairs,
         )
