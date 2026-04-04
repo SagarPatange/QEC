@@ -44,6 +44,7 @@ def main() -> None:
     parser.add_argument("--run_duration_ms", type=float, default=1e5)
     parser.add_argument("--round_spacing_ms", type=float, default=1.0)
     parser.add_argument("--apply_classical_correction", type=int, choices=[0, 1], default=1)
+    parser.add_argument("--correction_mode", type=str, choices=["none", "cec", "qec", "qec+cec"])
     parser.add_argument("--target_fidelity", type=float, default=0.8)
     parser.add_argument("--num_logical_pairs", type=int, default=30)
     parser.add_argument("--link_distance_km", type=float)
@@ -91,6 +92,8 @@ def main() -> None:
             node["idle_comm_coherence_time_sec"] = float(args.idle_comm_coherence_time_sec)
         if args.ft_prep_mode is not None:
             node["ft_prep_mode"] = args.ft_prep_mode
+        if args.correction_mode is not None:
+            node["correction_mode"] = args.correction_mode
         if args.idle_pauli_x is not None:
             node["idle_pauli_weights"] = {"x": float(args.idle_pauli_x), "y": float(args.idle_pauli_y), "z": float(args.idle_pauli_z)}
 
@@ -122,7 +125,7 @@ def main() -> None:
     comm_t2_tag = "cfg" if args.idle_comm_coherence_time_sec is None else str(args.idle_comm_coherence_time_sec)
     ft_tag = "cfg" if args.ft_prep_mode is None else args.ft_prep_mode
     pauli_tag = "cfg" if args.idle_pauli_x is None else f"{args.idle_pauli_x}_{args.idle_pauli_y}_{args.idle_pauli_z}"
-    correction_tag = "on" if args.apply_classical_correction == 1 else "off"
+    correction_tag = args.correction_mode if args.correction_mode is not None else ("cec" if args.apply_classical_correction == 1 else "none")
 
     network_topo = RouterNetTopo2G(temp_config.name)
     tl = network_topo.get_timeline()
@@ -151,6 +154,7 @@ def main() -> None:
     for router in routers:
         router.round_spacing_ps = round_spacing_ps
         router.apply_classical_correction = bool(args.apply_classical_correction)
+        router.correction_mode = args.correction_mode if args.correction_mode is not None else ("cec" if args.apply_classical_correction == 1 else "none")
         app = RequestLogicalPairApp(router, css_code=args.css_code, path_node_names=node_names)
         name_to_apps[router.name] = app
 

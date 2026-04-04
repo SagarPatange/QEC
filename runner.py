@@ -325,6 +325,43 @@ def main_apply_classical_correction_sweep() -> None:
             ps = new_ps
 
 
+def main_correction_mode_compare() -> None:
+    """Compare none, CEC, QEC, and QEC+CEC at one fixed operating point.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "100", "--link_distance_km", "10.0", "--gate_fidelity", "0.9999", "--two_qubit_gate_fidelity", "0.999", "--measurement_fidelity", "0.999", "--idle_data_coherence_time_sec", "1e-1", "--idle_comm_coherence_time_sec", "1e-1", "--ft_prep_mode", "standard", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/correction_mode_compare"]
+
+    correction_modes = ["none", "cec", "qec", "qec+cec"]
+    for correction_mode in correction_modes:
+        args = ["--correction_mode", correction_mode]
+        tasks.append(command + base_args + args)
+
+    parallel = 4
+    ps = []
+    while len(tasks) > 0 or len(ps) > 0:
+        if len(ps) < parallel and len(tasks) > 0:
+            task = tasks.pop(0)
+            print(task, f"{len(tasks)} still in queue")
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+        else:
+            time.sleep(0.05)
+            new_ps = []
+            for process in ps:
+                if process.poll() is None:
+                    new_ps.append(process)
+                else:
+                    get_output(process)
+            ps = new_ps
+
+
 if __name__ == "__main__":
 
     # Run all sweeps in sequence. Comment out any that you don't want to run.
@@ -343,6 +380,6 @@ if __name__ == "__main__":
 
     # main_css_code_sweep()
 
-    main_apply_classical_correction_sweep()
+    main_correction_mode_compare()
 
     pass

@@ -277,18 +277,32 @@ class CSSCode(ABC):
         """
         return {}
 
-    def decode_middle_bsm(self, left_x_bits: List[int], right_z_bits: List[int], apply_classical_correction: bool) -> dict[str, object]:
+    def decode_middle_bsm(self, left_x_bits: List[int], right_z_bits: List[int], correction_mode: str) -> dict[str, object]:
         """Decode middle-node BSM bitstrings into corrected parity data.
 
         Args:
             left_x_bits: X-basis measurement bits from the left logical block.
             right_z_bits: Z-basis measurement bits from the right logical block.
-            apply_classical_correction: Whether to apply syndrome-based bitstring correction before parity extraction.
+            correction_mode: Correction mode controlling whether classical syndrome correction is applied.
 
         Returns:
             dict[str, object]: Syndrome bits, flip indices, corrected strings, and corrected parity bits.
         """
         raise NotImplementedError(f"{self.name}: middle-node BSM decoding is not implemented")
+
+    def run_qec_round(self, simulator: stim.TableauSimulator, data_locals: List[int], ancilla_locals: List[int], apply_physical_correction: bool = True) -> dict[str, object]:
+        """Run one local QEC round on an encoded data block.
+
+        Args:
+            simulator: Tableau simulator containing the encoded data block.
+            data_locals: Local simulator indices for the data qubits.
+            ancilla_locals: Local simulator indices for ancilla qubits.
+            apply_physical_correction: Whether to apply the decoded correction to the data block.
+
+        Returns:
+            dict[str, object]: Measured syndromes and decoded correction data.
+        """
+        raise NotImplementedError(f"{self.name}: qec round is not implemented")
     
     def get_ft_required_ancillas(self, mode: str) -> int:
         """Return required ancilla count for FT prep mode.
@@ -322,6 +336,18 @@ class CSSCode(ABC):
 
 class Steane713(CSSCode):
     """[[7,1,3]] Steane code."""
+
+    STEANE_SYNDROME_ROWS: List[List[int]] = [
+        [3, 4, 5, 6],
+        [1, 2, 5, 6],
+        [0, 2, 4, 6],
+    ]
+    STEANE_FT_CHECK_SUPPORTS_STANDARD: List[List[int]] = [
+        [3, 4, 5, 6],
+        [0, 5, 6],
+        [1, 4, 6],
+        [2, 4, 5],
+    ]
 
     def __init__(self) -> None:
         """Initialize Steane [[7,1,3]] metadata.
@@ -395,36 +421,10 @@ class Steane713(CSSCode):
         if mode == "none":
             return []
         if mode == "minimal":
-            return [[0, 5, 6]]
+            return [list(self.STEANE_FT_CHECK_SUPPORTS_STANDARD[1])]
         if mode == "standard":
-            return [[3, 4, 5, 6], [0, 5, 6], [1, 4, 6], [2, 4, 5]]
+            return [list(support) for support in self.STEANE_FT_CHECK_SUPPORTS_STANDARD]
         raise RuntimeError(f"{self.name}: unknown ft_prep_mode {mode}")
-
-    def get_ft_prep_circuit(self, mode: str, ancilla_offset: int = 0) -> stim.Circuit:
-        """Return Steane FT-check circuit for minimal/standard modes.
-
-        Args:
-            mode: "none", "minimal", or "standard".
-            ancilla_offset: Ancilla-block qubit offset.
-
-        Returns:
-            stim.Circuit: FT preparation/check circuit.
-        """
-        if mode == "none":
-            return stim.Circuit()
-        if mode not in {"minimal", "standard"}:
-            raise RuntimeError(f"{self.name}: unknown ft_prep_mode {mode}")
-
-        checks = [[0, 5, 6]] if mode == "minimal" else [[3, 4, 5, 6], [0, 5, 6], [1, 4, 6], [2, 4, 5]]
-
-        circuit = stim.Circuit()
-        for check_index, support in enumerate(checks):
-            anc = ancilla_offset + check_index
-            circuit.append("R", [anc])
-            for data_index in support:
-                circuit.append("CX", [data_index, anc])
-            circuit.append("M", [anc])
-        return circuit
 
     def get_ft_required_ancillas(self, mode: str) -> int:
         """Return required ancilla count for Steane FT prep mode.
@@ -435,13 +435,7 @@ class Steane713(CSSCode):
         Returns:
             int: Required ancilla count.
         """
-        if mode == "none":
-            return 0
-        if mode == "minimal":
-            return 1
-        if mode == "standard":
-            return 4
-        raise RuntimeError(f"{self.name}: unknown ft_prep_mode {mode}")
+        return len(self.get_ft_check_supports(mode))
 
     def get_decode_table(self) -> Dict[tuple[int, int, int], int | None]:
         """Return Steane 3-bit syndrome decode map.
@@ -463,38 +457,26 @@ class Steane713(CSSCode):
             (1, 1, 1): 6,
         }
 
-    def decode_middle_bsm(self, left_x_bits: List[int], right_z_bits: List[int], apply_classical_correction: bool) -> dict[str, object]:
+    def decode_middle_bsm(self, left_x_bits: List[int], right_z_bits: List[int], correction_mode: str) -> dict[str, object]:
         """Decode Steane syndromes from middle-node Bell-measurement bitstrings.
 
         Args:
             left_x_bits: Seven X-basis bits from the left logical block.
             right_z_bits: Seven Z-basis bits from the right logical block.
-            apply_classical_correction: Whether to apply Steane syndrome decoding before parity extraction.
+            correction_mode: Correction mode controlling whether classical syndrome correction is applied.
 
         Returns:
             dict[str, object]: Syndrome bits, flip indices, corrected strings, and corrected parity bits.
         """
         x_corrected = list(left_x_bits)
         z_corrected = list(right_z_bits)
-        s_x: List[int] = []
-        s_z: List[int] = []
-        x_flip_qubit: int | None = None
-        z_flip_qubit: int | None = None
+        s_x = [sum(left_x_bits[index] for index in row) & 1 for row in self.STEANE_SYNDROME_ROWS]
+        s_z = [sum(right_z_bits[index] for index in row) & 1 for row in self.STEANE_SYNDROME_ROWS]
+        decode_table = self.get_decode_table()
+        x_flip_qubit = decode_table[tuple(s_x)]
+        z_flip_qubit = decode_table[tuple(s_z)]
+        apply_classical_correction = correction_mode in {"cec", "qec+cec"}
         if apply_classical_correction:
-            s_x = [
-                left_x_bits[3] ^ left_x_bits[4] ^ left_x_bits[5] ^ left_x_bits[6],
-                left_x_bits[1] ^ left_x_bits[2] ^ left_x_bits[5] ^ left_x_bits[6],
-                left_x_bits[0] ^ left_x_bits[2] ^ left_x_bits[4] ^ left_x_bits[6],
-            ]
-            s_z = [
-                right_z_bits[3] ^ right_z_bits[4] ^ right_z_bits[5] ^ right_z_bits[6],
-                right_z_bits[1] ^ right_z_bits[2] ^ right_z_bits[5] ^ right_z_bits[6],
-                right_z_bits[0] ^ right_z_bits[2] ^ right_z_bits[4] ^ right_z_bits[6],
-            ]
-
-            decode_table = self.get_decode_table()
-            x_flip_qubit = decode_table[tuple(s_x)]
-            z_flip_qubit = decode_table[tuple(s_z)]
             if x_flip_qubit is not None:
                 x_corrected[x_flip_qubit] ^= 1
             if z_flip_qubit is not None:
@@ -512,6 +494,139 @@ class Steane713(CSSCode):
             "z_corrected": z_corrected,
             "b_x_corrected": b_x_corrected,
             "b_z_corrected": b_z_corrected,
+        }
+
+    def run_qec_round(self, simulator: stim.TableauSimulator, data_locals: List[int], ancilla_locals: List[int], apply_physical_correction: bool = True) -> dict[str, object]:
+        """Run one FT Steane QEC round using the 3-ancilla syndrome schedule.
+
+        Args:
+            simulator: Tableau simulator containing the encoded data block.
+            data_locals: Local simulator indices for the seven data qubits.
+            ancilla_locals: Local simulator indices for ancilla qubits.
+            apply_physical_correction: Whether to apply decoded corrections to the data qubits.
+
+        Returns:
+            dict[str, object]: X/Z syndromes, decoded flip locations, and applied corrections.
+        """
+        if len(data_locals) != self.n:
+            raise RuntimeError(f"{self.name}: expected {self.n} data qubits, got {len(data_locals)}")
+        if len(ancilla_locals) < 3:
+            raise RuntimeError(f"{self.name}: FT qec round requires at least 3 ancillas")
+
+        green = ancilla_locals[0]
+        blue = ancilla_locals[1]
+        red = ancilla_locals[2]
+
+        def decode_color_syndrome(green_bit: int, red_bit: int, blue_bit: int) -> int | None:
+            """Decode one 3-bit color syndrome into a physical qubit index.
+
+            Args:
+                green_bit: Green syndrome bit.
+                red_bit: Red syndrome bit.
+                blue_bit: Blue syndrome bit.
+
+            Returns:
+                int | None: Qubit index to correct, or ``None`` for the zero syndrome.
+            """
+            value = green_bit + 2 * red_bit + 4 * blue_bit
+            if value == 0:
+                return None
+            return value - 1
+
+        def extract_syndromes_ft_round1() -> tuple[int, int, int]:
+            """Extract X-green, Z-blue, and Z-red syndrome bits.
+
+            Args:
+                None.
+
+            Returns:
+                tuple[int, int, int]: ``(x_green, z_blue, z_red)``.
+            """
+            simulator.reset_z(green)
+            simulator.reset_z(blue)
+            simulator.reset_z(red)
+
+            simulator.h(green)
+            simulator.cx(data_locals[6], blue)
+            simulator.cx(data_locals[6], red)
+            simulator.cx(green, data_locals[6])
+            simulator.cx(data_locals[4], blue)
+            simulator.cx(green, data_locals[4])
+            simulator.cx(data_locals[2], red)
+            simulator.cx(green, data_locals[2])
+            simulator.cx(data_locals[5], blue)
+            simulator.cx(data_locals[5], red)
+            simulator.cx(green, data_locals[0])
+            simulator.cx(data_locals[3], blue)
+            simulator.cx(data_locals[1], red)
+            simulator.h(green)
+
+            x_green = int(simulator.measure(green))
+            z_blue = int(simulator.measure(blue))
+            z_red = int(simulator.measure(red))
+            return x_green, z_blue, z_red
+
+        def extract_syndromes_ft_round2() -> tuple[int, int, int]:
+            """Extract Z-green, X-blue, and X-red syndrome bits.
+
+            Args:
+                None.
+
+            Returns:
+                tuple[int, int, int]: ``(z_green, x_blue, x_red)``.
+            """
+            simulator.reset_z(green)
+            simulator.reset_z(blue)
+            simulator.reset_z(red)
+
+            simulator.h(blue)
+            simulator.h(red)
+            simulator.cx(blue, data_locals[6])
+            simulator.cx(red, data_locals[6])
+            simulator.cx(data_locals[6], green)
+            simulator.cx(blue, data_locals[4])
+            simulator.cx(data_locals[4], green)
+            simulator.cx(red, data_locals[2])
+            simulator.cx(data_locals[2], green)
+            simulator.cx(blue, data_locals[5])
+            simulator.cx(red, data_locals[5])
+            simulator.cx(data_locals[0], green)
+            simulator.cx(blue, data_locals[3])
+            simulator.cx(red, data_locals[1])
+
+            z_green = int(simulator.measure(green))
+            simulator.h(blue)
+            simulator.h(red)
+            x_blue = int(simulator.measure(blue))
+            x_red = int(simulator.measure(red))
+            return z_green, x_blue, x_red
+
+        x_green, z_blue, z_red = extract_syndromes_ft_round1()
+        z_green, x_blue, x_red = extract_syndromes_ft_round2()
+
+        x_syndrome = [z_green, z_red, z_blue]
+        z_syndrome = [x_green, x_red, x_blue]
+
+        x_error_qubit = decode_color_syndrome(z_green, z_red, z_blue)
+        z_error_qubit = decode_color_syndrome(x_green, x_red, x_blue)
+
+        applied_x = None
+        applied_z = None
+        if apply_physical_correction:
+            if x_error_qubit is not None:
+                simulator.x(data_locals[x_error_qubit])
+                applied_x = int(x_error_qubit)
+            if z_error_qubit is not None:
+                simulator.z(data_locals[z_error_qubit])
+                applied_z = int(z_error_qubit)
+
+        return {
+            "x_syndrome": x_syndrome,
+            "z_syndrome": z_syndrome,
+            "x_error_qubit": x_error_qubit,
+            "z_error_qubit": z_error_qubit,
+            "applied_x": applied_x,
+            "applied_z": applied_z,
         }
 
 

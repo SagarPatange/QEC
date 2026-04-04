@@ -106,7 +106,13 @@ class RequestLogicalPairApp:
         self.idle_pauli_weights: dict[str, float] = dict(getattr(node, "idle_pauli_weights", {"x": 0.05, "y": 0.05, "z": 0.90}))  # Biased idle Pauli weights.
         self.idle_data_coherence_time_sec = float(getattr(node, "idle_data_coherence_time_sec", 1e12))  # Data-qubit idle coherence.
         self.idle_comm_coherence_time_sec = float(getattr(node, "idle_comm_coherence_time_sec", 1e12))  # Comm-qubit idle coherence.
-        self.apply_classical_correction = bool(getattr(node, "apply_classical_correction", True))
+        node_correction_mode = getattr(node, "correction_mode", None)
+        if node_correction_mode is None:
+            node_correction_mode = "cec" if bool(getattr(node, "apply_classical_correction", True)) else "none"
+        self.correction_mode = str(node_correction_mode)
+        if self.correction_mode not in {"none", "cec", "qec", "qec+cec"}:
+            raise RuntimeError(f"{self.name}: unknown correction_mode {self.correction_mode}")
+        self.apply_classical_correction = self.correction_mode in {"cec", "qec+cec"}
         
         # Baseline prep fidelity for logical encoding, derived from data memory quality or defaulting to 1.0 if not available.
         data_array_name = f"{self.node.name}.DataMemoryArray"

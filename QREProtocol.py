@@ -86,6 +86,8 @@ class QREProtocol(Protocol):
         # Store data key allocations for QRE phases.
         self.left_data_keys: list[int] = []
         self.right_data_keys: list[int] = []
+        self.left_ancilla_keys: list[int] = []
+        self.right_ancilla_keys: list[int] = []
         self.local_data_keys: list[int] = []
 
         # Per-run protocol execution state.
@@ -96,7 +98,7 @@ class QREProtocol(Protocol):
         # Idle-noise parameters derived from the app.
         self.idle_pauli_weights: dict[str, float] = dict(self.app.idle_pauli_weights)
         self.idle_data_coherence_time_sec = float(self.app.idle_data_coherence_time_sec)
-        self.apply_classical_correction = bool(self.app.apply_classical_correction)
+        self.correction_mode = str(self.app.correction_mode)
 
         # Frame contributions for local and final corrections.
         self.bx = 0
@@ -128,8 +130,12 @@ class QREProtocol(Protocol):
         right_peer = self.app._right_peer_name
         left_memories = [] if left_peer is None else self.app.data_qubits.get(left_peer, [])     # Own memories associated with left neighbor
         right_memories = [] if right_peer is None else self.app.data_qubits.get(right_peer, [])  # Own memories associated with right neighbor
+        left_ancilla_memories = [] if left_peer is None else self.app.ancilla_qubits.get(left_peer, [])
+        right_ancilla_memories = [] if right_peer is None else self.app.ancilla_qubits.get(right_peer, [])
         self.left_data_keys = [m.qstate_key for m in left_memories]
         self.right_data_keys = [m.qstate_key for m in right_memories]
+        self.left_ancilla_keys = [m.qstate_key for m in left_ancilla_memories]
+        self.right_ancilla_keys = [m.qstate_key for m in right_ancilla_memories]
 
         # Endpoints keep the local block that may receive the final frame correction.
         if self.is_initiator:
@@ -225,6 +231,17 @@ class QREProtocol(Protocol):
             raise RuntimeError(f"{self.name}: expected {self.n} keys per side, got "
                 f"left={len(self.left_data_keys)}, right={len(self.right_data_keys)}")
 
+        qm = self.owner.timeline.quantum_manager
+        now_ps = int(self.owner.timeline.now())
+        coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in run_keys}
+
+        qm.apply_idling_decoherence(keys=run_keys, now_ps=now_ps, coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
+
+        if self.correction_mode in {"qec", "qec+cec"}:
+            left_qec = self.run_pre_swap_qec_on_block(self.left_data_keys, self.left_ancilla_keys)
+            right_qec = self.run_pre_swap_qec_on_block(self.right_data_keys, self.right_ancilla_keys)
+            log.logger.info(f"{self.name}: pre_swap_qec left_x={left_qec['x_syndrome']} left_z={left_qec['z_syndrome']} right_x={right_qec['x_syndrome']} right_z={right_qec['z_syndrome']}")
+
         circ = Circuit(2 * self.n)
 
         # 1) Build encoded Bell-measurement circuit: transversal CX plus block measurements.
@@ -238,18 +255,13 @@ class QREProtocol(Protocol):
         for i in range(self.n):
             circ.measure(self.n + i)
 
-        # Apply time-based idle decoherence before encoded swapping consumes data keys.
-        now_ps = int(self.owner.timeline.now())
-        coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in run_keys}
-        self.owner.timeline.quantum_manager.apply_idling_decoherence(keys=run_keys, now_ps=now_ps,coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
-
         meas_samp = self.owner.get_generator().random()
-        results = self.owner.timeline.quantum_manager.run_circuit(circ, run_keys, meas_samp)
+        results = qm.run_circuit(circ, run_keys, meas_samp)
 
         left_x_bits = [int(results[self.left_data_keys[i]]) for i in range(self.n)]
         right_z_bits = [int(results[self.right_data_keys[i]]) for i in range(self.n)]
 
-        decoded = self.app.code.decode_middle_bsm(left_x_bits, right_z_bits, self.apply_classical_correction)
+        decoded = self.app.code.decode_middle_bsm(left_x_bits, right_z_bits, self.correction_mode)
         log.logger.info(f"{self.name}: swap_decode raw_left_x={left_x_bits} raw_right_z={right_z_bits} s_x={decoded['s_x']} s_z={decoded['s_z']} x_flip={decoded['x_flip_qubit']} z_flip={decoded['z_flip_qubit']} x_corrected={decoded['x_corrected']} z_corrected={decoded['z_corrected']} b_x_corrected={decoded['b_x_corrected']} b_z_corrected={decoded['b_z_corrected']}")
 
         # 2) Decode Steane syndromes and map corrected parities to frame contributions.
@@ -283,6 +295,46 @@ class QREProtocol(Protocol):
         priority = self.owner.timeline.schedule_counter
         event = Event(time_now, process, priority)
         self.owner.timeline.schedule(event)
+
+    def run_pre_swap_qec_on_block(self, data_keys: list[int], ancilla_keys: list[int]) -> dict[str, object]:
+        """Run one local QEC round on a middle-node block before swap.
+
+        Args:
+            data_keys: Data-block quantum-manager keys.
+            ancilla_keys: Ancilla quantum-manager keys associated with the block.
+
+        Returns:
+            dict[str, object]: Measured syndromes and decoded correction data.
+        """
+        if len(data_keys) != self.n:
+            raise RuntimeError(f"{self.name}: expected {self.n} data keys for pre-swap QEC, got {len(data_keys)}")
+        if len(ancilla_keys) < 3:
+            raise RuntimeError(f"{self.name}: correction_mode={self.correction_mode} requires at least 3 ancillas per block")
+
+        qm = self.owner.timeline.quantum_manager
+        used_ancilla_keys = list(ancilla_keys[:3])
+        merge_keys = list(data_keys) + used_ancilla_keys
+        merge_circuit = Circuit(len(merge_keys))
+        qm.run_circuit(merge_circuit, merge_keys)
+
+        state_obj = qm.states[data_keys[0]]
+        key_to_local = {key: idx for idx, key in enumerate(state_obj.keys)}
+        data_locals = [key_to_local[key] for key in data_keys]
+        ancilla_locals = [key_to_local[key] for key in used_ancilla_keys]
+        qec_result = self.app.code.run_qec_round(
+            simulator=state_obj.state,
+            data_locals=data_locals,
+            ancilla_locals=ancilla_locals,
+            apply_physical_correction=True,
+        )
+
+        now_ps = int(self.owner.timeline.now())
+        for key in data_keys:
+            qm.last_idle_time_ps_by_key[key] = now_ps
+        for key in used_ancilla_keys:
+            qm.last_idle_time_ps_by_key[key] = now_ps
+
+        return qec_result
 
     def update_pauli_frame(self, src: str, bx: int, bz: int) -> None:
         """Accumulate frame contributions and apply final logical correction.
