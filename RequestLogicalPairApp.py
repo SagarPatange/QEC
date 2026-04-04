@@ -358,27 +358,33 @@ class RequestLogicalPairApp:
             all_keys = left_keys + right_keys
             sim, key_to_local = build_simulator_from_keys(all_keys)
 
-            def corr(pauli_support: str) -> float:
-                """Evaluate one correlator.
+            xx_obs = stim.PauliString(len(key_to_local))
+            for key, pauli in zip(left_keys, px):
+                if pauli != "I":
+                    xx_obs[key_to_local[key]] = pauli
+            for key, pauli in zip(right_keys, px):
+                if pauli != "I":
+                    xx_obs[key_to_local[key]] = pauli
+            cx = float(sim.peek_observable_expectation(xx_obs))
 
-                Args:
-                    pauli_support: Pauli support string.
+            yy_obs = stim.PauliString(len(key_to_local))
+            for key, pauli in zip(left_keys, py):
+                if pauli != "I":
+                    yy_obs[key_to_local[key]] = pauli
+            for key, pauli in zip(right_keys, py):
+                if pauli != "I":
+                    yy_obs[key_to_local[key]] = pauli
+            cy = float(sim.peek_observable_expectation(yy_obs))
 
-                Returns:
-                    float: Correlator value.
-                """
-                obs = stim.PauliString(sim.num_qubits)
-                for key, pauli in zip(left_keys, pauli_support):
-                    if pauli != "I":
-                        obs[key_to_local[key]] = pauli
-                for key, pauli in zip(right_keys, pauli_support):
-                    if pauli != "I":
-                        obs[key_to_local[key]] = pauli
-                return float(sim.peek_observable_expectation(obs))
+            zz_obs = stim.PauliString(len(key_to_local))
+            for key, pauli in zip(left_keys, pz):
+                if pauli != "I":
+                    zz_obs[key_to_local[key]] = pauli
+            for key, pauli in zip(right_keys, pz):
+                if pauli != "I":
+                    zz_obs[key_to_local[key]] = pauli
+            cz = float(sim.peek_observable_expectation(zz_obs))
 
-            cx = corr(px)
-            cy = corr(py)
-            cz = corr(pz)
             value = (1.0 + cx - cy + cz) / 4.0
             log.logger.info(f"{self.name}: fidelity_components pair_type={pair_type} left={left_node} right={right_node} cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} value={value:.6f}")
             return value

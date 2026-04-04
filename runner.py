@@ -326,7 +326,7 @@ def main_apply_classical_correction_sweep() -> None:
 
 
 def main_correction_mode_compare() -> None:
-    """Compare none, CEC, QEC, and QEC+CEC at one fixed operating point.
+    """Compare correction modes across a sweep of two-qubit gate fidelities.
 
     Args:
         None.
@@ -337,14 +337,16 @@ def main_correction_mode_compare() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "100", "--link_distance_km", "10.0", "--gate_fidelity", "0.9999", "--two_qubit_gate_fidelity", "0.999", "--measurement_fidelity", "0.999", "--idle_data_coherence_time_sec", "1e-1", "--idle_comm_coherence_time_sec", "1e-1", "--ft_prep_mode", "standard", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/correction_mode_compare"]
+    base_args = ["--config_file", "config/standard_configs/line_5_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "100", "--link_distance_km", "10.0", "--gate_fidelity", "0.9999", "--measurement_fidelity", "0.999", "--idle_data_coherence_time_sec", "1e-1", "--idle_comm_coherence_time_sec", "1e-1", "--ft_prep_mode", "none", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/correction_mode_compare"]
 
-    correction_modes = ["none", "cec", "qec", "qec+cec"]
-    for correction_mode in correction_modes:
-        args = ["--correction_mode", correction_mode]
-        tasks.append(command + base_args + args)
+    two_qubit_gate_fidelities = ["0.9999", "0.9995", "0.999", "0.995", "0.99"]
+    correction_modes = ["none"]
+    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
+        for correction_mode in correction_modes:
+            args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity, "--correction_mode", correction_mode]
+            tasks.append(command + base_args + args)
 
-    parallel = 4
+    parallel = 12
     ps = []
     while len(tasks) > 0 or len(ps) > 0:
         if len(ps) < parallel and len(tasks) > 0:

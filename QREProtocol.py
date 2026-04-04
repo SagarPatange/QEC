@@ -234,7 +234,6 @@ class QREProtocol(Protocol):
         qm = self.owner.timeline.quantum_manager
         now_ps = int(self.owner.timeline.now())
         coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in run_keys}
-
         qm.apply_idling_decoherence(keys=run_keys, now_ps=now_ps, coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
 
         if self.correction_mode in {"qec", "qec+cec"}:

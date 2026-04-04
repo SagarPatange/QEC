@@ -20,7 +20,9 @@ if SEQUENCE_ROOT not in sys.path:
     sys.path.insert(0, SEQUENCE_ROOT)
 
 import sequence.utils.log as log
-from sequence.constants import MILLISECOND, SECOND
+from sequence.constants import MILLISECOND, SECOND, TABLEAU_FORMALISM
+from sequence.kernel.quantum_manager import QuantumManager
+from sequence.entanglement_management.generation.generation_base import EntanglementGenerationA, EntanglementGenerationB
 
 from router_net_topo_2G import RouterNetTopo2G
 from RequestLogicalPairApp import RequestLogicalPairApp
@@ -77,6 +79,8 @@ def main() -> None:
     with open(config_file, "r", encoding="utf-8") as file:
         config = json.load(file)
 
+    config["formalism"] = TABLEAU_FORMALISM
+
     for node in config["nodes"]:
         if node.get("type") != "QuantumRouter":
             continue
@@ -127,6 +131,9 @@ def main() -> None:
     pauli_tag = "cfg" if args.idle_pauli_x is None else f"{args.idle_pauli_x}_{args.idle_pauli_y}_{args.idle_pauli_z}"
     correction_tag = args.correction_mode if args.correction_mode is not None else ("cec" if args.apply_classical_correction == 1 else "none")
 
+    QuantumManager.set_global_manager_formalism(TABLEAU_FORMALISM)
+    EntanglementGenerationA.set_global_type("barret_kok_tableau")
+    EntanglementGenerationB.set_global_type("barret_kok_tableau")
     network_topo = RouterNetTopo2G(temp_config.name)
     tl = network_topo.get_timeline()
 
