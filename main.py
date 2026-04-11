@@ -21,9 +21,6 @@ if SEQUENCE_ROOT not in sys.path:
 
 import sequence.utils.log as log
 from sequence.constants import MILLISECOND, SECOND, TABLEAU_FORMALISM
-from sequence.kernel.quantum_manager import QuantumManager
-from sequence.entanglement_management.generation.generation_base import EntanglementGenerationA, EntanglementGenerationB
-
 from router_net_topo_2G import RouterNetTopo2G
 from RequestLogicalPairApp import RequestLogicalPairApp
 
@@ -45,8 +42,7 @@ def main() -> None:
     parser.add_argument("--start_time_s", type=float, default=1.0)
     parser.add_argument("--run_duration_ms", type=float, default=1e5)
     parser.add_argument("--round_spacing_ms", type=float, default=1.0)
-    parser.add_argument("--apply_classical_correction", type=int, choices=[0, 1], default=1)
-    parser.add_argument("--correction_mode", type=str, choices=["none", "cec", "qec", "qec+cec"])
+    parser.add_argument("--correction_mode", type=str, choices=["none", "cec", "qec", "qec+cec"], default="cec")
     parser.add_argument("--target_fidelity", type=float, default=0.8)
     parser.add_argument("--num_logical_pairs", type=int, default=30)
     parser.add_argument("--link_distance_km", type=float)
@@ -105,9 +101,6 @@ def main() -> None:
         half_distance_m = float(args.link_distance_km) * 1000.0 / 2.0
         for qchannel in config["qchannels"]:
             qchannel["distance"] = half_distance_m
-        for cchannel in config["cchannels"]:
-            if "distance" in cchannel:
-                cchannel["distance"] = half_distance_m
 
     start_time_ps = int(args.start_time_s * SECOND)
     run_duration_ps = int(args.run_duration_ms * MILLISECOND)
@@ -129,11 +122,8 @@ def main() -> None:
     comm_t2_tag = "cfg" if args.idle_comm_coherence_time_sec is None else str(args.idle_comm_coherence_time_sec)
     ft_tag = "cfg" if args.ft_prep_mode is None else args.ft_prep_mode
     pauli_tag = "cfg" if args.idle_pauli_x is None else f"{args.idle_pauli_x}_{args.idle_pauli_y}_{args.idle_pauli_z}"
-    correction_tag = args.correction_mode if args.correction_mode is not None else ("cec" if args.apply_classical_correction == 1 else "none")
+    correction_tag = args.correction_mode
 
-    QuantumManager.set_global_manager_formalism(TABLEAU_FORMALISM)
-    EntanglementGenerationA.set_global_type("barret_kok_tableau")
-    EntanglementGenerationB.set_global_type("barret_kok_tableau")
     network_topo = RouterNetTopo2G(temp_config.name)
     tl = network_topo.get_timeline()
 
@@ -160,8 +150,7 @@ def main() -> None:
 
     for router in routers:
         router.round_spacing_ps = round_spacing_ps
-        router.apply_classical_correction = bool(args.apply_classical_correction)
-        router.correction_mode = args.correction_mode if args.correction_mode is not None else ("cec" if args.apply_classical_correction == 1 else "none")
+        router.correction_mode = args.correction_mode
         app = RequestLogicalPairApp(router, css_code=args.css_code, path_node_names=node_names)
         name_to_apps[router.name] = app
 
@@ -171,8 +160,7 @@ def main() -> None:
             start_t=start_time_ps,
             end_t=start_time_ps + run_duration_ps,
             fidelity=args.target_fidelity,
-            num_logical_pairs=args.num_logical_pairs,
-        )
+            num_logical_pairs=args.num_logical_pairs)
 
     tl.init()
     tl.run()

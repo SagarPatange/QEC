@@ -174,7 +174,7 @@ class TeleportedCNOTProtocol(Protocol):
                 self.owner.send_message(self.remote_node_name, start_msg)
 
                 process = Process(self, "alice_phase_a", [])
-                event = Event(self.owner.timeline.now() + 50, process)
+                event = Event(self.owner.timeline.now(), process)
                 self.owner.timeline.schedule(event)
                 self.current_phase = "WAITING_FOR_BOB"
                 log.logger.info(f"[{self.name}] handshake complete -> sent START, scheduled alice_phase_a")
@@ -188,7 +188,7 @@ class TeleportedCNOTProtocol(Protocol):
 
                 # Event-driven: schedule Phase A on the local timeline.
                 process = Process(self, "alice_phase_a", [])
-                event = Event(self.owner.timeline.now() + 50, process)
+                event = Event(self.owner.timeline.now(), process)
                 self.owner.timeline.schedule(event)
                 self.current_phase = "WAITING_FOR_BOB"
                 log.logger.info(f"[{self.name}] handshake complete -> sent START, scheduled alice_phase_a")
@@ -212,7 +212,7 @@ class TeleportedCNOTProtocol(Protocol):
             self.alice_measurement_results = list(msg.alice_measurement_results)
             log.logger.info(f"[{self.name}] got ALICE_MEASUREMENT bits={len(self.alice_measurement_results)}")
             process = Process(self, "bob_phase_b", [])
-            event = Event(self.owner.timeline.now() + 50, process)
+            event = Event(self.owner.timeline.now(), process)
             self.owner.timeline.schedule(event)
             return
 
@@ -224,7 +224,7 @@ class TeleportedCNOTProtocol(Protocol):
             self.bob_measurement_results = list(msg.bob_measurement_results)
             log.logger.info(f"[{self.name}] got BOB_MEASUREMENT bits={len(self.bob_measurement_results)}")
             process = Process(self, "alice_phase_c", [])
-            event = Event(self.owner.timeline.now() + 50, process)
+            event = Event(self.owner.timeline.now(), process)
             self.owner.timeline.schedule(event)
             return
 
@@ -239,7 +239,7 @@ class TeleportedCNOTProtocol(Protocol):
             log.logger.info(f"[{self.name}] TCNOT_COMPLETE received from {src}")
 
             process = Process(self.app, "on_teleported_cnot_complete", [src])
-            event = Event(self.owner.timeline.now() + 50, process)
+            event = Event(self.owner.timeline.now(), process)
             self.owner.timeline.schedule(event)
             return
 
@@ -281,6 +281,10 @@ class TeleportedCNOTProtocol(Protocol):
 
         rnd = self.owner.get_generator().random()
         results = qm.run_circuit(circ, keys, rnd)
+        finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(circ)
+        log.logger.info(f"[{self.name}] phase_a_timing now={int(self.owner.timeline.now())} duration_ps={qm.get_circuit_duration(circ)} finish_t={finish_t}")
+        for key in keys:
+            qm.last_idle_time_ps_by_key[key] = finish_t
 
         # Extract Z-basis bits in qubit order from run_circuit results
         self.alice_measurement_results = [results[key] for key in self.communication_qubit_keys]
@@ -290,8 +294,10 @@ class TeleportedCNOTProtocol(Protocol):
             TeleportedCNOTMsgType.ALICE_MEASUREMENT,
             protocol_name=self.name,
             alice_measurement_results=self.alice_measurement_results)
-        
-        self.owner.send_message(self.remote_node_name, msg)
+
+        process = Process(self.owner, "send_message", [self.remote_node_name, msg])
+        event = Event(finish_t, process, self.owner.timeline.schedule_counter)
+        self.owner.timeline.schedule(event)
         self.current_phase = 'WAITING_FOR_BOB'
 
     def bob_phase_b(self):
@@ -333,6 +339,11 @@ class TeleportedCNOTProtocol(Protocol):
 
         rnd = self.owner.get_generator().random()
         results = qm.run_circuit(circ, keys, rnd)
+        # Delay Bob's reply by the estimated local circuit processing time.
+        finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(circ)
+        # Mark the comm/data keys busy until the local circuit is considered complete.
+        for key in keys:
+            qm.last_idle_time_ps_by_key[key] = finish_t
 
         self.bob_measurement_results = [int(results[key]) for key in self.communication_qubit_keys]
         log.logger.info(f"[{self.name}] Phase B: single-circuit run, x_bits={self.bob_measurement_results}")
@@ -341,8 +352,10 @@ class TeleportedCNOTProtocol(Protocol):
             TeleportedCNOTMsgType.BOB_MEASUREMENT,
             protocol_name=self.name,
             bob_measurement_results=self.bob_measurement_results)
-        
-        self.owner.send_message(self.remote_node_name, msg)
+
+        process = Process(self.owner, "send_message", [self.remote_node_name, msg])
+        event = Event(finish_t, process, self.owner.timeline.schedule_counter)
+        self.owner.timeline.schedule(event)
         self.current_phase = "WAITING_FOR_ALICE"
 
     def alice_phase_c(self):
@@ -374,9 +387,16 @@ class TeleportedCNOTProtocol(Protocol):
 
         rnd = self.owner.get_generator().random()
         qm.run_circuit(correction_circuit, self.data_qubit_keys, rnd)
+        # Delay local completion by the estimated correction-circuit processing time.
+        finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(correction_circuit)
+        # Mark the data block busy until the local correction is considered complete.
+        for key in self.data_qubit_keys:
+            qm.last_idle_time_ps_by_key[key] = finish_t
 
         log.logger.info(f"[{self.name}] Phase C: single-circuit Z correction run")
-        self.protocol_complete()
+        process = Process(self, "protocol_complete", [])
+        event = Event(finish_t, process, self.owner.timeline.schedule_counter)
+        self.owner.timeline.schedule(event)
 
     def protocol_complete(self) -> None:
         """Mark protocol complete and notify local app and remote Bob.

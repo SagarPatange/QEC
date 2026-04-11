@@ -6,12 +6,11 @@ logical Bell-pair generation across a linear path.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import stim
 from QREProtocol import QREMessage, QREProtocol
 from css_codes import get_css_code
-from sequence.components.circuit import Circuit
 from sequence.kernel.event import Event
 from sequence.kernel.process import Process
 from sequence.utils import log
@@ -46,7 +45,6 @@ class RequestLogicalPairApp:
         self.node.request_logical_pair_app = self
 
         self.name = f"{self.node.name}.RequestLogicalPairApp"
-        self.css_code = css_code
         self.code = get_css_code(css_code)
         self.n = self.code.n
         self.required_end_to_end_logical_fidelity = float(required_end_to_end_logical_fidelity)
@@ -95,6 +93,7 @@ class RequestLogicalPairApp:
             "end_time": None,
             "completion_time": None,
         }
+
         self.run_stats: dict[int, dict[str, object]] = {}
         self.scheduled_run_starts: list[int] = []
         self.next_run_id = 1
@@ -106,13 +105,11 @@ class RequestLogicalPairApp:
         self.idle_pauli_weights: dict[str, float] = dict(getattr(node, "idle_pauli_weights", {"x": 0.05, "y": 0.05, "z": 0.90}))  # Biased idle Pauli weights.
         self.idle_data_coherence_time_sec = float(getattr(node, "idle_data_coherence_time_sec", 1e12))  # Data-qubit idle coherence.
         self.idle_comm_coherence_time_sec = float(getattr(node, "idle_comm_coherence_time_sec", 1e12))  # Comm-qubit idle coherence.
-        node_correction_mode = getattr(node, "correction_mode", None)
-        if node_correction_mode is None:
-            node_correction_mode = "cec" if bool(getattr(node, "apply_classical_correction", True)) else "none"
-        self.correction_mode = str(node_correction_mode)
+        
+        # Correction mode setting.
+        self.correction_mode = str(getattr(node, "correction_mode"))
         if self.correction_mode not in {"none", "cec", "qec", "qec+cec"}:
             raise RuntimeError(f"{self.name}: unknown correction_mode {self.correction_mode}")
-        self.apply_classical_correction = self.correction_mode in {"cec", "qec+cec"}
         
         # Baseline prep fidelity for logical encoding, derived from data memory quality or defaulting to 1.0 if not available.
         data_array_name = f"{self.node.name}.DataMemoryArray"
@@ -135,10 +132,13 @@ class RequestLogicalPairApp:
         resource_manager = self.node.resource_manager
         quantum_manager = self.node.timeline.quantum_manager
 
+        # Return communication memories to the resource pool for the next run window.
         for memories in self.current_run["comm_qubits"].values():
             for memory in memories:
+                quantum_manager.set_to_zero(memory.qstate_key)
                 resource_manager.update(None, memory, "RAW")
 
+        # Reset local data and ancilla state carried by this run.
         for memories in self.data_qubits.values():
             for memory in memories:
                 quantum_manager.set_to_zero(memory.qstate_key)
@@ -149,6 +149,8 @@ class RequestLogicalPairApp:
 
         self.data_qubits.clear()
         self.ancilla_qubits.clear()
+
+        # Reinitialize per-run bookkeeping to the idle baseline.
         self.current_run = {
             "run_id": 0,
             "status": "idle",
@@ -185,7 +187,7 @@ class RequestLogicalPairApp:
         if self.current_run["start_time"] == int(start_t) and self.current_run["status"] != "idle":
             return
 
-        # Set up live state for this run; previous run should have been reset by now.
+        # Initialize fresh per-run bookkeeping for the new scheduled execution window.
         self.current_run = {
             "run_id": self.next_run_id,
             "status": "active",
@@ -213,7 +215,7 @@ class RequestLogicalPairApp:
         active_neighbors = [neighbor for neighbor in (self._left_peer_name, self._right_peer_name) if neighbor is not None]
         for neighbor in active_neighbors:
             if neighbor not in self.data_qubits:
-                self._allocate_data_and_ancilla(neighbor)
+                self.allocate_data_and_ancilla(neighbor)
             if neighbor not in self.current_run["qre_protocols"]:
                 self.current_run["qre_protocols"][neighbor] = QREProtocol(owner=self.node, app=self, remote_node_name=neighbor)
 
@@ -230,7 +232,8 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        round_spacing_ps = int(getattr(self.node, "round_spacing_ps", int(1e9)))
+        round_spacing_ps = int(getattr(self.node, "round_spacing_ps", int(1e9)))  # Gap between successive logical-pair run windows.
+        
         log.logger.info(f"{self.name}: start responder={responder} first_window=({int(start_t)},{int(end_t)}) fidelity={fidelity:.4f} num_logical_pairs={num_logical_pairs} round_spacing_ps={round_spacing_ps}")
         if int(end_t) <= int(start_t):
             raise RuntimeError(f"{self.name}: end_t must be > start_t")
@@ -238,6 +241,8 @@ class RequestLogicalPairApp:
             raise RuntimeError(f"{self.name}: num_logical_pairs must be >= 1")
 
         run_duration_ps = int(end_t) - int(start_t)
+
+        # Schedule each logical-pair attempt as its own non-overlapping run window.
         for run_index in range(num_logical_pairs):
             run_start_t = int(start_t) + run_index * (run_duration_ps + round_spacing_ps)
             run_end_t = run_start_t + run_duration_ps
@@ -247,7 +252,7 @@ class RequestLogicalPairApp:
             event = Event(run_start_t, process, self.node.timeline.schedule_counter)
             self.node.timeline.schedule(event)
 
-            # Schedule reservations for this run. 
+            # Reserve the matching network resources for the same run window.
             self.node.reserve_net_resource(responder, run_start_t, run_end_t, self.n, fidelity)
 
     def received_message(self, src: str, msg: object) -> bool:
@@ -298,10 +303,12 @@ class RequestLogicalPairApp:
         Returns:
             float: Pair fidelity.
         """
+        # Initialize references to the left and right nodes' logical pair applications.
         left_app = self.node.timeline.get_entity_by_name(left_node).request_logical_pair_app
         right_app = self.node.timeline.get_entity_by_name(right_node).request_logical_pair_app
         qm = self.node.timeline.quantum_manager
 
+        # Helper function to build a temporary simulator view for a set of keys, merging tableau blocks if needed.
         def build_simulator_from_keys(keys: list[int]) -> tuple[stim.TableauSimulator, dict[int, int]]:
             """Build a temporary simulator view for keys without mutating manager state.
 
@@ -342,6 +349,7 @@ class RequestLogicalPairApp:
             key_to_local = {key: idx for idx, key in enumerate(merged_keys)}
             return simulator, key_to_local
 
+        # Helper function to evaluate fidelity from key sets and Pauli support strings.
         def fidelity_from_keys(left_keys: list[int], right_keys: list[int], px: str, py: str, pz: str) -> float:
             """Evaluate fidelity from key sets and Pauli support strings.
 
@@ -433,12 +441,13 @@ class RequestLogicalPairApp:
         else:
             raise ValueError(f"{self.name}: unknown pair_type {pair_type}")
 
+        # Logical pair fidelity is computed once per link or end-to-end, using the code's logical Pauli support strings to construct the observables.
         px = self.code.get_logical_x_string()
         pz = self.code.get_logical_z_string()
         py = "".join("Y" if x == "X" and z == "Z" else x if x == "X" else z for x, z in zip(px, pz))
         return float(fidelity_from_keys(left_keys, right_keys, px, py, pz))
 
-    def _allocate_data_and_ancilla(self, neighbor: str) -> None:
+    def allocate_data_and_ancilla(self, neighbor: str) -> None:
         """Allocate data and required ancilla qubits for one link from local arrays.
 
         Args:
@@ -447,9 +456,11 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        required_ancillas = self.code.get_ft_required_ancillas(self.ft_prep_mode)
+        qec_ancillas = 3 if self.correction_mode in {"qec", "qec+cec"} else 0
+        ft_ancillas = self.code.get_ft_required_ancillas(self.ft_prep_mode)
+        required_ancillas = max(qec_ancillas, ft_ancillas)  # Reserve enough ancillas for the larger of QEC or FT prep.
 
-        # Allocation of data and ancilla qubits
+        # Carve out the next logical data block from the node-local data memory array.
         data_array = self.node.components[f"{self.node.name}.DataMemoryArray"]
         data_offset = sum(len(block) for block in self.data_qubits.values())
         data_block = data_array.memories[data_offset:data_offset + self.n]
@@ -457,6 +468,7 @@ class RequestLogicalPairApp:
             raise RuntimeError(f"{self.name}: insufficient data memories for {neighbor} (need {self.n}, got {len(data_block)})")
         self.data_qubits[neighbor] = data_block
 
+        # Reserve the next ancilla slice for this neighbor's local FT/QEC work.
         ancilla_array = self.node.components[f"{self.node.name}.AncillaMemoryArray"]
         ancilla_offset = sum(len(block) for block in self.ancilla_qubits.values())
         ancilla_block = ancilla_array.memories[ancilla_offset:ancilla_offset + required_ancillas]
@@ -464,6 +476,7 @@ class RequestLogicalPairApp:
             raise RuntimeError(f"{self.name}: insufficient ancilla memories for {neighbor} (need {required_ancillas}, got {len(ancilla_block)})")
         self.ancilla_qubits[neighbor] = ancilla_block
 
+        # Communication memories are populated later as physical Bell pairs arrive.
         self.current_run["comm_qubits"][neighbor] = []
 
 # ---------- Physical bell pair generation phase ----------
@@ -506,11 +519,11 @@ class RequestLogicalPairApp:
         if len(self.current_run["comm_qubits"][neighbor]) != self.n:
             return
 
-        process = Process(self, "_finalize_physical_link_ready", [neighbor])
+        process = Process(self, "finalize_physical_link_ready", [neighbor])
         event = Event(self.node.timeline.now(), process, self.node.timeline.schedule_counter)
         self.node.timeline.schedule(event)
 
-    def _finalize_physical_link_ready(self, neighbor: str) -> None:
+    def finalize_physical_link_ready(self, neighbor: str) -> None:
         """Finalize one physical link after both endpoints have n ready memories.
 
         Args:
@@ -630,6 +643,7 @@ class RequestLogicalPairApp:
             raise RuntimeError(f"{self.name}: max_ft_prep_shots must be >= 1")
 
         qm = self.node.timeline.quantum_manager
+        total_prep_duration_ps = 0
 
         # Validate each local block, then encode/FT-prep block-by-block.
         for block_keys in data_blocks:
@@ -662,41 +676,28 @@ class RequestLogicalPairApp:
             if need > 0:
                 if len(self.ancilla_qubits) == 0:
                     raise RuntimeError(f"{self.name}: no ancilla qubits available for FT prep")
-                first_neighbor = next(iter(self.ancilla_qubits))
-                ancilla_memories = self.ancilla_qubits[first_neighbor]
+                ancilla_memories = self.ancilla_qubits[block_neighbor]
                 if len(ancilla_memories) < need:
                     raise RuntimeError(f"{self.name}: {ft_prep_mode} FT mode requires >={need} ancillas")
                 ancilla_keys = [ancilla_memories[i].qstate_key for i in range(need)]
 
-            # Merge data and ancillas into one tableau block before local-index addressing.
-            merge_keys = list(block_keys) + ancilla_keys
-            merge_circuit = Circuit(len(merge_keys))
-            qm.run_circuit(merge_circuit, merge_keys)
-            log.logger.debug(f"{self.name}: merged block keys={len(block_keys)} ancillas={len(ancilla_keys)} total={len(merge_keys)}")
-
-            state_obj = qm.states[block_keys[0]]
-            key_to_local = {key: idx for idx, key in enumerate(state_obj.keys)}
-            for key in merge_keys:
-                if key not in key_to_local:
-                    raise RuntimeError(f"{self.name}: key {key} not present in merged tableau state")
-
-            q = [key_to_local[key] for key in block_keys]
-            ancilla_locals = [key_to_local[key] for key in ancilla_keys]
-
-            accepted = self.code.run_encode_ft_prep(simulator=state_obj.state, data_locals=q, ancilla_locals=ancilla_locals, ft_prep_mode=ft_prep_mode, max_ft_prep_shots=max_ft_prep_shots, logical_state=logical_state)
+            accepted, prep_duration_ps = self.code.run_encode_ft_prep(qm=qm, data_keys=block_keys, ancilla_keys=ancilla_keys, ft_prep_mode=ft_prep_mode, max_ft_prep_shots=max_ft_prep_shots, meas_samp=self.node.get_generator().random(), logical_state=logical_state)
+            total_prep_duration_ps += prep_duration_ps
             log.logger.info(f"{self.name}: block encode accepted={accepted} ft_prep_mode={ft_prep_mode}")
             
             if not accepted:
                 raise RuntimeError(f"{self.name}: FT prep failed after {max_ft_prep_shots} shots")
 
             # Encoding consumed this block now; reset idle-time baseline for involved keys.
-            now_ps = int(self.node.timeline.now())
+            now_ps = int(self.node.timeline.now()) + prep_duration_ps
             for key in block_keys:
                 qm.last_idle_time_ps_by_key[key] = now_ps
             for key in ancilla_keys:
                 qm.last_idle_time_ps_by_key[key] = now_ps
 
-        # TCNOT starts per ready link after local encode/FT-prep finishes.
+        # Delay TCNOT launch by the total local FT-prep processing time.
+        tcnot_start_t = int(self.node.timeline.now()) + total_prep_duration_ps
+        log.logger.info(f"{self.name}: schedule_tcnot_start now={int(self.node.timeline.now())} prep_duration_ps={total_prep_duration_ps} tcnot_start_t={tcnot_start_t}")
         for ready_neighbor in list(self.current_run["link_ready"]):
             reservation_for_neighbor = None
             for res in self.memo_to_reservation.values():
@@ -708,7 +709,9 @@ class RequestLogicalPairApp:
             if reservation_for_neighbor is None:
                 raise RuntimeError(f"{self.name}: missing reservation for ready link {ready_neighbor}")
 
-            self.initialize_teleported_cnot(ready_neighbor, reservation_for_neighbor)
+            process = Process(self, "initialize_teleported_cnot", [ready_neighbor, reservation_for_neighbor])
+            event = Event(tcnot_start_t, process, self.node.timeline.schedule_counter)
+            self.node.timeline.schedule(event)
 
         log.logger.debug(f"{self.name}: encoded {len(data_blocks)} block(s) with ft_prep_mode={ft_prep_mode}")
 

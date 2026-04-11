@@ -52,11 +52,11 @@ class RouterNetTopo2G(RouterNetTopo):
                 # Check for 2nd generation BEFORE creating router
                 if node.get("generation") == 2:
                     # Create 2nd generation router directly
-                    memo_size = node.get(self.MEMO_ARRAY_SIZE, 7)
+                    memo_size = node.get("memo_size", 7)
                     data_memo_size = node.get("data_memo_size", 7)
                     ancilla_memo_size = node.get("ancilla_memo_size", 6)
-                    gate_fid = node.get(Topo.GATE_FIDELITY, 1.0)
-                    meas_fid = node.get(Topo.MEASUREMENT_FIDELITY, 1.0)
+                    gate_fid = node.get("gate_fidelity", 1.0)
+                    meas_fid = node.get("measurement_fidelity", 1.0)
                     two_qubit_gate_fid = node.get("two_qubit_gate_fidelity", 1.0)
                     idle_data_coherence_time_sec = float(node.get("idle_data_coherence_time_sec", 1e12))
                     idle_comm_coherence_time_sec = float(node.get("idle_comm_coherence_time_sec", 1e12))
@@ -76,18 +76,16 @@ class RouterNetTopo2G(RouterNetTopo):
                     )
                     # FT prep config (from config generator, consumed by RequestLogicalPairApp)
                     node_obj.ft_prep_mode = node.get("ft_prep_mode", "none")
-                    node_obj.ft_max_retries = node.get("ft_max_retries", 1)
-                    node_obj.ft_postselect = node.get("ft_postselect", False)
+                    node_obj.ft_max_retries = node.get("ft_max_retries", 3)
                     node_obj.idle_decoherence_enabled = node.get("idle_decoherence_enabled", True)
-                    node_obj.idle_decoherence_debug = node.get("idle_decoherence_debug", False)
                     node_obj.idle_data_coherence_time_sec = idle_data_coherence_time_sec
                     node_obj.idle_comm_coherence_time_sec = idle_comm_coherence_time_sec
                     node_obj.idle_pauli_weights = idle_pauli_weights
                 else:
                     # Create standard QuantumRouter
-                    memo_size = node.get(self.MEMO_ARRAY_SIZE, 50)
-                    gate_fid = node.get(Topo.GATE_FIDELITY, 1.0)
-                    meas_fid = node.get(Topo.MEASUREMENT_FIDELITY, 1.0)
+                    memo_size = node.get("memo_size", 50)
+                    gate_fid = node.get("gate_fidelity", 1.0)
+                    meas_fid = node.get("measurement_fidelity", 1.0)
                     
                     node_obj = QuantumRouter(
                         name=name,
@@ -96,8 +94,7 @@ class RouterNetTopo2G(RouterNetTopo):
                         seed=seed,
                         component_templates=template,
                         gate_fid=gate_fid,
-                        meas_fid=meas_fid
-                    )
+                        meas_fid=meas_fid)
             else:
                 raise ValueError("Unknown type of node '{}'".format(node_type))
 
@@ -160,6 +157,7 @@ class RouterNetTopo2G(RouterNetTopo):
         def classical_delay(distance: float, hop_count: int) -> float:
             """Model the classical delay as a function of distance and hop count
             """
+            # Assume speed of light in fiber and 20 microseconds processing time per hop
             return distance / SPEED_OF_LIGHT + hop_count * 20 * MICROSECOND 
 
         for cc in self.cchannels:
@@ -167,5 +165,4 @@ class RouterNetTopo2G(RouterNetTopo):
             dst = cc.receiver
             length, hop_count, path = all_paths[(src, dst)]
             cc.delay = classical_delay(length, hop_count)
-            cc.distance = length   # not important
-            # print(f'{path}: {cc.delay/1e6}us')
+            cc.distance = length 

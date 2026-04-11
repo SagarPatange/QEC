@@ -11,10 +11,11 @@ from typing import Any, Optional, Union
 
 import numpy as np
 
+from sequence.components.circuit import Circuit as SequenceCircuit
 from sequence.kernel.quantum_manager import QuantumManager
 from sequence.constants import TABLEAU_FORMALISM
 
-from QEC.quantum_state_tableau import TableauState
+from sequence.kernel.quantum_state import TableauState
 
 import stim
 from stim import Tableau, TableauSimulator, Circuit
@@ -31,6 +32,11 @@ class QuantumManagerTableau(QuantumManager):
         Current implementation supports state creation and assignment. Circuit
         execution is intentionally left as a staged TODO.
     """
+
+    ONE_QUBIT_GATE_TIME_PS = 20_000
+    TWO_QUBIT_GATE_TIME_PS = 250_000
+    MEASUREMENT_TIME_PS = 500_000
+    RESET_TIME_PS = 1_200_000
 
     def __init__(self, truncation: int = 1, seed: Optional[int] = None, **kwargs):
         """Initialize a tableau manager instance.
@@ -87,7 +93,7 @@ class QuantumManagerTableau(QuantumManager):
         key = self._least_available
         self._least_available += 1
         if state is None:
-            self.states[key] = TableauState.from_seed(key=key, seed=self._next_seed())
+            self.states[key] = TableauState.zero_state(key=key, seed=self._next_seed())
         elif isinstance(state, TableauState):
             new_state = state.copy()
             new_state.keys = [key]
@@ -194,6 +200,58 @@ class QuantumManagerTableau(QuantumManager):
                 self.states[key] = remaining_state
 
         return results
+
+    def get_circuit_duration(self, circuit: SequenceCircuit) -> int:
+        """Return the estimated execution time of a circuit in picoseconds.
+
+        Args:
+            circuit: SeQUeNCe circuit to estimate.
+
+        Returns:
+            int: Estimated circuit duration in picoseconds.
+        """
+        one_qubit_gates = {
+            "h",
+            "x",
+            "y",
+            "z",
+            "s",
+            "sdg",
+            "t",
+            "phase",
+            "root_iZ",
+            "minus_root_iZ",
+            "root_iY",
+            "minus_root_iY",
+        }
+        two_qubit_gates = {"cx", "cz", "swap"}
+
+        duration_ps = 0
+        for gate_name, _, _ in circuit.gates:
+            if gate_name in one_qubit_gates:
+                duration_ps += self.ONE_QUBIT_GATE_TIME_PS
+            elif gate_name in two_qubit_gates:
+                duration_ps += self.TWO_QUBIT_GATE_TIME_PS
+            elif gate_name == "ccx":
+                duration_ps += 2 * self.TWO_QUBIT_GATE_TIME_PS
+            else:
+                raise RuntimeError(f"Unsupported gate for duration estimate: {gate_name}")
+
+        duration_ps += len(circuit.measured_qubits) * self.MEASUREMENT_TIME_PS
+        return int(duration_ps)
+
+    def get_reset_duration(self, num_qubits: int) -> int:
+        """Return the estimated reset time in picoseconds.
+
+        Args:
+            num_qubits: Number of qubits being reset.
+
+        Returns:
+            int: Estimated reset duration in picoseconds.
+        """
+        if num_qubits < 0:
+            raise RuntimeError(f"num_qubits must be >= 0, got {num_qubits}")
+        return int(num_qubits * self.RESET_TIME_PS)
     
     def set_to_zero(self, key: int) -> None:
         """Reset a single qubit to the |0⟩ computational basis state.

@@ -9,9 +9,13 @@ This module keeps a compact API centered on:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 import stim
+from sequence.components.circuit import Circuit
+
+if TYPE_CHECKING:
+    from quantum_manager_tableau import QuantumManagerTableau
 
 
 def get_css_code(name: str) -> CSSCode:
@@ -60,6 +64,56 @@ def _logical_zero_prep_circuit(x_stabilizers: List[str], z_stabilizers: List[str
 
     tableau = stim.Tableau.from_stabilizers([stim.PauliString(g) for g in generators],allow_redundant=False)
     return tableau.to_circuit()
+
+
+def _stim_to_sequence_circuit(stim_circuit: stim.Circuit, num_qubits: int) -> Circuit:
+    """Convert a supported Stim Clifford circuit into a SeQUeNCe circuit.
+
+    Args:
+        stim_circuit: Source Stim circuit.
+        num_qubits: Number of qubits in the circuit.
+
+    Returns:
+        Circuit: Equivalent SeQUeNCe circuit.
+    """
+    converted = Circuit(num_qubits)
+    single_gate_map = {"H": "h", "X": "x", "Y": "y", "Z": "z", "S": "s", "S_DAG": "sdg"}
+    two_qubit_gate_map = {"CX": "cx", "CZ": "cz", "SWAP": "swap"}
+
+    for instruction in stim_circuit:
+        name = instruction.name
+        targets_raw = instruction.targets_copy()
+        gate_args = instruction.gate_args_copy()
+
+        if gate_args:
+            raise RuntimeError(f"Unsupported gate args in encode circuit: {name}")
+        if any(not getattr(target, "is_qubit_target", False) for target in targets_raw):
+            raise RuntimeError(f"Unsupported non-qubit target in encode circuit: {name}")
+
+        targets = [int(target.value) for target in targets_raw]
+
+        if name in single_gate_map:
+            gate_fn = getattr(converted, single_gate_map[name])
+            for target in targets:
+                gate_fn(target)
+            continue
+
+        if name in two_qubit_gate_map:
+            if len(targets) % 2 != 0:
+                raise RuntimeError(f"Stim instruction {name} requires an even number of targets")
+            gate_fn = getattr(converted, two_qubit_gate_map[name])
+            for i in range(0, len(targets), 2):
+                gate_fn(targets[i], targets[i + 1])
+            continue
+
+        if name == "M":
+            for target in targets:
+                converted.measure(target)
+            continue
+
+        raise RuntimeError(f"Unsupported Stim instruction in encode circuit: {name}")
+
+    return converted
 
 
 class CSSCode(ABC):
@@ -206,64 +260,91 @@ class CSSCode(ABC):
             return supports
         raise RuntimeError(f"{self.name}: unknown ft_prep_mode {mode}")
 
-    def run_encode_ft_prep(self, simulator: stim.TableauSimulator, data_locals: List[int], ancilla_locals: List[int], ft_prep_mode: str, max_ft_prep_shots: int, logical_state: str = "0") -> bool:
-        """Run encode plus optional FT prep shots on a tableau simulator.
+    def run_encode_ft_prep(self, qm: "QuantumManagerTableau", data_keys: List[int], ancilla_keys: List[int], ft_prep_mode: str, max_ft_prep_shots: int, meas_samp: float, logical_state: str = "0") -> tuple[bool, int]:
+        """Run encode plus optional FT prep shots on a tableau-backed block.
 
         Args:
-            simulator: Stim tableau simulator.
-            data_locals: Local tableau indices for data qubits.
-            ancilla_locals: Local tableau indices for ancillas.
+            qm: Tableau quantum manager.
+            data_keys: Quantum-manager keys for the data qubits.
+            ancilla_keys: Quantum-manager keys for ancilla qubits.
             ft_prep_mode: FT prep mode.
             max_ft_prep_shots: Maximum retry shots.
+            meas_samp: Measurement sample used by the circuit runner.
             logical_state: Target encoded logical state ("0" or "+").
 
         Returns:
-            bool: True if accepted, False otherwise.
+            tuple[bool, int]: Acceptance flag and estimated duration in picoseconds.
         """
+
         if max_ft_prep_shots < 1:
             raise RuntimeError(f"{self.name}: max_ft_prep_shots must be >= 1")
         if logical_state not in {"0", "+"}:
             raise RuntimeError(f"{self.name}: unknown logical_state {logical_state}")
-
         supports = self.get_ft_check_supports(ft_prep_mode)
-        if len(ancilla_locals) < len(supports):
+        if len(ancilla_keys) < len(supports):
             raise RuntimeError(f"{self.name}: insufficient ancillas for {ft_prep_mode} FT prep")
 
-        enc = stim.Circuit()
-        self.encode(enc)
+        # Build the encoded logical-state preparation circuit once and reuse it across retry shots.
+        encode_stim_circuit = stim.Circuit()
+        self.encode(encode_stim_circuit)
+        encode_circuit = _stim_to_sequence_circuit(encode_stim_circuit, self.n)
 
-        for _ in range(max_ft_prep_shots):
-            # Fresh shot.
-            for q_local in data_locals:
-                simulator.reset_z(q_local)
-            for a_local in ancilla_locals[:len(supports)]:
-                simulator.reset_z(a_local)
+        # A logical |+> target is obtained by applying transversal H after acceptance.
+        plus_circuit = Circuit(self.n)
+        for i in range(self.n):
+            plus_circuit.h(i)
 
-            simulator.do(enc)
+        total_duration_ps = 0
+        for shot_idx in range(max_ft_prep_shots):
+            # Step each retry through a different [0, 1) measurement sample derived from the base sample.
+            shot_meas_samp = (float(meas_samp) + (shot_idx + 1) / 10.0) % 1.0
+
+            # Reinitialize the data block and the ancillas used by this FT-prep shot.
+            for data_key in data_keys:
+                qm.set_to_zero(data_key)
+            for ancilla_key in ancilla_keys[:len(supports)]:
+                qm.set_to_zero(ancilla_key)
+            total_duration_ps += qm.get_reset_duration(len(data_keys) + len(ancilla_keys[:len(supports)]))
+
+            qm.run_circuit(encode_circuit, data_keys, shot_meas_samp)
+            total_duration_ps += qm.get_circuit_duration(encode_circuit)
 
             if ft_prep_mode == "none":
                 if logical_state == "+":
-                    for q_local in data_locals:
-                        simulator.h(q_local)
-                return True
+                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0)
+                    total_duration_ps += qm.get_circuit_duration(plus_circuit)
+                return True, total_duration_ps
 
             accepted = True
+            # Run the selected FT parity checks and reject the shot on the first nonzero ancilla result.
             for check_idx, support in enumerate(supports):
-                anc_local = ancilla_locals[check_idx]
-                simulator.reset_z(anc_local)
-                for i in support:
-                    simulator.cx(data_locals[i], anc_local)
-                if int(simulator.measure(anc_local)) != 0:
+                ancilla_key = ancilla_keys[check_idx]
+                qm.set_to_zero(ancilla_key)
+                total_duration_ps += qm.get_reset_duration(1)
+
+                # Append one ancilla to the local register and measure the requested data-qubit support onto it.
+                check_keys = list(data_keys) + [ancilla_key]
+                check_circuit = Circuit(len(check_keys))
+                ancilla_local = len(data_keys)
+                for data_local in support:
+                    check_circuit.cx(data_local, ancilla_local)
+                check_circuit.measure(ancilla_local)
+
+                # Offset each FT check within the shot so repeated ancilla measurements do not reuse the same sample.
+                check_meas_samp = (shot_meas_samp + (check_idx + 1) / 100.0) % 1.0
+                results = qm.run_circuit(check_circuit, check_keys, check_meas_samp)
+                total_duration_ps += qm.get_circuit_duration(check_circuit)
+                if int(results[ancilla_key]) != 0:
                     accepted = False
                     break
 
             if accepted:
                 if logical_state == "+":
-                    for q_local in data_locals:
-                        simulator.h(q_local)
-                return True
+                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0)
+                    total_duration_ps += qm.get_circuit_duration(plus_circuit)
+                return True, total_duration_ps
 
-        return False
+        return False, total_duration_ps
 
 
     def get_decode_table(self) -> Dict[tuple[int, int, int], int | None]:
@@ -290,13 +371,14 @@ class CSSCode(ABC):
         """
         raise NotImplementedError(f"{self.name}: middle-node BSM decoding is not implemented")
 
-    def run_qec_round(self, simulator: stim.TableauSimulator, data_locals: List[int], ancilla_locals: List[int], apply_physical_correction: bool = True) -> dict[str, object]:
+    def run_qec_round(self, qm: "QuantumManagerTableau", data_keys: List[int], ancilla_keys: List[int], meas_samp: float, apply_physical_correction: bool = True) -> dict[str, object]:
         """Run one local QEC round on an encoded data block.
 
         Args:
-            simulator: Tableau simulator containing the encoded data block.
-            data_locals: Local simulator indices for the data qubits.
-            ancilla_locals: Local simulator indices for ancilla qubits.
+            qm: Tableau quantum manager.
+            data_keys: Quantum-manager keys for the data qubits.
+            ancilla_keys: Quantum-manager keys for ancilla qubits.
+            meas_samp: Measurement sample used by the circuit runner.
             apply_physical_correction: Whether to apply the decoded correction to the data block.
 
         Returns:
@@ -496,26 +578,32 @@ class Steane713(CSSCode):
             "b_z_corrected": b_z_corrected,
         }
 
-    def run_qec_round(self, simulator: stim.TableauSimulator, data_locals: List[int], ancilla_locals: List[int], apply_physical_correction: bool = True) -> dict[str, object]:
+    def run_qec_round(self, qm: "QuantumManagerTableau", data_keys: List[int], ancilla_keys: List[int], meas_samp: float, apply_physical_correction: bool = True) -> dict[str, object]:
         """Run one FT Steane QEC round using the 3-ancilla syndrome schedule.
 
         Args:
-            simulator: Tableau simulator containing the encoded data block.
-            data_locals: Local simulator indices for the seven data qubits.
-            ancilla_locals: Local simulator indices for ancilla qubits.
+            qm: Tableau quantum manager.
+            data_keys: Quantum-manager keys for the seven data qubits.
+            ancilla_keys: Quantum-manager keys for ancilla qubits.
+            meas_samp: Measurement sample used by the circuit runner.
             apply_physical_correction: Whether to apply decoded corrections to the data qubits.
 
         Returns:
             dict[str, object]: X/Z syndromes, decoded flip locations, and applied corrections.
         """
-        if len(data_locals) != self.n:
-            raise RuntimeError(f"{self.name}: expected {self.n} data qubits, got {len(data_locals)}")
-        if len(ancilla_locals) < 3:
+        if len(data_keys) != self.n:
+            raise RuntimeError(f"{self.name}: expected {self.n} data qubits, got {len(data_keys)}")
+        if len(ancilla_keys) < 3:
             raise RuntimeError(f"{self.name}: FT qec round requires at least 3 ancillas")
 
-        green = ancilla_locals[0]
-        blue = ancilla_locals[1]
-        red = ancilla_locals[2]
+        # Steane QEC uses three ancillas, one per syndrome row.
+        used_ancilla_keys = list(ancilla_keys[:3])
+        merge_keys = list(data_keys) + used_ancilla_keys
+        round1_meas_samp = float(meas_samp)
+        round2a_meas_samp = (float(meas_samp) * 0.5 + 0.25) % 1.0
+        round2b_meas_samp = (float(meas_samp) * 0.5 + 0.5) % 1.0
+        correction_meas_samp = (float(meas_samp) * 0.5 + 0.75) % 1.0
+        total_duration_ps = 0
 
         def decode_color_syndrome(green_bit: int, red_bit: int, blue_bit: int) -> int | None:
             """Decode one 3-bit color syndrome into a physical qubit index.
@@ -533,77 +621,83 @@ class Steane713(CSSCode):
                 return None
             return value - 1
 
-        def extract_syndromes_ft_round1() -> tuple[int, int, int]:
-            """Extract X-green, Z-blue, and Z-red syndrome bits.
+        merge_circuit = Circuit(len(merge_keys))
+        qm.run_circuit(merge_circuit, merge_keys, round1_meas_samp)
 
-            Args:
-                None.
+        green = self.n
+        blue = self.n + 1
+        red = self.n + 2
 
-            Returns:
-                tuple[int, int, int]: ``(x_green, z_blue, z_red)``.
-            """
-            simulator.reset_z(green)
-            simulator.reset_z(blue)
-            simulator.reset_z(red)
+        # Round 1 extracts the first half of the Steane syndrome into the three ancillas.
+        round1_circuit = Circuit(len(merge_keys))
+        round1_circuit.h(green)
+        round1_circuit.cx(6, blue)
+        round1_circuit.cx(6, red)
+        round1_circuit.cx(green, 6)
+        round1_circuit.cx(4, blue)
+        round1_circuit.cx(green, 4)
+        round1_circuit.cx(2, red)
+        round1_circuit.cx(green, 2)
+        round1_circuit.cx(5, blue)
+        round1_circuit.cx(5, red)
+        round1_circuit.cx(green, 0)
+        round1_circuit.cx(3, blue)
+        round1_circuit.cx(1, red)
+        round1_circuit.h(green)
+        round1_circuit.measure(green)
+        round1_circuit.measure(blue)
+        round1_circuit.measure(red)
+        round1_results = qm.run_circuit(round1_circuit, merge_keys, round1_meas_samp)
+        total_duration_ps += qm.get_circuit_duration(round1_circuit)
 
-            simulator.h(green)
-            simulator.cx(data_locals[6], blue)
-            simulator.cx(data_locals[6], red)
-            simulator.cx(green, data_locals[6])
-            simulator.cx(data_locals[4], blue)
-            simulator.cx(green, data_locals[4])
-            simulator.cx(data_locals[2], red)
-            simulator.cx(green, data_locals[2])
-            simulator.cx(data_locals[5], blue)
-            simulator.cx(data_locals[5], red)
-            simulator.cx(green, data_locals[0])
-            simulator.cx(data_locals[3], blue)
-            simulator.cx(data_locals[1], red)
-            simulator.h(green)
+        x_green = int(round1_results[used_ancilla_keys[0]])
+        z_blue = int(round1_results[used_ancilla_keys[1]])
+        z_red = int(round1_results[used_ancilla_keys[2]])
 
-            x_green = int(simulator.measure(green))
-            z_blue = int(simulator.measure(blue))
-            z_red = int(simulator.measure(red))
-            return x_green, z_blue, z_red
+        # Reset ancillas before extracting the complementary syndrome.
+        for ancilla_key in used_ancilla_keys:
+            qm.set_to_zero(ancilla_key)
+        total_duration_ps += qm.get_reset_duration(len(used_ancilla_keys))
 
-        def extract_syndromes_ft_round2() -> tuple[int, int, int]:
-            """Extract Z-green, X-blue, and X-red syndrome bits.
+        merge_circuit = Circuit(len(merge_keys))
+        qm.run_circuit(merge_circuit, merge_keys, round2a_meas_samp)
 
-            Args:
-                None.
+        # Round 2a rotates the ancillas into the basis needed for the complementary syndrome extraction.
+        round2a_circuit = Circuit(len(merge_keys))
+        round2a_circuit.h(blue)
+        round2a_circuit.h(red)
+        round2a_circuit.cx(blue, 6)
+        round2a_circuit.cx(red, 6)
+        round2a_circuit.cx(6, green)
+        round2a_circuit.cx(blue, 4)
+        round2a_circuit.cx(4, green)
+        round2a_circuit.cx(red, 2)
+        round2a_circuit.cx(2, green)
+        round2a_circuit.cx(blue, 5)
+        round2a_circuit.cx(red, 5)
+        round2a_circuit.cx(0, green)
+        round2a_circuit.cx(blue, 3)
+        round2a_circuit.cx(red, 1)
+        round2a_circuit.measure(green)
+        round2a_results = qm.run_circuit(round2a_circuit, merge_keys, round2a_meas_samp)
+        total_duration_ps += qm.get_circuit_duration(round2a_circuit)
 
-            Returns:
-                tuple[int, int, int]: ``(z_green, x_blue, x_red)``.
-            """
-            simulator.reset_z(green)
-            simulator.reset_z(blue)
-            simulator.reset_z(red)
+        z_green = int(round2a_results[used_ancilla_keys[0]])
 
-            simulator.h(blue)
-            simulator.h(red)
-            simulator.cx(blue, data_locals[6])
-            simulator.cx(red, data_locals[6])
-            simulator.cx(data_locals[6], green)
-            simulator.cx(blue, data_locals[4])
-            simulator.cx(data_locals[4], green)
-            simulator.cx(red, data_locals[2])
-            simulator.cx(data_locals[2], green)
-            simulator.cx(blue, data_locals[5])
-            simulator.cx(red, data_locals[5])
-            simulator.cx(data_locals[0], green)
-            simulator.cx(blue, data_locals[3])
-            simulator.cx(red, data_locals[1])
+        # Round 2b finishes the complementary syndrome readout on the remaining ancillas.
+        round2b_keys = list(data_keys) + used_ancilla_keys[1:]
+        round2b_circuit = Circuit(len(round2b_keys))
+        round2b_circuit.h(self.n)
+        round2b_circuit.h(self.n + 1)
+        round2b_circuit.measure(self.n)
+        round2b_circuit.measure(self.n + 1)
+        round2b_results = qm.run_circuit(round2b_circuit, round2b_keys, round2b_meas_samp)
+        total_duration_ps += qm.get_circuit_duration(round2b_circuit)
 
-            z_green = int(simulator.measure(green))
-            simulator.h(blue)
-            simulator.h(red)
-            x_blue = int(simulator.measure(blue))
-            x_red = int(simulator.measure(red))
-            return z_green, x_blue, x_red
+        x_blue = int(round2b_results[used_ancilla_keys[1]])
+        x_red = int(round2b_results[used_ancilla_keys[2]])
 
-        x_green, z_blue, z_red = extract_syndromes_ft_round1()
-        z_green, x_blue, x_red = extract_syndromes_ft_round2()
-
+        # Map the measured color checks into logical X- and Z-syndrome bit order.
         x_syndrome = [z_green, z_red, z_blue]
         z_syndrome = [x_green, x_red, x_blue]
 
@@ -612,13 +706,18 @@ class Steane713(CSSCode):
 
         applied_x = None
         applied_z = None
+        # Apply the decoded Pauli correction directly on the data block when requested.
         if apply_physical_correction:
+            correction_circuit = Circuit(len(data_keys))
             if x_error_qubit is not None:
-                simulator.x(data_locals[x_error_qubit])
+                correction_circuit.x(int(x_error_qubit))
                 applied_x = int(x_error_qubit)
             if z_error_qubit is not None:
-                simulator.z(data_locals[z_error_qubit])
+                correction_circuit.z(int(z_error_qubit))
                 applied_z = int(z_error_qubit)
+            if applied_x is not None or applied_z is not None:
+                qm.run_circuit(correction_circuit, data_keys, correction_meas_samp)
+                total_duration_ps += qm.get_circuit_duration(correction_circuit)
 
         return {
             "x_syndrome": x_syndrome,
@@ -627,6 +726,7 @@ class Steane713(CSSCode):
             "z_error_qubit": z_error_qubit,
             "applied_x": applied_x,
             "applied_z": applied_z,
+            "duration_ps": total_duration_ps,
         }
 
 

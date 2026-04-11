@@ -1,14 +1,9 @@
-"""Tableau state definition for QEC experiments.
-
-This class follows the same style as SeQUeNCe's core state classes:
-store `state` and `keys` with minimal extra machinery.
-"""
+"""Local copy of the tableau-backed quantum state."""
 
 from __future__ import annotations
 
 from sequence.kernel.quantum_state import State
-
-from stim import TableauSimulator, Tableau
+from stim import Tableau, TableauSimulator
 
 
 class TableauState(State):
@@ -31,6 +26,36 @@ class TableauState(State):
             self.state = state
         else:
             raise TypeError(f"state must be stim.TableauSimulator or None, got {type(state)}")
+
+    @classmethod
+    def zero_state(cls, key: int, seed: int = None) -> "TableauState":
+        """Create a single-qubit tableau state initialized to |0>.
+
+        Args:
+            key: Quantum-manager key for the qubit.
+            seed: Seed used by stim.TableauSimulator.
+
+        Returns:
+            TableauState: New state bound to `[key]`.
+        """
+        simulator = TableauSimulator(seed=seed)
+        simulator.set_num_qubits(1)
+        return cls(state=simulator, keys=[key], seed=seed)
+
+    def copy(self) -> "TableauState":
+        """Create a copy of this tableau state.
+
+        Args:
+            None.
+
+        Returns:
+            TableauState: Copied state with copied keys and simulator.
+        """
+        if self.state is None:
+            simulator = TableauSimulator(seed=self.seed)
+        else:
+            simulator = self.state.copy(seed=self.seed)
+        return TableauState(state=simulator, keys=self.keys.copy(), seed=self.seed)
         
     def set_seed(self, seed: int):
         """Set the random seed for this state, affecting future simulator operations."""

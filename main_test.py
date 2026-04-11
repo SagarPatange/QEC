@@ -42,214 +42,6 @@ def run_five_node_pair(label: str, css_code: str, non_ft_config: str, ft_config:
         )
 
 
-def two_node_physical_pair_with_app_ketstate(verbose=False):
-    """Test with stabilizer formalism using RequestAppThroughput."""
-    print('\nPhysical Entangled Pairs using KetState with RequestApp:')
-    
-
-    
-    log_filename = 'log/one_memory_ketstate_app'
-    network_config = 'config/line_2_physical_ketState.json'
-    
-    network_topo = RouterNetTopo(network_config)
-    tl = network_topo.get_timeline()
-    
-    log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level('DEBUG')
-    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 
-               'generation', 'purification', 'swapping', 'bsm', 'barret_kok']
-    for module in modules:
-        log.track_module(module)
-    
-    # Set up applications
-    apps = []
-    src_node_name = 'router_0'
-    dest_node_name = 'router_1'
-    src_app = None
-    src_node = None
-    
-    for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
-        app = RequestAppThroughput(router)
-        apps.append(app)
-        if router.name == src_node_name:
-            src_app = app
-            src_node = router
-    
-    # Configure request
-    start_time = 1e12  # 1 second
-    end_time = 10e12   # 10 seconds
-    memory_size = 1   # Number of memories
-    target_fidelity = 0.8
-    
-    # Set maximum entanglements
-    src_app.max_entanglements = 1
-    
-    # Start the request through the app
-    src_app.start(dest_node_name, start_time, end_time, memory_size, target_fidelity)
-    
-    tl.init()
-    tl.run()
-    
-    # Display results from RequestApp
-    print("\n--- Results from RequestApp ---")
-    
-    # Time to service
-    time_to_service = src_app.get_time_to_service()
-    if time_to_service:
-        print(f"Time to service samples (first 10): {[f'{t:.3f}' for t in time_to_service[:10]]}")
-        print(f"Average time to service: {np.mean(time_to_service):.3f} µs")
-    
-    # memory_manager = src_node.resource_manager.memory_manager
-    # for info in memory_manager:
-    #     if info.state == "ENTANGLED":
-    #         src_app.get_memory(info)
-    
-    # Fidelity
-    fidelities = []
-    for res_fidelities in src_app.entanglement_fidelities.values():
-        fidelities.extend(res_fidelities)
-
-    if fidelities:
-        print(f"Fidelity samples (first 10): {[f'{f:.5f}' for f in fidelities[:10]]}")
-        print(f"Average fidelity: {np.mean(fidelities):.5f}")
-    
-    # Throughput
-    throughput_dict = src_app.get_request_to_throughput()
-    if 'summary' in throughput_dict:
-        print(f"Overall throughput: {throughput_dict['summary']:.2f} entanglements/second")
-        print(f"Total entanglements: {throughput_dict['total_entanglements']}")
-        print(f"Duration: {throughput_dict['duration_seconds']:.2f} seconds")
-    
-    # Statistics
-    stats = src_app.get_statistics()
-    print(f"\n--- Statistics ---")
-    print(f"Completed: {stats['completed']}")
-    print(f"Timeout triggered: {stats['timeout_triggered']}")
-    print(f"Total entanglements generated: {stats['total_entanglements']}")
-
-
-def two_node_physical_pair_with_app_stabilizer():
-    """Test with stabilizer formalism using RequestAppThroughput."""
-    print('\nPhysical Entangled Pairs using Stabilizers with RequestApp:')
-    
-    QuantumManager.set_global_manager_formalism(STABILIZER_FORMALISM)
-    EntanglementGenerationA.set_global_type('barret_kok_stabilizer')
-    EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
-    
-    log_filename = 'log/one_memory_stabilizer_app'
-    network_config = 'config/line_2_physical_stabilizer.json'
-    
-    network_topo = RouterNetTopo(network_config)
-    tl = network_topo.get_timeline()
-    
-    log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level('INFO')
-    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 
-               'generation', 'purification', 'swapping', 'bsm', "barret_kok"]
-    for module in modules:
-        log.track_module(module)
-    
-    # Set up applications
-    src_node_name = 'router_0'
-    dest_node_name = 'router_1'
-    src_app = None
-    dest_app = None
-    src_node = None
-
-    for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
-        app = RequestAppThroughput(router)
-        if router.name == src_node_name:
-            src_app = app
-            src_node = router
-        elif router.name == dest_node_name:
-            dest_app = app
-    
-    # Configure and start
-    start_time = 1e12
-    end_time = 10e12
-    memory_size = 6
-    target_fidelity = 0.8
-    src_app.max_entanglements = 1
-    
-    src_app.start(dest_node_name, start_time, end_time, memory_size, target_fidelity)
-    
-    tl.init()
-    tl.run()
-
-    # For stabilizer formalism, entanglements are counted on the responder (dest_app)
-    stats = dest_app.get_statistics()
-    
-    print("\n" + "="*70)
-    print(f"Total entanglements: {stats['total_entanglements']}")
-    
-    # Print fidelities for each pair
-    if stats.get('all_fidelities'):
-        print(f"\nFidelities:")
-        for i, fid in enumerate(stats['all_fidelities']):
-            print(f"  Pair {i}: {fid:.6f}")
-        
-        # Print average
-        if stats.get('overall_fidelity_stats'):
-            print(f"  Average: {stats['overall_fidelity_stats']['avg']:.6f}")
-    
-    # Print throughput
-    if stats.get('throughput') and 'summary' in stats['throughput']:
-        print(f"\nThroughput: {stats['throughput']['summary']:.2f} entanglements/s")
-    
-    print("="*70 + "\n")
-    
-
-def five_node_line_topology_smoke_test(config_file='config/line_5.json'):
-    """Smoke test the new 5-router line topology with one physical request.
-
-    This verifies that the topology loads, router_0 can issue a request to
-    router_4 through the multihop chain, and the simulation completes.
-    """
-    print('\n5-node linear topology smoke test:')
-
-    log_filename = 'log/line_5_smoke_test'
-    network_topo = RouterNetTopo(config_file)
-    tl = network_topo.get_timeline()
-
-    log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level('INFO')
-
-    src_node_name = 'router_0'
-    dest_node_name = 'router_4'
-    src_app = None
-
-    routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
-    for router in routers:
-        app = RequestAppThroughput(router)
-        if router.name == src_node_name:
-            src_app = app
-
-    if src_app is None:
-        raise RuntimeError(f"Failed to find source app for {src_node_name}")
-
-    start_time = 1e12
-    end_time = 5e12
-    memory_size = 1
-    target_fidelity = 0.01
-    src_app.max_entanglements = 1
-    src_app.start(dest_node_name, start_time, end_time, memory_size, target_fidelity)
-
-    tl.init()
-    tl.run()
-
-    stats = src_app.get_statistics()
-    print(f"Routers: {len(routers)}")
-    print(f"Completed: {stats['completed']}")
-    print(f"Timeout triggered: {stats['timeout_triggered']}")
-    print(f"Total entanglements generated: {stats['total_entanglements']}")
-    if src_app.entanglement_fidelities:
-        fidelities = []
-        for values in src_app.entanglement_fidelities.values():
-            fidelities.extend(values)
-        if fidelities:
-            print(f"Average fidelity: {np.mean(fidelities):.6f}")
-
-
 def five_node_physical_pair_with_app_ketstate(config_file='config/line_5.json'):
     """True no-QEC 5-node baseline using raw physical entanglement."""
     print('\n5-node physical pairs using KetState with RequestApp:')
@@ -285,56 +77,6 @@ def five_node_physical_pair_with_app_ketstate(config_file='config/line_5.json'):
     tl.run()
 
     stats = src_app.get_statistics()
-    print(f"Completed: {stats['completed']}")
-    print(f"Timeout triggered: {stats['timeout_triggered']}")
-    print(f"Total entanglements generated: {stats['total_entanglements']}")
-    if stats.get('overall_fidelity_stats'):
-        print(f"Average fidelity: {stats['overall_fidelity_stats']['avg']:.6f}")
-    return stats
-
-
-def five_node_physical_pair_with_app_stabilizer(config_file='config/line_5_physical_stabilizer.json'):
-    """True no-QEC 5-node baseline under stabilizer formalism."""
-    print('\n5-node physical pairs using Stabilizers with RequestApp:')
-
-    QuantumManager.set_global_manager_formalism(STABILIZER_FORMALISM)
-    EntanglementGenerationA.set_global_type('barret_kok_stabilizer')
-    EntanglementGenerationB.set_global_type('barret_kok_stabilizer')
-
-    log_filename = 'log/line_5_physical_stabilizer_app'
-    network_topo = RouterNetTopo(config_file)
-    tl = network_topo.get_timeline()
-
-    log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level('INFO')
-
-    src_node_name = 'router_0'
-    dest_node_name = 'router_4'
-    src_app = None
-    dest_app = None
-
-    for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
-        app = RequestAppThroughput(router)
-        if router.name == src_node_name:
-            src_app = app
-        elif router.name == dest_node_name:
-            dest_app = app
-
-    if src_app is None or dest_app is None:
-        raise RuntimeError("Failed to find source/destination apps for 5-node stabilizer baseline")
-
-    start_time = 1e12
-    end_time = 10e12
-    memory_size = 1
-    target_fidelity = 0.01
-    src_app.max_entanglements = 1
-    dest_app.max_entanglements = 1
-    src_app.start(dest_node_name, start_time, end_time, memory_size, target_fidelity)
-
-    tl.init()
-    tl.run()
-
-    stats = dest_app.get_statistics()
     print(f"Completed: {stats['completed']}")
     print(f"Timeout triggered: {stats['timeout_triggered']}")
     print(f"Total entanglements generated: {stats['total_entanglements']}")
@@ -434,9 +176,6 @@ def three_node_logical_pair_with_app(verbose=False, config_file='config/line_3_2
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
-    idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
-    idle_data_coherence_time_sec = 1e30
-    idle_comm_coherence_time_sec = 1e30
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -492,8 +231,7 @@ def three_node_logical_pair_with_app(verbose=False, config_file='config/line_3_2
             responder=node_names[i + 1],
             start_time=start_time,
             end_time=end_time,
-            target_fidelity=target_fidelity
-        )
+            target_fidelity=target_fidelity)
 
     # ========================================================================
     # Run simulation
@@ -535,9 +273,6 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
-    idle_pauli_weights = {"x": 0.0, "y": 0.0, "z": 0.0}
-    idle_data_coherence_time_sec = 1e12
-    idle_comm_coherence_time_sec = 1e12
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -592,8 +327,7 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
             responder=node_names[i + 1],
             start_time=start_time,
             end_time=end_time,
-            target_fidelity=target_fidelity
-        )
+            target_fidelity=target_fidelity)
 
     # ========================================================================
     # Run simulation
@@ -637,22 +371,13 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
             initial_values.append(initial_phys)
         if not np.isnan(logical):
             logical_values.append(logical)
-        print(
-            f"{left} <-> {right} | "
-            f"initial_phys={initial_phys:.6f} | "
-            f"prep={left_app.prep_fidelity:.6f} | "
-            f"ft={left_app.ft_prep_mode} | "
-            f"logical={logical:.6f}"
-        )
+        print(f"{left} <-> {right} | initial_phys={initial_phys:.6f} | prep={left_app.prep_fidelity:.6f} | ft={left_app.ft_prep_mode} | logical={logical:.6f}")
 
     final_app = apps[node_names[0]]
     if final_app.current_run["final_end_to_end_fidelity"] is not None:
         metrics["end_to_end_logical"] = float(final_app.current_run["final_end_to_end_fidelity"])
         print("\nEnd-to-End")
-        print(
-            f"{node_names[0]} <-> {node_names[-1]} | "
-            f"end_to_end_logical={final_app.current_run['final_end_to_end_fidelity']:.6f}"
-        )
+        print(f"{node_names[0]} <-> {node_names[-1]} | end_to_end_logical={final_app.current_run['final_end_to_end_fidelity']:.6f}")
 
     if initial_values:
         metrics["avg_initial_phys"] = float(np.mean(initial_values))
@@ -685,8 +410,8 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
     idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
-    idle_data_coherence_time_sec = 1e-2
-    idle_comm_coherence_time_sec = 1e-2
+    idle_data_coherence_time_sec = 1e-1
+    idle_comm_coherence_time_sec = 1e-1
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
