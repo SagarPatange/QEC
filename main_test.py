@@ -1,3 +1,5 @@
+print('importing ...')
+import time
 import numpy as np
 from pathlib import Path
 from sequence.topology.router_net_topo import RouterNetTopo
@@ -10,7 +12,6 @@ from sequence.entanglement_management.generation import EntanglementGenerationA,
 from request_app import RequestAppThroughput
 from RequestLogicalPairApp import RequestLogicalPairApp
 from sequence.topology.node import QuantumRouter2ndGeneration
-
 
 def resolve_config_path(config_file: str) -> str:
     config_path = Path(config_file)
@@ -420,9 +421,11 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     correction_mode = "cec"
 
     log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level('INFO')
+    # log.set_logger_level('INFO')
+    log.set_logger_level('WARNING')
     # modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm', 'barret_kok', 'RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
-    modules = ['barret_kok']
+    # modules = ['barret_kok']
+    modules = ['RequestLogicalPairApp']
 
     for module in modules:
         log.track_module(module)
@@ -441,7 +444,7 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     start_time_ps = int(1e12)
     window_duration_ps = int(1e9)
     default_target_fidelity = 0.8
-    num_logical_pairs = 5
+    num_logical_pairs = 1
 
     apps = {}
     for node_name in node_names:
@@ -601,8 +604,14 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
 
 if __name__ == "__main__":
 
+    start = time.time()
+    print("main start ...")
     # ----- N-node runs -----
     n_node_logical_pair_with_app(verbose=False)
 
     # Add more N-node runs as needed:
     # n_node_logical_pair_with_app(verbose=True)
+
+
+    end = time.time()
+    print(f"\nMain execution time: {end - start:.2f} seconds")

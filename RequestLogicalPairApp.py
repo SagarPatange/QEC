@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import stim
+import time
 from QREProtocol import QREMessage, QREProtocol
 from css_codes import get_css_code
 from sequence.kernel.event import Event
@@ -119,6 +120,8 @@ class RequestLogicalPairApp:
         else:
             self.prep_fidelity = 1.0
 
+        self.time_begin_of_run = 0
+
     def reset_run(self) -> None:
         """Reset all live state for the completed run.
 
@@ -128,6 +131,7 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
+        self.time_begin_of_run = time.time()
         log.logger.info(f"{self.name}: reset_run_execute run_id={self.current_run['run_id']} start={self.current_run['start_time']} end={self.current_run['end_time']} now={int(self.node.timeline.now())} data_neighbors={list(self.data_qubits.keys())} comm_neighbors={list(self.current_run['comm_qubits'].keys())}")
         resource_manager = self.node.resource_manager
         quantum_manager = self.node.timeline.quantum_manager
@@ -183,9 +187,12 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
+        self.time_begin_of_run = time.time()
+        log.logger.warning(f'{self.name} begin run, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+
         # Prevents overlapping runs   
         if self.current_run["start_time"] == int(start_t) and self.current_run["status"] != "idle":
-            return
+            return # NOTE: delete the "begin_run" event scheduled in get_other_physical_reservation()?
 
         # Initialize fresh per-run bookkeeping for the new scheduled execution window.
         self.current_run = {
@@ -554,6 +561,8 @@ class RequestLogicalPairApp:
         else:
             data_blocks = [[m.qstate_key for m in self.data_qubits[self._left_peer_name]], [m.qstate_key for m in self.data_qubits[self._right_peer_name]]]
 
+        log.logger.warning(f'{self.name}: physical link ready, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+
         # Encode only after both adjacent links are finalized as ready.
         log.logger.info(f"{self.name}: triggering encode path_role={self._path_role} expected_ready={sorted(expected_ready)}")
         self.encode_data_qubits(data_blocks=data_blocks, ft_prep_mode=self.ft_prep_mode, max_ft_prep_shots=8)
@@ -714,6 +723,7 @@ class RequestLogicalPairApp:
             self.node.timeline.schedule(event)
 
         log.logger.debug(f"{self.name}: encoded {len(data_blocks)} block(s) with ft_prep_mode={ft_prep_mode}")
+        log.logger.warning(f'{self.name}: encode data qubits done, runtime = {time.time() - self.time_begin_of_run:.2f}s')
 
 # ---------- Teleported CNOT phase: reservation and memory callbacks for physical Bell pair generation ----------
     def initialize_teleported_cnot(self, neighbor: str, reservation: "Reservation") -> None:
@@ -763,6 +773,8 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
+        log.logger.warning(f'{self.name} TCNOT complete, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+        
         # Support both callback shapes: reservation object or direct neighbor string.
         if isinstance(reservation_or_neighbor, str):
             neighbor = reservation_or_neighbor
@@ -852,6 +864,8 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
+        log.logger.warning(f'{self.name} logical pair complete, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+
         log.logger.info(f"{self.name}: logical_pair_complete neighbor={neighbor} result_keys={list(result.keys()) if result else []}")
         # Cache per-link QRE output if provided.
         if result is not None:
@@ -915,3 +929,5 @@ class RequestLogicalPairApp:
             log.logger.info(f"{self.name}: logical pair complete with end-to-end fidelity {final_fidelity:.4f} (target={self.required_end_to_end_logical_fidelity:.4f})")
         else:
             log.logger.warning(f"{self.name}: logical pair fidelity below target (final={final_fidelity:.4f}, target={self.required_end_to_end_logical_fidelity:.4f})")
+
+        log.logger.warning(f'{self.name} logical pair complete, runtime = {time.time() - self.time_begin_of_run:.2f}s')
