@@ -1,0 +1,108 @@
+{
+    "templates": {
+        "qec": {
+            "memory": {
+                "fidelity": 1.0,
+                "efficiency": 0.9
+            }
+        }
+    },
+    "nodes": [
+        {
+            "name": "router_0",
+            "type": "QuantumRouter",
+            "seed": 0,
+            "memo_size": 7,
+            "template": "qec",
+            "generation": 2,
+            "ft_prep_mode": "minimal",
+            "ft_max_retries": 3,
+            "data_memo_size": 7,
+            "ancilla_memo_size": 4,
+            "idle_data_coherence_time_sec": 3000000000000.0,
+            "idle_comm_coherence_time_sec": 3000000000000.0,
+            "idle_pauli_weights": {
+                "x": 0.05,
+                "y": 0.05,
+                "z": 0.9
+            }
+        },
+        {
+            "name": "router_1",
+            "type": "QuantumRouter",
+            "seed": 1,
+            "memo_size": 7,
+            "template": "qec",
+            "generation": 2,
+            "ft_prep_mode": "minimal",
+            "ft_max_retries": 3,
+            "data_memo_size": 7,
+            "ancilla_memo_size": 4,
+            "idle_data_coherence_time_sec": 3000000000000.0,
+            "idle_comm_coherence_time_sec": 3000000000000.0,
+            "idle_pauli_weights": {
+                "x": 0.05,
+                "y": 0.05,
+                "z": 0.9
+            }
+        },
+        {
+            "name": "BSM_0_1",
+            "type": "BSMNode",
+            "seed": 0,
+            "template": "qec"
+        }
+    ],
+    "qchannels": [
+        {
+            "source": "router_0",
+            "destination": "BSM_0_1",
+            "distance": 5000.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_1",
+            "destination": "BSM_0_1",
+            "distance": 5000.0,
+            "attenuation": 0.0002
+        }
+    ],
+    "cchannels": [
+        {
+            "source": "BSM_0_1",
+            "destination": "router_0",
+            "distance": 5000.0,
+            "delay": -1
+        },
+        {
+            "source": "router_0",
+            "destination": "BSM_0_1",
+            "distance": 5000.0,
+            "delay": -1
+        },
+        {
+            "source": "BSM_0_1",
+            "destination": "router_1",
+            "distance": 5000.0,
+            "delay": -1
+        },
+        {
+            "source": "router_1",
+            "destination": "BSM_0_1",
+            "distance": 5000.0,
+            "delay": -1
+        },
+        {
+            "source": "router_0",
+            "destination": "router_1",
+            "delay": -1
+        },
+        {
+            "source": "router_1",
+            "destination": "router_0",
+            "delay": -1
+        }
+    ],
+    "stop_time": 10000000000000,
+    "formalism": "tableau"
+}

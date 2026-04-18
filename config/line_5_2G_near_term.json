@@ -1,0 +1,408 @@
+{
+    "templates": {
+        "qec": {
+            "memory": {
+                "fidelity": 1.0,
+                "efficiency": 0.9
+            },
+
+            "SingleAtomBSM": {
+                "detectors": [
+                    {
+                        "efficiency": 0.95
+                    },
+                    {
+                        "efficiency": 0.95
+                    }
+                ]
+        }
+            
+        }
+    },
+    "nodes": [
+        {
+            "name": "router_0",
+            "type": "QuantumRouter",
+            "seed": 0,
+            "memo_size": 7,
+            "template": "qec",
+            "generation": 2,
+            "ft_prep_mode": "minimal",
+            "ft_max_retries": 10,
+            "ft_postselect": true,
+            "data_memo_size": 7,
+            "ancilla_memo_size": 4,
+            "gate_fidelity": 1.0,
+            "two_qubit_gate_fidelity": 1.0,
+            "idle_data_coherence_time_sec": 1000000000000.0,
+            "idle_comm_coherence_time_sec": 1000000000000.0,
+            "idle_pauli_weights": {
+                "x": 0.05,
+                "y": 0.05,
+                "z": 0.9
+            }
+        },
+        {
+            "name": "router_1",
+            "type": "QuantumRouter",
+            "seed": 1,
+            "memo_size": 14,
+            "template": "qec",
+            "generation": 2,
+            "ft_prep_mode": "minimal",
+            "ft_max_retries": 10,
+            "ft_postselect": true,
+            "data_memo_size": 14,
+            "ancilla_memo_size": 8,
+            "gate_fidelity": 1.0,
+            "two_qubit_gate_fidelity": 1.0,
+            "idle_data_coherence_time_sec": 1000000000000.0,
+            "idle_comm_coherence_time_sec": 1000000000000.0,
+            "idle_pauli_weights": {
+                "x": 0.05,
+                "y": 0.05,
+                "z": 0.9
+            }
+        },
+        {
+            "name": "router_2",
+            "type": "QuantumRouter",
+            "seed": 2,
+            "memo_size": 14,
+            "template": "qec",
+            "generation": 2,
+            "ft_prep_mode": "minimal",
+            "ft_max_retries": 10,
+            "ft_postselect": true,
+            "data_memo_size": 14,
+            "ancilla_memo_size": 8,
+            "gate_fidelity": 1.0,
+            "two_qubit_gate_fidelity": 1.0,
+            "idle_data_coherence_time_sec": 1000000000000.0,
+            "idle_comm_coherence_time_sec": 1000000000000.0,
+            "idle_pauli_weights": {
+                "x": 0.05,
+                "y": 0.05,
+                "z": 0.9
+            }
+        },
+        {
+            "name": "router_3",
+            "type": "QuantumRouter",
+            "seed": 3,
+            "memo_size": 14,
+            "template": "qec",
+            "generation": 2,
+            "ft_prep_mode": "minimal",
+            "ft_max_retries": 10,
+            "ft_postselect": true,
+            "data_memo_size": 14,
+            "ancilla_memo_size": 8,
+            "gate_fidelity": 1.0,
+            "two_qubit_gate_fidelity": 1.0,
+            "idle_data_coherence_time_sec": 1000000000000.0,
+            "idle_comm_coherence_time_sec": 1000000000000.0,
+            "idle_pauli_weights": {
+                "x": 0.05,
+                "y": 0.05,
+                "z": 0.9
+            }
+        },
+        {
+            "name": "router_4",
+            "type": "QuantumRouter",
+            "seed": 4,
+            "memo_size": 7,
+            "template": "qec",
+            "generation": 2,
+            "ft_prep_mode": "minimal",
+            "ft_max_retries": 10,
+            "ft_postselect": true,
+            "data_memo_size": 7,
+            "ancilla_memo_size": 4,
+            "gate_fidelity": 1.0,
+            "two_qubit_gate_fidelity": 1.0,
+            "idle_data_coherence_time_sec": 1000000000000.0,
+            "idle_comm_coherence_time_sec": 1000000000000.0,
+            "idle_pauli_weights": {
+                "x": 0.05,
+                "y": 0.05,
+                "z": 0.9
+            }
+        },
+        {
+            "name": "BSM_0_1",
+            "type": "BSMNode",
+            "seed": 0,
+            "template": "qec"
+        },
+        {
+            "name": "BSM_1_2",
+            "type": "BSMNode",
+            "seed": 1,
+            "template": "qec"
+        },
+        {
+            "name": "BSM_2_3",
+            "type": "BSMNode",
+            "seed": 2,
+            "template": "qec"
+        },
+        {
+            "name": "BSM_3_4",
+            "type": "BSMNode",
+            "seed": 3,
+            "template": "qec"
+        }
+    ],
+    "qchannels": [
+        {
+            "source": "router_0",
+            "destination": "BSM_0_1",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_1",
+            "destination": "BSM_0_1",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_1",
+            "destination": "BSM_1_2",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_2",
+            "destination": "BSM_1_2",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_2",
+            "destination": "BSM_2_3",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_3",
+            "destination": "BSM_2_3",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_3",
+            "destination": "BSM_3_4",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        },
+        {
+            "source": "router_4",
+            "destination": "BSM_3_4",
+            "distance": 500.0,
+            "attenuation": 0.0002
+        }
+    ],
+    "cchannels": [
+        {
+            "source": "BSM_0_1",
+            "destination": "router_0",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_0",
+            "destination": "BSM_0_1",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "BSM_0_1",
+            "destination": "router_1",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_1",
+            "destination": "BSM_0_1",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "BSM_1_2",
+            "destination": "router_1",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_1",
+            "destination": "BSM_1_2",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "BSM_1_2",
+            "destination": "router_2",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_2",
+            "destination": "BSM_1_2",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "BSM_2_3",
+            "destination": "router_2",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_2",
+            "destination": "BSM_2_3",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "BSM_2_3",
+            "destination": "router_3",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_3",
+            "destination": "BSM_2_3",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "BSM_3_4",
+            "destination": "router_3",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_3",
+            "destination": "BSM_3_4",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "BSM_3_4",
+            "destination": "router_4",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_4",
+            "destination": "BSM_3_4",
+            "distance": 500.0,
+            "delay": -1
+        },
+        {
+            "source": "router_0",
+            "destination": "router_1",
+            "delay": -1
+        },
+        {
+            "source": "router_0",
+            "destination": "router_2",
+            "delay": -1
+        },
+        {
+            "source": "router_0",
+            "destination": "router_3",
+            "delay": -1
+        },
+        {
+            "source": "router_0",
+            "destination": "router_4",
+            "delay": -1
+        },
+        {
+            "source": "router_1",
+            "destination": "router_0",
+            "delay": -1
+        },
+        {
+            "source": "router_1",
+            "destination": "router_2",
+            "delay": -1
+        },
+        {
+            "source": "router_1",
+            "destination": "router_3",
+            "delay": -1
+        },
+        {
+            "source": "router_1",
+            "destination": "router_4",
+            "delay": -1
+        },
+        {
+            "source": "router_2",
+            "destination": "router_0",
+            "delay": -1
+        },
+        {
+            "source": "router_2",
+            "destination": "router_1",
+            "delay": -1
+        },
+        {
+            "source": "router_2",
+            "destination": "router_3",
+            "delay": -1
+        },
+        {
+            "source": "router_2",
+            "destination": "router_4",
+            "delay": -1
+        },
+        {
+            "source": "router_3",
+            "destination": "router_0",
+            "delay": -1
+        },
+        {
+            "source": "router_3",
+            "destination": "router_1",
+            "delay": -1
+        },
+        {
+            "source": "router_3",
+            "destination": "router_2",
+            "delay": -1
+        },
+        {
+            "source": "router_3",
+            "destination": "router_4",
+            "delay": -1
+        },
+        {
+            "source": "router_4",
+            "destination": "router_0",
+            "delay": -1
+        },
+        {
+            "source": "router_4",
+            "destination": "router_1",
+            "delay": -1
+        },
+        {
+            "source": "router_4",
+            "destination": "router_2",
+            "delay": -1
+        },
+        {
+            "source": "router_4",
+            "destination": "router_3",
+            "delay": -1
+        }
+    ],
+    "stop_time": 10000000000000,
+    "formalism": "tableau"
+}
