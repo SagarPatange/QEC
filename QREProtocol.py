@@ -97,7 +97,8 @@ class QREProtocol(Protocol):
 
         # Idle-noise parameters derived from the app.
         self.idle_pauli_weights: dict[str, float] = dict(self.app.idle_pauli_weights)
-        self.idle_data_coherence_time_sec = float(self.app.idle_data_coherence_time_sec)
+        self.idle_t1_sec = float(self.app.idle_t1_sec)
+        self.idle_t2_sec = float(self.app.idle_t2_sec)
         self.correction_mode = str(self.app.correction_mode)
 
         # Frame contributions for local and final Pauli-frame corrections.
@@ -232,10 +233,8 @@ class QREProtocol(Protocol):
             raise RuntimeError(f"{self.name}: expected {self.n} keys per side, got " f"left={len(self.left_data_keys)}, right={len(self.right_data_keys)}")
 
         qm = self.owner.timeline.quantum_manager
-        coherence_time_by_key = {key: self.idle_data_coherence_time_sec for key in run_keys}
-        
         # Apply accumulated idle noise before the local swap circuit.
-        qm.apply_idling_decoherence(keys=run_keys, now_ps=int(self.owner.timeline.now()), coherence_time_sec_by_key=coherence_time_by_key, pauli_weights=self.idle_pauli_weights)
+        qm.apply_idling_decoherence(keys=run_keys, now_ps=int(self.owner.timeline.now()), t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
 
         pre_swap_duration_ps = 0
         if self.correction_mode in {"qec", "qec+cec"}: # TODO: Make these constants?
@@ -366,8 +365,7 @@ class QREProtocol(Protocol):
         if (final_bx or final_bz) and self.local_data_keys:
             # Apply time-based idle decoherence before endpoint frame-correction circuit.
             now_ps = int(self.owner.timeline.now())
-            coherence_time_sec_by_key = {key: self.idle_data_coherence_time_sec for key in self.local_data_keys}
-            self.owner.timeline.quantum_manager.apply_idling_decoherence(keys=self.local_data_keys, now_ps=now_ps, coherence_time_sec_by_key=coherence_time_sec_by_key, pauli_weights=self.idle_pauli_weights)
+            self.owner.timeline.quantum_manager.apply_idling_decoherence(keys=self.local_data_keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
             correction_circuit = Circuit(len(self.local_data_keys))
             for i in range(len(self.local_data_keys)):
                 if final_bx:

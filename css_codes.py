@@ -66,56 +66,6 @@ def _logical_zero_prep_circuit(x_stabilizers: List[str], z_stabilizers: List[str
     return tableau.to_circuit()
 
 
-def _stim_to_sequence_circuit(stim_circuit: stim.Circuit, num_qubits: int) -> Circuit:
-    """Convert a supported Stim Clifford circuit into a SeQUeNCe circuit.
-
-    Args:
-        stim_circuit: Source Stim circuit.
-        num_qubits: Number of qubits in the circuit.
-
-    Returns:
-        Circuit: Equivalent SeQUeNCe circuit.
-    """
-    converted = Circuit(num_qubits)
-    single_gate_map = {"H": "h", "X": "x", "Y": "y", "Z": "z", "S": "s", "S_DAG": "sdg"}
-    two_qubit_gate_map = {"CX": "cx", "CZ": "cz", "SWAP": "swap"}
-
-    for instruction in stim_circuit:
-        name = instruction.name
-        targets_raw = instruction.targets_copy()
-        gate_args = instruction.gate_args_copy()
-
-        if gate_args:
-            raise RuntimeError(f"Unsupported gate args in encode circuit: {name}")
-        if any(not getattr(target, "is_qubit_target", False) for target in targets_raw):
-            raise RuntimeError(f"Unsupported non-qubit target in encode circuit: {name}")
-
-        targets = [int(target.value) for target in targets_raw]
-
-        if name in single_gate_map:
-            gate_fn = getattr(converted, single_gate_map[name])
-            for target in targets:
-                gate_fn(target)
-            continue
-
-        if name in two_qubit_gate_map:
-            if len(targets) % 2 != 0:
-                raise RuntimeError(f"Stim instruction {name} requires an even number of targets")
-            gate_fn = getattr(converted, two_qubit_gate_map[name])
-            for i in range(0, len(targets), 2):
-                gate_fn(targets[i], targets[i + 1])
-            continue
-
-        if name == "M":
-            for target in targets:
-                converted.measure(target)
-            continue
-
-        raise RuntimeError(f"Unsupported Stim instruction in encode circuit: {name}")
-
-    return converted
-
-
 class CSSCode(ABC):
     """Base class for CSS quantum error-correcting codes.
 
@@ -285,9 +235,8 @@ class CSSCode(ABC):
             raise RuntimeError(f"{self.name}: insufficient ancillas for {ft_prep_mode} FT prep")
 
         # Build the encoded logical-state preparation circuit once and reuse it across retry shots.
-        encode_stim_circuit = stim.Circuit()
-        self.encode(encode_stim_circuit)
-        encode_circuit = _stim_to_sequence_circuit(encode_stim_circuit, self.n)
+        encode_circuit = stim.Circuit()
+        self.encode(encode_circuit)
 
         # A logical |+> target is obtained by applying transversal H after acceptance.
         plus_circuit = Circuit(self.n)

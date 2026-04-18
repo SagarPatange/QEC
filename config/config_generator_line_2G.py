@@ -32,7 +32,7 @@ from sequence.topology.router_net_topo import RouterNetTopo
 
 
 #=========================== NEW FUNCTION ============================
-def generate_2g_nodes(router_names, memo_size, data_memo_size, ancilla_memo_size, template=None, gate_fidelity=None, two_qubit_gate_fidelity=None, ft_prep_mode="none", ft_max_retries=3, idle_data_coherence_time_sec=1e12, idle_comm_coherence_time_sec=1e12, idle_pauli_weights=None):
+def generate_2g_nodes(router_names, memo_size, data_memo_size, ancilla_memo_size, template=None, gate_fidelity=None, two_qubit_gate_fidelity=None, ft_prep_mode="none", ft_max_retries=3, idle_t1_sec=1e12, idle_t2_sec=1e12, idle_pauli_weights=None):
     """Generate node configs for 2nd generation quantum routers."""
     # Start with standard nodes
     nodes = generate_nodes(router_names, memo_size, template)
@@ -57,8 +57,8 @@ def generate_2g_nodes(router_names, memo_size, data_memo_size, ancilla_memo_size
             node["gate_fidelity"] = gate_fidelity
         if two_qubit_gate_fidelity is not None:
             node["two_qubit_gate_fidelity"] = two_qubit_gate_fidelity
-        node["idle_data_coherence_time_sec"] = float(idle_data_coherence_time_sec)
-        node["idle_comm_coherence_time_sec"] = float(idle_comm_coherence_time_sec)
+        node["idle_t1_sec"] = float(idle_t1_sec)
+        node["idle_t2_sec"] = float(idle_t2_sec)
         if idle_pauli_weights is None:
             node["idle_pauli_weights"] = {"x": 0.05, "y": 0.05, "z": 0.90}
         else:
@@ -82,8 +82,8 @@ parser.add_argument('--two_qubit_gate_fid', type=float, default=None, help='Two-
 parser.add_argument('--css_code', type=str, default='[[7,1,3]]', help='CSS code name, e.g. "[[7,1,3]]" or "[[9,1,3]]". Auto-sets data_size.')
 parser.add_argument('--ft_prep_mode', type=str, default='none', choices=['none', 'minimal', 'strong'], help='Fault-tolerant prep mode for logical-state preparation')
 parser.add_argument('--ft_max_retries', type=int, default=3, help='Max retries for FT prep attempts per logical block')
-parser.add_argument('--idle_data_t2_sec', type=float, default=3e12, help='Data-qubit idling coherence time in seconds')
-parser.add_argument('--idle_comm_t2_sec', type=float, default=3e12, help='Communication-qubit idling coherence time in seconds')
+parser.add_argument('--idle_t1_sec', type=float, default=3e12, help='Shared idling T1 time in seconds')
+parser.add_argument('--idle_t2_sec', type=float, default=3e12, help='Shared idling T2 time in seconds')
 parser.add_argument('--idle_pauli_x', type=float, default=0.05, help='Idle Pauli X weight')
 parser.add_argument('--idle_pauli_y', type=float, default=0.05, help='Idle Pauli Y weight')
 parser.add_argument('--idle_pauli_z', type=float, default=0.90, help='Idle Pauli Z weight')
@@ -129,7 +129,7 @@ if args.gen2:  # Check for 2nd generation flag (NEW)
     nodes = generate_2g_nodes(router_names, args.memo_size, args.data_size, args.ancilla_size,
                               template, args.gate_fid, args.two_qubit_gate_fid,
                               args.ft_prep_mode, args.ft_max_retries,
-                              args.idle_data_t2_sec, args.idle_comm_t2_sec, idle_pauli_weights)
+                              args.idle_t1_sec, args.idle_t2_sec, idle_pauli_weights)
 else:
     nodes = generate_nodes(router_names, args.memo_size, template)
 #================================================================

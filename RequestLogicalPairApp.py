@@ -103,8 +103,8 @@ class RequestLogicalPairApp:
 
         # Idle-decoherence settings consumed by TCNOT/QRE phase operations.
         self.idle_pauli_weights: dict[str, float] = dict(getattr(node, "idle_pauli_weights", {"x": 0.05, "y": 0.05, "z": 0.90}))  # Biased idle Pauli weights.
-        self.idle_data_coherence_time_sec = float(getattr(node, "idle_data_coherence_time_sec", 1e12))  # Data-qubit idle coherence.
-        self.idle_comm_coherence_time_sec = float(getattr(node, "idle_comm_coherence_time_sec", 1e12))  # Comm-qubit idle coherence.
+        self.idle_t1_sec = float(getattr(node, "idle_t1_sec", 1e12))  # Shared idle T1.
+        self.idle_t2_sec = float(getattr(node, "idle_t2_sec", 1e12))  # Shared idle T2.
         
         # Correction mode setting.
         self.correction_mode = str(getattr(node, "correction_mode"))

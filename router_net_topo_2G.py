@@ -57,9 +57,10 @@ class RouterNetTopo2G(RouterNetTopo):
                     ancilla_memo_size = node.get("ancilla_memo_size", 6)
                     gate_fid = node.get("gate_fidelity", 1.0)
                     meas_fid = node.get("measurement_fidelity", 1.0)
+                    state_preparation_fid = node.get("state_preparation_fidelity", 1.0)
                     two_qubit_gate_fid = node.get("two_qubit_gate_fidelity", 1.0)
-                    idle_data_coherence_time_sec = float(node.get("idle_data_coherence_time_sec", 1e12))
-                    idle_comm_coherence_time_sec = float(node.get("idle_comm_coherence_time_sec", 1e12))
+                    idle_t1_sec = float(node.get("idle_t1_sec", 1e12))
+                    idle_t2_sec = float(node.get("idle_t2_sec", 1e12))
                     idle_pauli_weights = dict(node.get("idle_pauli_weights", {"x": 0.05, "y": 0.05, "z": 0.90}))
 
                     node_obj = QuantumRouter2ndGeneration(
@@ -77,15 +78,17 @@ class RouterNetTopo2G(RouterNetTopo):
                     # FT prep config (from config generator, consumed by RequestLogicalPairApp)
                     node_obj.ft_prep_mode = node.get("ft_prep_mode", "none")
                     node_obj.ft_max_retries = node.get("ft_max_retries", 3)
+                    node_obj.state_preparation_fid = float(state_preparation_fid)
                     node_obj.idle_decoherence_enabled = node.get("idle_decoherence_enabled", True)
-                    node_obj.idle_data_coherence_time_sec = idle_data_coherence_time_sec
-                    node_obj.idle_comm_coherence_time_sec = idle_comm_coherence_time_sec
+                    node_obj.idle_t1_sec = idle_t1_sec
+                    node_obj.idle_t2_sec = idle_t2_sec
                     node_obj.idle_pauli_weights = idle_pauli_weights
                 else:
                     # Create standard QuantumRouter
                     memo_size = node.get("memo_size", 50)
                     gate_fid = node.get("gate_fidelity", 1.0)
                     meas_fid = node.get("measurement_fidelity", 1.0)
+                    state_preparation_fid = node.get("state_preparation_fidelity", 1.0)
                     
                     node_obj = QuantumRouter(
                         name=name,
@@ -95,6 +98,7 @@ class RouterNetTopo2G(RouterNetTopo):
                         component_templates=template,
                         gate_fid=gate_fid,
                         meas_fid=meas_fid)
+                    node_obj.state_preparation_fid = float(state_preparation_fid)
             else:
                 raise ValueError("Unknown type of node '{}'".format(node_type))
 

@@ -5,7 +5,7 @@ from router_net_topo_2G import RouterNetTopo2G
 import sequence.utils.log as log
 from sequence.kernel.quantum_manager import QuantumManager
 from sequence.constants import STABILIZER_FORMALISM
-from sequence.entanglement_management.generation import EntanglementGenerationA, EntanglementGenerationB
+from sequence.entanglement_management.generation import EntanglementGenerationA, EntanglementGenerationB, BarretKokA
 
 from request_app import RequestAppThroughput
 from RequestLogicalPairApp import RequestLogicalPairApp
@@ -189,11 +189,13 @@ def three_node_logical_pair_with_app(verbose=False, config_file='config/line_3_2
     # ========================================================================
     node_names = []
     apps = {}
+    correction_mode = "cec"
 
     for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
         if not isinstance(router, QuantumRouter2ndGeneration):
             raise TypeError(f"Node {router.name} must be QuantumRouter2ndGeneration")
 
+        router.correction_mode = correction_mode
         app = RequestLogicalPairApp(router, css_code=css_code)
         apps[router.name] = app
         node_names.append(router.name)
@@ -286,11 +288,13 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     # ========================================================================
     node_names = []
     apps = {}
+    correction_mode = "cec"
 
     for router in network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER):
         if not isinstance(router, QuantumRouter2ndGeneration):
             raise TypeError(f"Node {router.name} must be QuantumRouter2ndGeneration")
 
+        router.correction_mode = correction_mode
         app = RequestLogicalPairApp(router, css_code=css_code)
         apps[router.name] = app
         node_names.append(router.name)
@@ -389,7 +393,8 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     return {"apps": apps, "metrics": metrics}
 
 
-def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "config/line_5_2G_near_term.json", css_code: str = "[[7,1,3]]", log_filename: str = "log/n_node_logical_pair") -> dict[str, object]:
+def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "config/line_5_2G_near_term.json", 
+                                 css_code: str = "[[7,1,3]]", log_filename: str = "log/n_node_logical_pair") -> dict[str, object]:
     """Create end-to-end logical entanglement across an N-node linear chain.
 
     Args:
@@ -410,12 +415,15 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
     idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
-    idle_data_coherence_time_sec = 1e-1
-    idle_comm_coherence_time_sec = 1e-1
+    idle_t1_sec = 1e-1
+    idle_t2_sec = 1e-1
+    correction_mode = "cec"
 
     log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level('DEBUG')
-    modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm', 'barret_kok', 'RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
+    log.set_logger_level('INFO')
+    # modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm', 'barret_kok', 'RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
+    modules = ['barret_kok']
+
     for module in modules:
         log.track_module(module)
 
@@ -433,13 +441,14 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     start_time_ps = int(1e12)
     window_duration_ps = int(1e9)
     default_target_fidelity = 0.8
-    num_logical_pairs = 100
+    num_logical_pairs = 5
 
     apps = {}
     for node_name in node_names:
         routers_by_name[node_name].idle_pauli_weights = dict(idle_pauli_weights)
-        routers_by_name[node_name].idle_data_coherence_time_sec = float(idle_data_coherence_time_sec)
-        routers_by_name[node_name].idle_comm_coherence_time_sec = float(idle_comm_coherence_time_sec)
+        routers_by_name[node_name].idle_t1_sec = float(idle_t1_sec)
+        routers_by_name[node_name].idle_t2_sec = float(idle_t2_sec)
+        routers_by_name[node_name].correction_mode = correction_mode
         apps[node_name] = RequestLogicalPairApp(
             routers_by_name[node_name],
             css_code=css_code,
@@ -560,7 +569,7 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
         # Header and run parameters.
         print("\n=== Run Summary ===")
         print(f"code={css_code} | nodes={len(node_names)} | links={num_links} | gate_fid={metrics['gate_fidelity']:.4f} | twoq_fid={metrics['two_qubit_gate_fidelity']:.4f}")
-        print(f"params: n={final_app.n} ft_mode={final_app.ft_prep_mode} idle_weights={final_app.idle_pauli_weights} data_t2={final_app.idle_data_coherence_time_sec:.3e}s comm_t2={final_app.idle_comm_coherence_time_sec:.3e}s")
+        print(f"params: n={final_app.n} ft_mode={final_app.ft_prep_mode} idle_weights={final_app.idle_pauli_weights} T1={final_app.idle_t1_sec:.3e}s T2={final_app.idle_t2_sec:.3e}s")
         print(f"logical_pairs: requested={metrics['num_logical_pairs_requested']} completed={metrics['num_logical_pairs_completed']}")
 
         if verbose:
