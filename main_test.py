@@ -425,7 +425,7 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     log.set_logger_level('WARNING')
     # modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm', 'barret_kok', 'RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
     # modules = ['barret_kok']
-    modules = ['RequestLogicalPairApp']
+    modules = ['RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
 
     for module in modules:
         log.track_module(module)
@@ -442,9 +442,9 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     assert len(node_names) >= 2, f"Expected at least 2 nodes, got {len(node_names)}"
 
     start_time_ps = int(1e12)
-    window_duration_ps = int(1e9)
+    window_duration_ps = int(1e10)
     default_target_fidelity = 0.8
-    num_logical_pairs = 1
+    num_logical_pairs = 10
 
     apps = {}
     for node_name in node_names:

@@ -5,12 +5,11 @@ teleported CNOT between encoded data blocks using pre-generated Bell pairs
 on communication qubits.
 
 Flow:
-1. Handshake: READY / READY_ACK / START.
-2. Phase A (Alice): CX(data->comm), measure comm in Z, send bits to Bob.
-3. Phase B (Bob): CX(comm->data), apply X corrections, H(comm), measure comm
+1. Phase A (Alice): CX(data->comm), measure comm in Z, send bits to Bob.
+2. Phase B (Bob): CX(comm->data), apply X corrections, H(comm), measure comm
    in X, send bits to Alice.
-4. Phase C (Alice): apply Z corrections from Bob's bits.
-5. Completion: local app callback plus explicit TCNOT_COMPLETE to Bob.
+3. Phase C (Alice): apply Z corrections from Bob's bits.
+4. Completion: local app callback plus explicit TCNOT_COMPLETE to Bob.
 """
 
 from enum import Enum, auto
@@ -24,9 +23,6 @@ from sequence.components.circuit import Circuit
 
 class TeleportedCNOTMsgType(Enum):
     """Types of classical messages exchanged during the teleported CNOT protocol."""
-    READY = auto()              # Local side is ready
-    READY_ACK = auto()          # Remote acknowledges READY
-    START = auto()              # Alice starts protocol execution
     ALICE_MEASUREMENT = auto()  # Alice -> Bob after Phase A
     BOB_MEASUREMENT = auto()    # Bob -> Alice after Phase B
     TCNOT_COMPLETE = auto()     # Alice -> Bob explicit completion notification
@@ -36,9 +32,6 @@ class TeleportedCNOTMessage(Message):
     """Classical message container for teleported-CNOT control and payload bits.
 
     Message payloads by type:
-    - READY: no payload.
-    - READY_ACK: no payload.
-    - START: no payload.
     - ALICE_MEASUREMENT: alice_measurement_results (list[int]).
     - BOB_MEASUREMENT: bob_measurement_results (list[int]).
     - TCNOT_COMPLETE: no payload.
@@ -58,17 +51,10 @@ class TeleportedCNOTMessage(Message):
         super().__init__(msg_type, "request_logical_pair_app")
         self.protocol_name = protocol_name
 
-        # Parse payload only for message types that carry measurement bits.
-        if msg_type is TeleportedCNOTMsgType.READY:
-            pass
-        elif msg_type is TeleportedCNOTMsgType.READY_ACK:
-            pass
-        elif msg_type is TeleportedCNOTMsgType.START:
-            pass
-        elif msg_type is TeleportedCNOTMsgType.ALICE_MEASUREMENT:
-            self.alice_measurement_results = list(kwargs['alice_measurement_results'])
+        if msg_type is TeleportedCNOTMsgType.ALICE_MEASUREMENT:
+            self.alice_measurement_results = list(kwargs["alice_measurement_results"])
         elif msg_type is TeleportedCNOTMsgType.BOB_MEASUREMENT:
-            self.bob_measurement_results = list(kwargs['bob_measurement_results'])
+            self.bob_measurement_results = list(kwargs["bob_measurement_results"])
         elif msg_type is TeleportedCNOTMsgType.TCNOT_COMPLETE:
             pass
         else:
@@ -113,13 +99,12 @@ class TeleportedCNOTProtocol(Protocol):
         # Cache app handle once so protocol code has one anchor point.
         self.app = owner.request_logical_pair_app
         # Cache idle-noise settings from app at init; phase methods use local fields only.
-        app = self.app
-        self.idle_pauli_weights: dict[str, float] = dict(app.idle_pauli_weights)
-        self.idle_t1_sec = float(app.idle_t1_sec)
-        self.idle_t2_sec = float(app.idle_t2_sec)
+        self.idle_pauli_weights: dict[str, float] = dict(self.app.idle_pauli_weights)
+        self.idle_t1_sec = float(self.app.idle_t1_sec)
+        self.idle_t2_sec = float(self.app.idle_t2_sec)
 
     def start(self) -> None:
-        """Enter handshake mode and wait for both sides to become ready.
+        """Start teleported-CNOT execution once local resources are ready.
 
         Args:
             None
@@ -134,18 +119,16 @@ class TeleportedCNOTProtocol(Protocol):
             raise RuntimeError(f"{self.name}: missing qubits for start")
 
         self.started = True
-        self.current_phase = "HANDSHAKE"
+        if self.role == "alice":
+            self.current_phase = "PHASE_A_SCHEDULED"
+            process = Process(self, "alice_phase_a", [])
+            event = Event(self.owner.timeline.now(), process, self.owner.timeline.schedule_counter)
+            self.owner.timeline.schedule(event)
+            log.logger.info(f"[{self.name}] start role=alice n={self.n} -> scheduled alice_phase_a")
+            return
 
-        # READY tells the peer this endpoint exists and local resources are present.
-        msg = TeleportedCNOTMessage(TeleportedCNOTMsgType.READY, protocol_name=self.name)
-        self.owner.send_message(self.remote_node_name, msg)
-
-        # Bob waits for START; Alice waits for READY_ACK.
-        if self.role == "bob":
-            self.current_phase = "WAITING_START"
-        else:
-            self.current_phase = "WAITING_READY"
-        log.logger.info(f"[{self.name}] start role={self.role} n={self.n} phase={self.current_phase}")
+        self.current_phase = "WAITING_FOR_ALICE_MEASUREMENT"
+        log.logger.info(f"[{self.name}] start role=bob n={self.n} phase={self.current_phase}")
 
     def received_message(self, src: str, msg: TeleportedCNOTMessage) -> None:
         """Dispatch incoming teleported-CNOT messages by type.
@@ -160,48 +143,6 @@ class TeleportedCNOTProtocol(Protocol):
         if not isinstance(msg, TeleportedCNOTMessage):
             return
         log.logger.debug(f"[{self.name}] recv src={src} type={msg.msg_type} phase={self.current_phase} role={self.role}")
-
-        # Handshake messages: READY / READY_ACK / START.
-        if msg.msg_type == TeleportedCNOTMsgType.READY:
-            # Symmetric handshake: acknowledge peer readiness.
-            ready_ack_msg = TeleportedCNOTMessage(TeleportedCNOTMsgType.READY_ACK, protocol_name=self.name)
-            self.owner.send_message(self.remote_node_name, ready_ack_msg)
-            log.logger.debug(f"[{self.name}] READY handled -> sent READY_ACK")
-
-            # Alice can also start when peer READY arrives (handles lost early READY case).
-            if self.role == "alice" and self.started and self.current_phase in ("HANDSHAKE", "WAITING_READY"):
-                start_msg = TeleportedCNOTMessage(TeleportedCNOTMsgType.START, protocol_name=self.name)
-                self.owner.send_message(self.remote_node_name, start_msg)
-
-                process = Process(self, "alice_phase_a", [])
-                event = Event(self.owner.timeline.now(), process)
-                self.owner.timeline.schedule(event)
-                self.current_phase = "WAITING_FOR_BOB"
-                log.logger.info(f"[{self.name}] handshake complete -> sent START, scheduled alice_phase_a")
-            return
-
-        if msg.msg_type == TeleportedCNOTMsgType.READY_ACK:
-            # Only Alice transitions from handshake to execution.
-            if self.role == "alice" and self.started and self.current_phase in ("HANDSHAKE", "WAITING_READY"):
-                start_msg = TeleportedCNOTMessage(TeleportedCNOTMsgType.START, protocol_name=self.name)
-                self.owner.send_message(self.remote_node_name, start_msg)
-
-                # Event-driven: schedule Phase A on the local timeline.
-                process = Process(self, "alice_phase_a", [])
-                event = Event(self.owner.timeline.now(), process)
-                self.owner.timeline.schedule(event)
-                self.current_phase = "WAITING_FOR_BOB"
-                log.logger.info(f"[{self.name}] handshake complete -> sent START, scheduled alice_phase_a")
-            return
-
-        if msg.msg_type == TeleportedCNOTMsgType.START:
-            # START is consumed only by Bob.
-            if self.role != "bob":
-                return
-
-            self.current_phase = "WAITING_FOR_ALICE_MEASUREMENT"
-            log.logger.info(f"[{self.name}] START received -> phase={self.current_phase}")
-            return
 
         # Execution messages: ALICE_MEASUREMENT / BOB_MEASUREMENT.
         if msg.msg_type == TeleportedCNOTMsgType.ALICE_MEASUREMENT:

@@ -162,7 +162,10 @@ class RouterNetTopo2G(RouterNetTopo):
             """Model the classical delay as a function of distance and hop count
             """
             # Assume speed of light in fiber and 20 microseconds processing time per hop
-            return distance / SPEED_OF_LIGHT + hop_count * 20 * MICROSECOND 
+            processing_delay = 50 * MICROSECOND
+            delay_at_intermediate_hops = hop_count * 20 * MICROSECOND
+
+            return distance / SPEED_OF_LIGHT + delay_at_intermediate_hops + processing_delay  # Add 50 microseconds for base processing delay
 
         for cc in self.cchannels:
             src = cc.sender.name

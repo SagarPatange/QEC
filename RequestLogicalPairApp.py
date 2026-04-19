@@ -280,7 +280,7 @@ class RequestLogicalPairApp:
             protocol = self.current_run["tcnot_protocols"].get(src)
             if protocol is None:
                 pending_tcnot_messages = self.current_run["pending_tcnot_messages"].setdefault(src, [])
-                pending_tcnot_messages.append(msg)  # Preserve early TCNOT handshake messages until the local protocol exists.
+                pending_tcnot_messages.append(msg)  # Preserve early TCNOT payload messages until the local protocol exists.
                 log.logger.info(f"{self.name}: buffered TCNOT message src={src} type={msg.msg_type} pending={len(pending_tcnot_messages)}")
                 return True
             protocol.received_message(src, msg)
@@ -756,13 +756,13 @@ class RequestLogicalPairApp:
         if tcnot.started:
             return
 
+        tcnot.start()
+
         pending_tcnot_messages = self.current_run["pending_tcnot_messages"].pop(neighbor, [])
         if pending_tcnot_messages:
             log.logger.info(f"{self.name}: replay buffered TCNOT messages neighbor={neighbor} count={len(pending_tcnot_messages)}")
             for pending_msg in pending_tcnot_messages:
-                tcnot.received_message(neighbor, pending_msg)  # Deliver queued handshake messages before local start().
-
-        tcnot.start()
+                tcnot.received_message(neighbor, pending_msg)  # Deliver queued TCNOT payload messages after local start().
 
     def on_teleported_cnot_complete(self, reservation_or_neighbor: "Reservation | str") -> None:
         """Handle TCNOT completion bookkeeping for one adjacent link.
