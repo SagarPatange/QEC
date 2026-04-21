@@ -284,7 +284,8 @@ def main_graph3_distance_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     correction_modes = ["none", "cec", "qec"]
     # Tuples are (config_file, run_duration_ms).
-    config_duration_pairs = [("config/standard_configs/line_2_2G.json", 10000.0), ("config/standard_configs/line_6_2G.json", 50000.0), ("config/standard_configs/line_11_2G.json", 100000.0), ("config/standard_configs/line_26_2G.json", 250000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
+    # config_duration_pairs = [("config/standard_configs/line_2_2G.json", 10000.0), ("config/standard_configs/line_6_2G.json", 50000.0), ("config/standard_configs/line_11_2G.json", 100000.0), ("config/standard_configs/line_26_2G.json", 250000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
+    config_duration_pairs = [("config/standard_configs/line_26_2G.json", 250000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
 
     for config_file, run_duration_ms in config_duration_pairs:
         base_args = BASE_ARGS + ["--config_file", config_file, "--num_logical_pairs", "1000", "--run_duration_ms", str(run_duration_ms), "--log_directory", "log/runner/graph3_distance_sweep"]
@@ -297,7 +298,7 @@ def main_graph3_distance_sweep() -> None:
 
 # Graph 4
 def main_graph4_link_count_sweep() -> None:
-    """Run a link-count sweep at fixed 10 km per elementary link.
+    """Run a fixed-total-distance sweep while varying repeater count.
 
     Args:
         None.
@@ -309,11 +310,22 @@ def main_graph4_link_count_sweep() -> None:
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
     correction_modes = ["none", "cec", "qec"]
-    # Tuples are (config_file, run_duration_ms).
-    config_duration_pairs = [("config/standard_configs/line_2_2G.json", 10000.0), ("config/standard_configs/line_3_2G.json", 20000.0), ("config/standard_configs/line_6_2G.json", 50000.0), ("config/standard_configs/line_11_2G.json", 100000.0), ("config/standard_configs/line_21_2G.json", 200000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
+    total_end_to_end_distance_km = 100.0
+    config_duration_pairs = [
+        ("config/standard_configs/line_2_2G.json", 10000.0),
+        ("config/standard_configs/line_3_2G.json", 20000.0),
+        ("config/standard_configs/line_6_2G.json", 50000.0),
+        ("config/standard_configs/line_11_2G.json", 100000.0),
+        ("config/standard_configs/line_21_2G.json", 200000.0),
+        ("config/standard_configs/line_51_2G.json", 500000.0),
+        ("config/standard_configs/line_101_2G.json", 1000000.0),
+    ]
 
     for config_file, run_duration_ms in config_duration_pairs:
-        base_args = BASE_ARGS + ["--config_file", config_file, "--num_logical_pairs", "1000", "--run_duration_ms", str(run_duration_ms), "--log_directory", "log/runner/graph4_link_count_sweep"]
+        node_count = int(Path(config_file).stem.split("_")[1])
+        num_links = node_count - 1
+        inter_node_distance_km = total_end_to_end_distance_km / num_links
+        base_args = BASE_ARGS + ["--config_file", config_file, "--link_distance_km", str(inter_node_distance_km), "--num_logical_pairs", "1000", "--run_duration_ms", str(run_duration_ms), "--log_directory", "log/runner/graph4_link_count_sweep"]
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
@@ -357,7 +369,7 @@ if __name__ == "__main__":
     # main_graph2_data_coherence_sweep()
 
     # Graph 3
-    # main_graph3_distance_sweep()
+    main_graph3_distance_sweep()
 
     # Graph 4
     # main_graph4_link_count_sweep()
