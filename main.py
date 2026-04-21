@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 from collections import defaultdict
+from datetime import datetime
 from time import perf_counter
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -134,11 +135,16 @@ def main() -> None:
     ft_tag = "cfg" if args.ft_prep_mode is None else args.ft_prep_mode
     pauli_tag = "cfg" if args.idle_pauli_x is None else f"{args.idle_pauli_x}_{args.idle_pauli_y}_{args.idle_pauli_z}"
     correction_tag = args.correction_mode
+    timestamp_tag = datetime.now().strftime("%Y%m%d_%H%M")
 
     network_topo = RouterNetTopo2G(temp_config.name)
     tl = network_topo.get_timeline()
 
-    log_filename = f"{args.log_directory}/{config_tag},code={args.css_code},dist={dist_tag},gate={gate_tag},twoq={twoq_tag},prep={prep_tag},T1={t1_tag},T2={t2_tag},ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag}"
+    log_filename = (
+        f"{args.log_directory}/{config_tag},code={args.css_code},dist={dist_tag},"
+        f"gate={gate_tag},twoq={twoq_tag},prep={prep_tag},T1={t1_tag},T2={t2_tag},"
+        f"ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag},ts={timestamp_tag}"
+    )
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level(args.log_level)
     # modules = ["main"]
