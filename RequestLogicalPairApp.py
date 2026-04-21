@@ -16,7 +16,7 @@ from sequence.kernel.event import Event
 from sequence.kernel.process import Process
 from sequence.utils import log
 from TeleportedCNOT import TeleportedCNOTMessage, TeleportedCNOTProtocol
-
+from sequence.constants import MILLISECOND
 
 if TYPE_CHECKING:
     from sequence.kernel.quantum_state import TableauState
@@ -893,12 +893,15 @@ class RequestLogicalPairApp:
         meets_target = (final_fidelity >= self.required_end_to_end_logical_fidelity if final_fidelity is not None else True)
         self.current_run["success"] = bool(meets_target)
 
-        self.run_stats[int(self.current_run["run_id"])] = {
+        run_id = int(self.current_run["run_id"])
+        latency_ps = (None if self.current_run["start_time"] is None or self.current_run["completion_time"] is None else int(self.current_run["completion_time"]) - int(self.current_run["start_time"]))
+
+        self.run_stats[run_id] = {
             "run_id": int(self.current_run["run_id"]),
             "start_time": self.current_run["start_time"],
             "end_time": self.current_run["end_time"],
             "completion_time": self.current_run["completion_time"],
-            "latency_ps": (None if self.current_run["start_time"] is None or self.current_run["completion_time"] is None else int(self.current_run["completion_time"]) - int(self.current_run["start_time"])),
+            "latency_ps": latency_ps,
             "status": self.current_run["status"],
             "success": self.current_run["success"],
             "final_end_to_end_fidelity": final_fidelity,
@@ -907,6 +910,9 @@ class RequestLogicalPairApp:
             "physical_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["physical_pair_fidelity_rows"].items()},
             "post_idle_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["post_idle_pair_fidelity_rows"].items()},
         }
+
+        if self.node.name == 'router_0':
+            log.logger.critical(f"run_id={run_id}, time to serve={latency_ps / MILLISECOND}, fidelity={final_fidelity:.6f}")
 
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1
         current_end_t = int(self.current_run["end_time"]) if self.current_run["end_time"] is not None else int(self.node.timeline.now())

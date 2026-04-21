@@ -35,21 +35,18 @@ def main() -> None:
     Returns:
         None.
     """
-    total_tick = perf_counter()
-    config_tick = perf_counter()
 
     parser = argparse.ArgumentParser(description="Parameters for logical-pair simulation")
     parser.add_argument("--config_file", type=str, default="config/standard_configs/line_6_2G.json")
     parser.add_argument("--css_code", type=str, default="[[7,1,3]]")
     parser.add_argument("--log_directory", type=str, default="log")
-    parser.add_argument("--debug_log_directory", type=str)
-    parser.add_argument("--log_level", type=str, default="DEBUG")
+    parser.add_argument("--log_level", type=str, default="CRITICAL", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     parser.add_argument("--start_time_s", type=float, default=1.0)
     parser.add_argument("--run_duration_ms", type=float, default=1e5)
     parser.add_argument("--round_spacing_ms", type=float, default=1.0)
     parser.add_argument("--correction_mode", type=str, choices=["none", "cec", "qec", "qec+cec"], default="cec")
     parser.add_argument("--target_fidelity", type=float, default=0.8)
-    parser.add_argument("--num_logical_pairs", type=int, default=30)
+    parser.add_argument("--num_logical_pairs", type=int, default=3)
     parser.add_argument("--link_distance_km", type=float)
     parser.add_argument("--gate_fidelity", type=float)
     parser.add_argument("--two_qubit_gate_fidelity", type=float)
@@ -83,9 +80,6 @@ def main() -> None:
 
     with open(config_file, "r", encoding="utf-8") as file:
         config = json.load(file)
-
-    # Force the run onto the tableau backend regardless of the config default.
-    config["formalism"] = TABLEAU_FORMALISM
 
     # Apply per-router hardware and protocol overrides from the CLI.
     for node in config["nodes"]:
@@ -127,11 +121,8 @@ def main() -> None:
     json.dump(config, temp_config, indent=4)
     temp_config.write("\n")
     temp_config.close()
-    config_elapsed = perf_counter() - config_tick
 
     os.makedirs(args.log_directory, exist_ok=True)
-    if args.debug_log_directory is not None:
-        os.makedirs(args.debug_log_directory, exist_ok=True)
 
     config_tag = os.path.splitext(os.path.basename(args.config_file))[0]
     dist_tag = "cfg" if args.link_distance_km is None else str(args.link_distance_km)
@@ -143,34 +134,15 @@ def main() -> None:
     ft_tag = "cfg" if args.ft_prep_mode is None else args.ft_prep_mode
     pauli_tag = "cfg" if args.idle_pauli_x is None else f"{args.idle_pauli_x}_{args.idle_pauli_y}_{args.idle_pauli_z}"
     correction_tag = args.correction_mode
-    debug_log_path = None if args.debug_log_directory is None else (
-        f"{args.debug_log_directory}/{config_tag},code={args.css_code},dist={dist_tag},gate={gate_tag},"
-        f"twoq={twoq_tag},prep={prep_tag},T1={t1_tag},T2={t2_tag},ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag}.debug"
-    )
 
-    def write_debug_line(line: str) -> None:
-        """Append one debug timing line when debug logging is enabled.
-
-        Args:
-            line: Debug line to append.
-
-        Returns:
-            None.
-        """
-        if debug_log_path is None:
-            return
-        with open(debug_log_path, "a", encoding="utf-8") as file:
-            file.write(line + "\n")
-
-    topo_tick = perf_counter()
     network_topo = RouterNetTopo2G(temp_config.name)
     tl = network_topo.get_timeline()
-    topo_elapsed = perf_counter() - topo_tick
 
     log_filename = f"{args.log_directory}/{config_tag},code={args.css_code},dist={dist_tag},gate={gate_tag},twoq={twoq_tag},prep={prep_tag},T1={t1_tag},T2={t2_tag},ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag}"
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level(args.log_level)
-    modules = ["main"]
+    # modules = ["main"]
+    modules = ["RequestLogicalPairApp"]
     for module in modules:
         log.track_module(module)
 
@@ -197,7 +169,6 @@ def main() -> None:
         name_to_apps[router.name] = app
 
     # Launch logical-pair requests from each router to its right-hand neighbor along the path.
-    schedule_tick = perf_counter()
     for i in range(len(node_names) - 1):
         name_to_apps[node_names[i]].start(
             responder=node_names[i + 1],
@@ -205,25 +176,8 @@ def main() -> None:
             end_t=start_time_ps + run_duration_ps,
             fidelity=args.target_fidelity,
             num_logical_pairs=args.num_logical_pairs)
-    schedule_elapsed = perf_counter() - schedule_tick
-
-    timing_line = (
-        f"[timing] setup config={config_elapsed:.3f}s topo={topo_elapsed:.3f}s "
-        f"schedule={schedule_elapsed:.3f}s stop_time_ps={config['stop_time']} "
-        f"queued_events={len(tl.events)}"
-    )
-    print(timing_line, flush=True)
-    write_debug_line(timing_line)
-
-    init_tick = perf_counter()
+    
     tl.init()
-    init_elapsed = perf_counter() - init_tick
-    timing_line = (
-        f"[timing] after init init={init_elapsed:.3f}s "
-        f"queued_events={len(tl.events)} scheduled_events={tl.schedule_counter}"
-    )
-    print(timing_line, flush=True)
-    write_debug_line(timing_line)
 
     run_tick = perf_counter()
     tl.run()
@@ -233,36 +187,27 @@ def main() -> None:
         f"executed_events={tl.run_counter} remaining_events={len(tl.events)}"
     )
     print(timing_line, flush=True)
-    write_debug_line(timing_line)
     completed_line = f"completed_runs={len(name_to_apps[node_names[0]].run_stats)}"
     print(completed_line)
-    write_debug_line(completed_line)
 
-    fidelity_dict = defaultdict(float)
-    time_to_serve_dict = defaultdict(float)
+    # fidelity_dict = defaultdict(float)
+    # time_to_serve_dict = defaultdict(float)
 
-    final_app = name_to_apps[node_names[0]]
+    # final_app = name_to_apps[node_names[0]]
     # Pull per-run latency and final fidelity into flat maps for logging/printing.
-    for run_id, run_stats in sorted(final_app.run_stats.items()):
-        fidelity = run_stats["final_end_to_end_fidelity"]
-        latency_ps = run_stats["latency_ps"]
-        if fidelity is None or latency_ps is None:
-            continue
-        fidelity_dict[run_id] = float(fidelity)
-        time_to_serve_dict[run_id] = float(latency_ps)
+    # for run_id, run_stats in sorted(final_app.run_stats.items()):
+    #     fidelity = run_stats["final_end_to_end_fidelity"]
+    #     latency_ps = run_stats["latency_ps"]
+    #     if fidelity is None or latency_ps is None:
+    #         continue
+    #     fidelity_dict[run_id] = float(fidelity)
+    #     time_to_serve_dict[run_id] = float(latency_ps)
 
-    finalize_tick = perf_counter()
-    for run_id, time_to_serve in sorted(time_to_serve_dict.items()):
-        fidelity = fidelity_dict[run_id]
-        log.logger.info(f"run_id={run_id}, time to serve={time_to_serve / MILLISECOND}, fidelity={fidelity:.6f}")
-        if args.verbose:
-            print(f"run_id={run_id}, time_to_serve_ms={time_to_serve / MILLISECOND:.6f}, fidelity={fidelity:.6f}")
-    finalize_elapsed = perf_counter() - finalize_tick
-
-    total_elapsed = perf_counter() - total_tick
-    timing_line = f"[timing] finalize={finalize_elapsed:.3f}s total={total_elapsed:.3f}s"
-    print(timing_line, flush=True)
-    write_debug_line(timing_line)
+    # for run_id, time_to_serve in sorted(time_to_serve_dict.items()):
+    #     fidelity = fidelity_dict[run_id]
+    #     log.logger.info(f"run_id={run_id}, time to serve={time_to_serve / MILLISECOND}, fidelity={fidelity:.6f}")
+    #     if args.verbose:
+    #         print(f"run_id={run_id}, time_to_serve_ms={time_to_serve / MILLISECOND:.6f}, fidelity={fidelity:.6f}")
 
     # Remove the resolved temporary config file after the run completes.
     os.remove(temp_config.name)
