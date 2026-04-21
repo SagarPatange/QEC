@@ -4,6 +4,16 @@
             "memory": {
                 "fidelity": 1.0,
                 "efficiency": 0.9
+            },
+            "SingleAtomBSM": {
+                "detectors": [
+                    {
+                        "efficiency": 0.95
+                    },
+                    {
+                        "efficiency": 0.95
+                    }
+                ]
             }
         }
     },

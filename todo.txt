@@ -1,2 +1,15 @@
 1. start_time and end_time should govern the simulation and can be changed to represent case
-2. Check how the Idling decoherence has been applied
+2. Make sure that the config file is cleaned up for the FT 
+3. QEC syndrome cycle needs to have error in it through run_circuit
+4. Add a time for QEC and CEC operations
+5. Rethink Sequence to Stim
+
+
+
+1. Check to see if Barret Kok stops generating 
+2. Instead of counting the number of events I need to do the actual wall clock timing
+3. Change detector efficiency to 0.95
+
+
+Things to keep in mind:
+1. Correctness of your program is the number 1 priority

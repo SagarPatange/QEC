@@ -16,7 +16,7 @@ BASE_ARGS = [
     "--state_preparation_fidelity", "0.9999",
     "--gate_error_channel", "pauli",
     "--idle_t1_sec", "100.0",
-    "--idle_t2_sec", "100.0",
+    "--idle_t2_sec", "10.0",
     "--ft_prep_mode", "minimal",
     "--idle_pauli_x", "0.05",
     "--idle_pauli_y", "0.05",

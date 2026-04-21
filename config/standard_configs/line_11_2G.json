@@ -3,15 +3,15 @@
         "qec": {
             "memory": {
                 "fidelity": 1.0,
-                "efficiency": 1.0
+                "efficiency": 0.9
             },
             "SingleAtomBSM": {
                 "detectors": [
                     {
-                        "efficiency": 1.0
+                        "efficiency": 0.95
                     },
                     {
-                        "efficiency": 1.0
+                        "efficiency": 0.95
                     }
                 ]
             }
@@ -293,121 +293,121 @@
             "source": "router_0",
             "destination": "BSM_0_1",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_1",
             "destination": "BSM_0_1",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_1",
             "destination": "BSM_1_2",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_2",
             "destination": "BSM_1_2",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_2",
             "destination": "BSM_2_3",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_3",
             "destination": "BSM_2_3",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_3",
             "destination": "BSM_3_4",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_4",
             "destination": "BSM_3_4",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_4",
             "destination": "BSM_4_5",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_5",
             "destination": "BSM_4_5",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_5",
             "destination": "BSM_5_6",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_6",
             "destination": "BSM_5_6",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_6",
             "destination": "BSM_6_7",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_7",
             "destination": "BSM_6_7",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_7",
             "destination": "BSM_7_8",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_8",
             "destination": "BSM_7_8",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_8",
             "destination": "BSM_8_9",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_9",
             "destination": "BSM_8_9",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_9",
             "destination": "BSM_9_10",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         },
         {
             "source": "router_10",
             "destination": "BSM_9_10",
             "distance": 5000.0,
-            "attenuation": 0.0
+            "attenuation": 0.0002
         }
     ],
     "cchannels": [
