@@ -351,10 +351,10 @@ if __name__ == "__main__":
     # Uses plot.ipynb, not runner.py.
 
     # Graph 1
-    # main_graph1_twoqubit_gate_sweep()
+    main_graph1_twoqubit_gate_sweep()
 
     # Graph 2
-    main_graph2_data_coherence_sweep()
+    # main_graph2_data_coherence_sweep()
 
     # Graph 3
     # main_graph3_distance_sweep()
