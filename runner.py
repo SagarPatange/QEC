@@ -210,7 +210,7 @@ def main_distance_twoq_code_sweep() -> None:
 
 
 # Graph 1
-def main_graph1_correction_mode_compare() -> None:
+def main_graph1_twoqubit_gate_sweep() -> None:
     """Compare correction modes across a sweep of two-qubit gate fidelities.
 
     Args:
@@ -351,7 +351,7 @@ if __name__ == "__main__":
     # Uses plot.ipynb, not runner.py.
 
     # Graph 1
-    # main_graph1_correction_mode_compare()
+    # main_graph1_twoqubit_gate_sweep()
 
     # Graph 2
     main_graph2_data_coherence_sweep()
