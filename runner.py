@@ -222,7 +222,7 @@ def main_graph1_twoqubit_gate_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_11_2G.json", "--num_logical_pairs", "1000", "--log_directory", "log/runner/graph1_correction_mode_compare"]
+    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_11_2G.json", "--num_logical_pairs", "1000", "--log_directory", "log/runner/graph1_twoqubit_gate_sweep"]
 
     two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1.0"]
     # two_qubit_gate_fidelities = ["0.996", "0.999", "0.9995", "1.0"]
