@@ -72,143 +72,6 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
                     get_output(process)
             ps = new_ps
 
-
-def main_node_count_sweep() -> None:
-    """Run a node-count sweep at fixed distance and hardware settings.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_t1_sec", "1000000000000.0", "--idle_t2_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/node_count_sweep"]
-
-    config_files = ["config/standard_configs/line_2_2G.json", "config/standard_configs/line_3_2G.json", "config/standard_configs/line_6_2G.json", "config/standard_configs/line_11_2G.json", "config/standard_configs/line_21_2G.json"]  # Sweep topology size with fixed physical-layer settings.
-    for config_file in config_files:
-        args = ["--config_file", config_file]
-        tasks.append(command + base_args + args)
-
-    run_tasks(tasks, parallel=10)
-
-
-def main_distance_sweep() -> None:
-    """Run a distance sweep at fixed node count and hardware settings.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--config_file", "config/standard_configs/line_6_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_t1_sec", "1000000000000.0", "--idle_t2_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/distance_sweep"]
-
-    distance_duration_pairs = [(1.0, 1000.0), (10.0, 10000.0), (50.0, 50000.0), (100.0, 100000.0)]  # Pair each distance with a run duration large enough for that regime.
-    for link_distance_km, run_duration_ms in distance_duration_pairs:
-        args = ["--link_distance_km", str(link_distance_km), "--run_duration_ms", str(run_duration_ms)]
-        tasks.append(command + base_args + args)
-
-    run_tasks(tasks, parallel=10)
-
-
-def main_two_qubit_gate_sweep() -> None:
-    """Run a two-qubit gate-fidelity sweep at fixed topology and distance.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--config_file", "config/standard_configs/line_6_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "100", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--idle_t1_sec", "1000000000000.0", "--idle_t2_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/two_qubit_gate_sweep"]
-
-    two_qubit_gate_fidelities = [1.0, 0.9999, 0.9995, 0.999, 0.998, 0.995]  # Sweep only the two-qubit gate fidelity.
-    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
-        args = ["--two_qubit_gate_fidelity", str(two_qubit_gate_fidelity)]
-        tasks.append(command + base_args + args)
-
-    run_tasks(tasks, parallel=10)
-
-
-def main_ft_mode_sweep() -> None:
-    """Run an FT-preparation-mode sweep at fixed topology and hardware settings.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--config_file", "config/standard_configs/line_6_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_t1_sec", "1000000000000.0", "--idle_t2_sec", "1000000000000.0", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/ft_mode_sweep"]
-
-    ft_prep_modes = ["none", "minimal", "standard"]  # Sweep only FT preparation mode.
-    for ft_prep_mode in ft_prep_modes:
-        args = ["--ft_prep_mode", ft_prep_mode]
-        tasks.append(command + base_args + args)
-
-    run_tasks(tasks, parallel=10)
-
-
-def main_css_code_sweep() -> None:
-    """Run a CSS-code sweep at fixed topology and hardware settings.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--config_file", "config/standard_configs/line_6_2G.json", "--target_fidelity", "0.8", "--num_logical_pairs", "30", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--two_qubit_gate_fidelity", "1.0", "--idle_t1_sec", "1000000000000.0", "--idle_t2_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/css_code_sweep"]
-
-    css_codes = ["[[7,1,3]]"]  # Add more CSS codes here when they are available.
-    for css_code in css_codes:
-        args = ["--css_code", css_code]
-        tasks.append(command + base_args + args)
-
-    run_tasks(tasks, parallel=10)
-
-
-def main_distance_twoq_code_sweep() -> None:
-    """Run a sweep over link distance, two-qubit gate fidelity, and CSS code.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--config_file", "config/standard_configs/line_6_2G.json", "--target_fidelity", "0.8", "--num_logical_pairs", "200", "--gate_fidelity", "1.0", "--idle_t1_sec", "1000000000000.0", "--idle_t2_sec", "1000000000000.0", "--ft_prep_mode", "minimal", "--idle_pauli_x", "0.05", "--idle_pauli_y", "0.05", "--idle_pauli_z", "0.9", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/distance_twoq_code_sweep"]
-
-    distance_duration_pairs = [(1.0, 1000.0), (10.0, 10000.0), (50.0, 50000.0), (100.0, 100000.0)]
-    two_qubit_gate_fidelities = [1.0, 0.9999, 0.9995, 0.999, 0.998, 0.995]
-    css_codes = ["[[7,1,3]]"]  # Add more codes here when available.
-    for link_distance_km, run_duration_ms in distance_duration_pairs:
-        for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
-            for css_code in css_codes:
-                args = ["--link_distance_km", str(link_distance_km), "--run_duration_ms", str(run_duration_ms), "--two_qubit_gate_fidelity", str(two_qubit_gate_fidelity), "--css_code", css_code]
-                tasks.append(command + base_args + args)
-
-    run_tasks(tasks, parallel=10)
-
-
 # Graph 1
 def main_graph1_twoqubit_gate_sweep() -> None:
     """Compare correction modes across a sweep of two-qubit gate fidelities.
@@ -257,8 +120,7 @@ def main_graph2_data_coherence_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_11_2G.json", "--num_logical_pairs", "1000", "--run_duration_ms", "10000.0", "--log_directory", "log/runner/graph2_t2_sweep"]
 
-    # idle_t2_times = [0.01, 0.1, 1, 5, 10, 50, 100, 200]  # Sweep only T2 in seconds while holding T1 fixed.
-    idle_t2_times = [199.99]  # Sweep only T2 in seconds while holding T1 fixed.
+    idle_t2_times = [0.01, 0.1, 1, 5, 10, 50, 100, 199.99]  # Sweep only T2 in seconds while holding T1 fixed.
 
     correction_modes = ["none", "cec", "qec"]
     for idle_t2_sec in idle_t2_times:
@@ -335,8 +197,9 @@ def main_graph4_link_count_sweep() -> None:
     run_tasks(tasks, parallel=32)
 
 
-def main_two_qubit_qec_isolation() -> None:
-    """Sweep only two-qubit gate fidelity under otherwise ideal local conditions.
+# Graph 5
+def main_graph5_inter_node_distance_sweep() -> None:
+    """Run a 6-node sweep while varying only the inter-node distance.
 
     Args:
         None.
@@ -347,28 +210,27 @@ def main_two_qubit_qec_isolation() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = ["--config_file", "config/standard_configs/line_6_2G.json", "--css_code", "[[7,1,3]]", "--target_fidelity", "0.8", "--num_logical_pairs", "200", "--link_distance_km", "10.0", "--gate_fidelity", "1.0", "--measurement_fidelity", "1.0", "--idle_t1_sec", "1e12", "--idle_t2_sec", "1e12", "--ft_prep_mode", "minimal", "--run_duration_ms", "100000.0", "--round_spacing_ms", "1.0", "--log_directory", "log/runner/two_qubit_qec_isolation"]
+    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_6_2G.json", "--num_logical_pairs", "1000", "--run_duration_ms", "10000.0", "--log_directory", "log/runner/graph5_inter_node_distance_sweep"]
 
-    two_qubit_gate_fidelities = ["1.0", "0.9999", "0.9995", "0.999", "0.998", "0.995"]  # Sweep only the two-qubit gate fidelity.
-    correction_modes = ["none", "cec","qec"]  # Compare the uncorrected baseline against pre-swap QEC.
-    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
+    inter_node_distances_km = ["1.0", "2.5", "5.0", "7.5", "10.0", "25.0", "50.0", "100.0"]
+    correction_modes = ["none", "cec", "qec"]
+    for inter_node_distance_km in inter_node_distances_km:
         for correction_mode in correction_modes:
-            args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity, "--correction_mode", correction_mode]
+            args = ["--link_distance_km", inter_node_distance_km, "--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=10)
+    run_tasks(tasks, parallel=8)
 
 
 if __name__ == "__main__":
 
-    # Qubit Overhead Table
-    # Uses plot.ipynb, not runner.py.
+    # Graphs are plotted in plot.ipynb, which reads from the log directories specified in each graph's function. To generate new data, uncomment the desired graph function calls below and run this script.
 
     # Graph 1
     # main_graph1_twoqubit_gate_sweep() 
 
     # Graph 2
-    main_graph2_data_coherence_sweep()
+    # main_graph2_data_coherence_sweep()
 
     # Graph 3
     # main_graph3_distance_sweep()
@@ -376,9 +238,5 @@ if __name__ == "__main__":
     # Graph 4
     # main_graph4_link_count_sweep()
 
-    # Existing sweeps
-    # main_two_qubit_gate_sweep()
-    # main_distance_sweep()
-    # main_distance_twoq_code_sweep()
-    # main_node_count_sweep()
-    # main_css_code_sweep()
+    # Graph 5
+    main_graph5_inter_node_distance_sweep()
