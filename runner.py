@@ -210,17 +210,17 @@ def main_graph5_inter_node_distance_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_6_2G.json", "--num_logical_pairs", "100", "--run_duration_ms", "10000.0", "--log_directory", "log/runner/graph5_inter_node_distance_sweep"]
+    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_6_2G.json", "--num_logical_pairs", "1000", "--run_duration_ms", "10000.0", "--log_directory", "log/runner/graph5_inter_node_distance_sweep"]
 
     # inter_node_distances_km = ["1.0", "2.5", "5.0", "7.5", "10.0", "25.0", "50.0", "100.0"]
-    inter_node_distances_km = ["100.0"]
+    inter_node_distances_km = ["20", "30", "40", "60", "70", "80", "90"]
     correction_modes = ["none", "cec", "qec"]
     for inter_node_distance_km in inter_node_distances_km:
         for correction_mode in correction_modes:
             args = ["--link_distance_km", inter_node_distance_km, "--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=8)
+    run_tasks(tasks, parallel=21)
 
 
 if __name__ == "__main__":
