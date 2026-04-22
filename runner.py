@@ -255,9 +255,10 @@ def main_graph2_data_coherence_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_11_2G.json", "--num_logical_pairs", "1000", "--run_duration_ms", "700000.0", "--log_directory", "log/runner/graph2_t2_sweep"]
+    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_11_2G.json", "--num_logical_pairs", "1000", "--run_duration_ms", "10000.0", "--log_directory", "log/runner/graph2_t2_sweep"]
 
-    idle_t2_times = [0.01, 0.1, 1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0]  # Sweep only T2 in seconds while holding T1 fixed.
+    # idle_t2_times = [0.01, 0.1, 1, 5, 10, 50, 100, 200]  # Sweep only T2 in seconds while holding T1 fixed.
+    idle_t2_times = [199.99]  # Sweep only T2 in seconds while holding T1 fixed.
 
     correction_modes = ["none", "cec", "qec"]
     for idle_t2_sec in idle_t2_times:
@@ -265,7 +266,7 @@ def main_graph2_data_coherence_sweep() -> None:
             args = ["--idle_t2_sec", str(idle_t2_sec), "--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=10)
+    run_tasks(tasks, parallel=24)
 
 
 # Graph 3
@@ -284,7 +285,9 @@ def main_graph3_distance_sweep() -> None:
     correction_modes = ["none", "cec", "qec"]
     # Tuples are (config_file, run_duration_ms).
     # config_duration_pairs = [("config/standard_configs/line_2_2G.json", 10000.0), ("config/standard_configs/line_6_2G.json", 50000.0), ("config/standard_configs/line_11_2G.json", 100000.0), ("config/standard_configs/line_26_2G.json", 250000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
-    config_duration_pairs = [("config/standard_configs/line_26_2G.json", 250000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
+    # config_duration_pairs = [("config/standard_configs/line_26_2G.json", 250000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
+    config_duration_pairs = [("config/standard_configs/line_26_2G.json", 10000.0), ("config/standard_configs/line_51_2G.json", 10000.0)]
+    # config_duration_pairs = [("config/standard_configs/line_101_2G.json", 10000.0)]
 
     for config_file, run_duration_ms in config_duration_pairs:
         base_args = BASE_ARGS + ["--config_file", config_file, "--num_logical_pairs", "1000", "--run_duration_ms", str(run_duration_ms), "--log_directory", "log/runner/graph3_distance_sweep"]
@@ -311,13 +314,13 @@ def main_graph4_link_count_sweep() -> None:
     correction_modes = ["none", "cec", "qec"]
     total_end_to_end_distance_km = 100.0
     config_duration_pairs = [
-        ("config/standard_configs/line_2_2G.json", 10000.0),
-        ("config/standard_configs/line_3_2G.json", 20000.0),
-        ("config/standard_configs/line_6_2G.json", 50000.0),
-        ("config/standard_configs/line_11_2G.json", 100000.0),
-        ("config/standard_configs/line_21_2G.json", 200000.0),
-        ("config/standard_configs/line_51_2G.json", 500000.0),
-        ("config/standard_configs/line_101_2G.json", 1000000.0),
+        ("config/standard_configs/line_2_2G.json",   10000.0),
+        ("config/standard_configs/line_3_2G.json",   10000.0),
+        ("config/standard_configs/line_6_2G.json",   10000.0),
+        ("config/standard_configs/line_11_2G.json",  10000.0),
+        ("config/standard_configs/line_21_2G.json",  10000.0),
+        ("config/standard_configs/line_51_2G.json",  10000.0),
+        ("config/standard_configs/line_101_2G.json", 10000.0),
     ]
 
     for config_file, run_duration_ms in config_duration_pairs:
@@ -329,7 +332,7 @@ def main_graph4_link_count_sweep() -> None:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=10)
+    run_tasks(tasks, parallel=32)
 
 
 def main_two_qubit_qec_isolation() -> None:
@@ -362,13 +365,13 @@ if __name__ == "__main__":
     # Uses plot.ipynb, not runner.py.
 
     # Graph 1
-    main_graph1_twoqubit_gate_sweep() 
+    # main_graph1_twoqubit_gate_sweep() 
 
     # Graph 2
-    # main_graph2_data_coherence_sweep()
+    main_graph2_data_coherence_sweep()
 
     # Graph 3
-    main_graph3_distance_sweep()
+    # main_graph3_distance_sweep()
 
     # Graph 4
     # main_graph4_link_count_sweep()
