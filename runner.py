@@ -212,7 +212,9 @@ def main_graph5_inter_node_distance_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_6_2G.json", "--num_logical_pairs", "1000", "--run_duration_ms", "10000.0", "--log_directory", "log/runner/graph5_inter_node_distance_sweep"]
 
-    inter_node_distances_km = ["1.0", "2.5", "5.0", "7.5", "10.0", "25.0", "50.0", "100.0"]
+    # inter_node_distances_km = ["1.0", "2.5", "5.0", "7.5", "10.0", "25.0", "50.0", "100.0"]
+    inter_node_distances_km = ["100.0"]
+
     correction_modes = ["none", "cec", "qec"]
     for inter_node_distance_km in inter_node_distances_km:
         for correction_mode in correction_modes:
