@@ -2,7 +2,7 @@
     "templates": {
         "qec": {
             "memory": {
-                "fidelity": 1.0,
+                "fidelity": 0.99,
                 "efficiency": 0.9
             },
             "SingleAtomBSM": {
