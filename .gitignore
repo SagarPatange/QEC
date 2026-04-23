@@ -23,7 +23,6 @@ QEC_protcol.py
 tmp/
 *test.json
 stim_bug.ipynb
-*.png
 *.csv
 *.pkl
 test2.py
