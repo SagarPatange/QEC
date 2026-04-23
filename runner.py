@@ -267,3 +267,6 @@ if __name__ == "__main__":
 
     # Graph 5
     main_graph5_inter_node_distance_sweep()
+
+    # Graph 6
+    main_graph6_physical_bell_pair_fidelity_sweep()

@@ -48,7 +48,7 @@ def main() -> None:
     parser.add_argument("--correction_mode", type=str, choices=["none", "cec", "qec", "qec+cec"], default="cec")
     parser.add_argument("--target_fidelity", type=float, default=0.8)
     parser.add_argument("--num_logical_pairs", type=int, default=3)
-    parser.add_argument("--link_distance_km", type=float)
+    parser.add_argument("--link_distance_km", type=float, default=20)
     parser.add_argument("--gate_fidelity", type=float)
     parser.add_argument("--two_qubit_gate_fidelity", type=float)
     parser.add_argument("--measurement_fidelity", type=float)
@@ -111,7 +111,7 @@ def main() -> None:
 
     # Update all optical link distances together when sweeping link length.
     if args.link_distance_km is not None:
-        half_distance_m = float(args.link_distance_km) * 1000.0 / 2.0
+        half_distance_m = args.link_distance_km * 1000.0 / 2.0
         for qchannel in config["qchannels"]:
             qchannel["distance"] = half_distance_m
 
