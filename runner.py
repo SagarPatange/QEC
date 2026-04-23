@@ -8,7 +8,7 @@ BASE_ARGS = [
     "--config_file", "config/standard_configs/line_6_2G.json",
     "--css_code", "[[7,1,3]]",
     "--target_fidelity", "0.8",
-    "--num_logical_pairs", "200",
+    "--num_logical_pairs", "1000",
     "--link_distance_km", "20.0",
     "--gate_fidelity", "0.9996",
     "--two_qubit_gate_fidelity", "0.997",
@@ -102,7 +102,7 @@ def main_graph1_twoqubit_gate_sweep() -> None:
             ]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=32)
+    run_tasks(tasks, parallel=21)
 
 
 # Graph 2
@@ -131,7 +131,7 @@ def main_graph2_data_coherence_sweep() -> None:
     run_tasks(tasks, parallel=24)
 
 
-# Graph 3
+# Graph 3 (slow)
 def main_graph3_distance_sweep() -> None:
     """Run one distance sweep for both latency and fidelity plots.
 
@@ -145,22 +145,21 @@ def main_graph3_distance_sweep() -> None:
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
     correction_modes = ["none", "cec", "qec"]
-    # Tuples are (config_file, run_duration_ms).
-    config_duration_pairs = [("config/standard_configs/line_2_2G.json"), ("config/standard_configs/line_6_2G.json"), 
-                             ("config/standard_configs/line_11_2G.json",), ("config/standard_configs/line_26_2G.json"), 
-                             ("config/standard_configs/line_51_2G.json"), ("config/standard_configs/line_101_2G.json" )]
+    config_duration_pairs = [#("config/standard_configs/line_2_2G.json"), ("config/standard_configs/line_6_2G.json"), 
+                             #("config/standard_configs/line_11_2G.json"), ("config/standard_configs/line_26_2G.json"), 
+                             #("config/standard_configs/line_51_2G.json"),
+                             ("config/standard_configs/line_101_2G.json" )]
    
-   # config_duration_pairs = [("config/standard_configs/line_101_2G.json", 10000.0)]
     for config_file in config_duration_pairs:
         base_args = BASE_ARGS + ["--config_file", config_file, "--log_directory", "log/runner/graph3_distance_sweep"]
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=10)
+    run_tasks(tasks, parallel=18)
 
 
-# Graph 4
+# Graph 4 (slow)
 def main_graph4_link_count_sweep() -> None:
     """Run a fixed-total-distance sweep while varying repeater count.
 
@@ -194,10 +193,10 @@ def main_graph4_link_count_sweep() -> None:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=32)
+    run_tasks(tasks, parallel=21)
 
 
-# Graph 5
+# Graph 5 (slow)
 def main_graph5_inter_node_distance_sweep() -> None:
     """Run a 6-node sweep while varying only the inter-node distance.
 
@@ -212,7 +211,8 @@ def main_graph5_inter_node_distance_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     base_args = BASE_ARGS + ["--run_duration_ms", "20000.0", "--log_directory", "log/runner/graph5_inter_node_distance_sweep"]
 
-    inter_node_distances_km = ["1.0", "5.0", "10.0", "20", "30", "40", "50", "60", "70", "80", "90", "100.0", "110.0", "120.0"]
+    # inter_node_distances_km = ["1", "5", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100", "110", "120"]
+    inter_node_distances_km = ["120"]
 
     correction_modes = ["none", "cec", "qec"]
     for inter_node_distance_km in inter_node_distances_km:
@@ -220,7 +220,8 @@ def main_graph5_inter_node_distance_sweep() -> None:
             args = ["--link_distance_km", inter_node_distance_km, "--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=21)
+    run_tasks(tasks, parallel=42)
+
 
 # Graph 6
 def main_graph6_physical_bell_pair_fidelity_sweep() -> None:
@@ -236,7 +237,7 @@ def main_graph6_physical_bell_pair_fidelity_sweep() -> None:
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
 
-    log_directory = "log/runner_1.0EntanglementFidelity/graph6_physical_bell_pair_fidelity_sweep"
+    log_directory = "log/runner/graph6_physical_bell_pair_fidelity_sweep"
     base_args = BASE_ARGS + [ "--log_directory", log_directory]
 
     physical_bell_pair_fidelities = ["0.95", "0.96", "0.97", "0.98", "0.99", "0.995", "1.0"]
@@ -246,7 +247,7 @@ def main_graph6_physical_bell_pair_fidelity_sweep() -> None:
             args = ["--physical_bell_pair_fidelity", physical_bell_pair_fidelity, "--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=24)
+    run_tasks(tasks, parallel=21)
 
 
 if __name__ == "__main__":
@@ -260,13 +261,13 @@ if __name__ == "__main__":
     # main_graph2_data_coherence_sweep()
 
     # Graph 3
-    # main_graph3_distance_sweep()
+    main_graph3_distance_sweep()
 
     # Graph 4
     # main_graph4_link_count_sweep()
 
     # Graph 5
-    main_graph5_inter_node_distance_sweep()
+    # main_graph5_inter_node_distance_sweep()
 
     # Graph 6
-    main_graph6_physical_bell_pair_fidelity_sweep()
+    # main_graph6_physical_bell_pair_fidelity_sweep()
