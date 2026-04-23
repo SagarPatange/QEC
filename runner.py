@@ -5,11 +5,11 @@ from subprocess import PIPE, Popen
 
 
 BASE_ARGS = [
-    "--config_file", "config/standard_configs/line_11_2G.json",
+    "--config_file", "config/standard_configs/line_6_2G.json",
     "--css_code", "[[7,1,3]]",
     "--target_fidelity", "0.8",
     "--num_logical_pairs", "200",
-    "--link_distance_km", "10.0",
+    "--link_distance_km", "20.0",
     "--gate_fidelity", "0.9996",
     "--two_qubit_gate_fidelity", "0.997",
     "--measurement_fidelity", "0.995",
@@ -85,7 +85,7 @@ def main_graph1_twoqubit_gate_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_11_2G.json", "--num_logical_pairs", "1000", "--log_directory", "log/runner/graph1_twoqubit_gate_sweep"]
+    base_args = BASE_ARGS + ["--log_directory", "log/runner/graph1_twoqubit_gate_sweep"]
 
     two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1.0"]
 
@@ -118,9 +118,9 @@ def main_graph2_data_coherence_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_11_2G.json", "--num_logical_pairs", "1000", "--run_duration_ms", "10000.0", "--log_directory", "log/runner/graph2_t2_sweep"]
+    base_args = BASE_ARGS + ["--log_directory", "log/runner/graph2_t2_sweep"]
 
-    idle_t2_times = [0.01, 0.1, 1, 5, 10, 50, 100, 199.99]  # Sweep only T2 in seconds while holding T1 fixed.
+    idle_t2_times = [0.01, 0.1, 1, 5, 10, 50, 100, 199.999]  # Sweep only T2 in seconds while holding T1 fixed.
 
     correction_modes = ["none", "cec", "qec"]
     for idle_t2_sec in idle_t2_times:
@@ -146,13 +146,13 @@ def main_graph3_distance_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     correction_modes = ["none", "cec", "qec"]
     # Tuples are (config_file, run_duration_ms).
-    # config_duration_pairs = [("config/standard_configs/line_2_2G.json", 10000.0), ("config/standard_configs/line_6_2G.json", 50000.0), ("config/standard_configs/line_11_2G.json", 100000.0), ("config/standard_configs/line_26_2G.json", 250000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
-    # config_duration_pairs = [("config/standard_configs/line_26_2G.json", 250000.0), ("config/standard_configs/line_51_2G.json", 500000.0), ("config/standard_configs/line_101_2G.json", 1000000.0)]
-    config_duration_pairs = [("config/standard_configs/line_26_2G.json", 10000.0), ("config/standard_configs/line_51_2G.json", 10000.0)]
-    # config_duration_pairs = [("config/standard_configs/line_101_2G.json", 10000.0)]
-
-    for config_file, run_duration_ms in config_duration_pairs:
-        base_args = BASE_ARGS + ["--config_file", config_file, "--num_logical_pairs", "1000", "--run_duration_ms", str(run_duration_ms), "--log_directory", "log/runner/graph3_distance_sweep"]
+    config_duration_pairs = [("config/standard_configs/line_2_2G.json"), ("config/standard_configs/line_6_2G.json"), 
+                             ("config/standard_configs/line_11_2G.json",), ("config/standard_configs/line_26_2G.json"), 
+                             ("config/standard_configs/line_51_2G.json"), ("config/standard_configs/line_101_2G.json" )]
+   
+   # config_duration_pairs = [("config/standard_configs/line_101_2G.json", 10000.0)]
+    for config_file in config_duration_pairs:
+        base_args = BASE_ARGS + ["--config_file", config_file, "--log_directory", "log/runner/graph3_distance_sweep"]
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
@@ -176,20 +176,20 @@ def main_graph4_link_count_sweep() -> None:
     correction_modes = ["none", "cec", "qec"]
     total_end_to_end_distance_km = 100.0
     config_duration_pairs = [
-        ("config/standard_configs/line_2_2G.json",   10000.0),
-        ("config/standard_configs/line_3_2G.json",   10000.0),
-        ("config/standard_configs/line_6_2G.json",   10000.0),
-        ("config/standard_configs/line_11_2G.json",  10000.0),
-        ("config/standard_configs/line_21_2G.json",  10000.0),
-        ("config/standard_configs/line_51_2G.json",  10000.0),
-        ("config/standard_configs/line_101_2G.json", 10000.0),
+        ("config/standard_configs/line_2_2G.json"),
+        ("config/standard_configs/line_3_2G.json"),
+        ("config/standard_configs/line_6_2G.json"),
+        ("config/standard_configs/line_11_2G.json"),
+        ("config/standard_configs/line_21_2G.json"),
+        ("config/standard_configs/line_51_2G.json"),
+        ("config/standard_configs/line_101_2G.json"),
     ]
 
-    for config_file, run_duration_ms in config_duration_pairs:
+    for config_file in config_duration_pairs:
         node_count = int(Path(config_file).stem.split("_")[1])
         num_links = node_count - 1
         inter_node_distance_km = total_end_to_end_distance_km / num_links
-        base_args = BASE_ARGS + ["--config_file", config_file, "--link_distance_km", str(inter_node_distance_km), "--num_logical_pairs", "1000", "--run_duration_ms", str(run_duration_ms), "--log_directory", "log/runner/graph4_link_count_sweep"]
+        base_args = BASE_ARGS + ["--config_file", config_file, "--link_distance_km", str(inter_node_distance_km), "--log_directory", "log/runner/graph4_link_count_sweep"]
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
@@ -210,10 +210,10 @@ def main_graph5_inter_node_distance_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = BASE_ARGS + ["--config_file", "config/standard_configs/line_6_2G.json", "--num_logical_pairs", "1000", "--run_duration_ms", "10000.0", "--log_directory", "log/runner/graph5_inter_node_distance_sweep"]
+    base_args = BASE_ARGS + ["--run_duration_ms", "20000.0", "--log_directory", "log/runner/graph5_inter_node_distance_sweep"]
 
-    # inter_node_distances_km = ["1.0", "2.5", "5.0", "7.5", "10.0", "25.0", "50.0", "100.0"]
-    inter_node_distances_km = ["20", "30", "40", "60", "70", "80", "90"]
+    inter_node_distances_km = ["1.0", "5.0", "10.0", "20", "30", "40", "50", "60", "70", "80", "90", "100.0", "110.0", "120.0"]
+
     correction_modes = ["none", "cec", "qec"]
     for inter_node_distance_km in inter_node_distances_km:
         for correction_mode in correction_modes:
@@ -221,6 +221,32 @@ def main_graph5_inter_node_distance_sweep() -> None:
             tasks.append(command + base_args + args)
 
     run_tasks(tasks, parallel=21)
+
+# Graph 6
+def main_graph6_physical_bell_pair_fidelity_sweep() -> None:
+    """Run a 6-node sweep while varying only the physical Bell-pair fidelity.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+
+    log_directory = "log/runner_1.0EntanglementFidelity/graph6_physical_bell_pair_fidelity_sweep"
+    base_args = BASE_ARGS + [ "--log_directory", log_directory]
+
+    physical_bell_pair_fidelities = ["0.95", "0.96", "0.97", "0.98", "0.99", "0.995", "1.0"]
+    correction_modes = ["none", "cec", "qec"]
+    for physical_bell_pair_fidelity in physical_bell_pair_fidelities:
+        for correction_mode in correction_modes:
+            args = ["--physical_bell_pair_fidelity", physical_bell_pair_fidelity, "--correction_mode", correction_mode]
+            tasks.append(command + base_args + args)
+
+    run_tasks(tasks, parallel=24)
 
 
 if __name__ == "__main__":

@@ -63,6 +63,7 @@ def main() -> None:
     parser.add_argument("--idle_pauli_y", type=float)
     parser.add_argument("--idle_pauli_z", type=float)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--physical_bell_pair_fidelity", type=float, default=0.99)
     args = parser.parse_args()
 
     config_file = args.config_file
@@ -81,6 +82,9 @@ def main() -> None:
 
     with open(config_file, "r", encoding="utf-8") as file:
         config = json.load(file)
+
+
+    config["templates"]["qec"]["memory"]["fidelity"] = float(args.physical_bell_pair_fidelity)
 
     # Apply per-router hardware and protocol overrides from the CLI.
     for node in config["nodes"]:
@@ -125,6 +129,7 @@ def main() -> None:
 
     os.makedirs(args.log_directory, exist_ok=True)
 
+    # Create a log filename that captures the key config parameters for easy identification when browsing files.
     config_tag = os.path.splitext(os.path.basename(args.config_file))[0]
     dist_tag = "cfg" if args.link_distance_km is None else str(args.link_distance_km)
     gate_tag = "cfg" if args.gate_fidelity is None else str(args.gate_fidelity)
@@ -134,6 +139,7 @@ def main() -> None:
     t2_tag = "cfg" if args.idle_t2_sec is None else str(args.idle_t2_sec)
     ft_tag = "cfg" if args.ft_prep_mode is None else args.ft_prep_mode
     pauli_tag = "cfg" if args.idle_pauli_x is None else f"{args.idle_pauli_x}_{args.idle_pauli_y}_{args.idle_pauli_z}"
+    phys_bell_tag = "cfg" if args.physical_bell_pair_fidelity is None else str(args.physical_bell_pair_fidelity)
     correction_tag = args.correction_mode
     timestamp_tag = datetime.now().strftime("%Y%m%d_%H%M")
 
@@ -143,8 +149,9 @@ def main() -> None:
     log_filename = (
         f"{args.log_directory}/{config_tag},code={args.css_code},dist={dist_tag},"
         f"gate={gate_tag},twoq={twoq_tag},prep={prep_tag},T1={t1_tag},T2={t2_tag},"
-        f"ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag},ts={timestamp_tag}"
+        f"ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag},physbell={phys_bell_tag},ts={timestamp_tag}"
     )
+
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level(args.log_level)
     # modules = ["main"]
