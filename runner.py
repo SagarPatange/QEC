@@ -85,7 +85,7 @@ def main_graph1_twoqubit_gate_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = BASE_ARGS + ["--log_directory", "log/runner/graph1_twoqubit_gate_sweep"]
+    base_args = BASE_ARGS + ["--log_directory", "log/runner2/graph1_twoqubit_gate_sweep"]
 
     two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1.0"]
 
@@ -317,7 +317,7 @@ if __name__ == "__main__":
     # main_graph2_data_coherence_sweep()
 
     # Graph 3
-    main_graph3_distance_sweep()
+    # main_graph3_distance_sweep()
 
     # Graph 4
     # main_graph4_link_count_sweep()
@@ -329,4 +329,4 @@ if __name__ == "__main__":
     # main_graph6_physical_bell_pair_fidelity_sweep()
 
     # Graph 7
-    # main_graph7_twoqubit_gate_fidelity_sweep_nice_params()
+    main_graph7_twoqubit_gate_fidelity_sweep_nice_params()
