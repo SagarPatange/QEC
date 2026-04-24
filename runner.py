@@ -91,13 +91,13 @@ def main_graph1_twoqubit_gate_sweep() -> None:
 
     correction_modes = ["none", "cec", "qec"]
     for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
-        gate_fidelity = min(1.0, (0.9996 / 0.997) * float(two_qubit_gate_fidelity))
-        measurement_fidelity = min(1.0, (0.995 / 0.997) * float(two_qubit_gate_fidelity))
+        # gate_fidelity = min(1.0, (0.9996 / 0.997) * float(two_qubit_gate_fidelity))
+        # measurement_fidelity = min(1.0, (0.995 / 0.997) * float(two_qubit_gate_fidelity))
         for correction_mode in correction_modes:
             args = [
                 "--two_qubit_gate_fidelity", two_qubit_gate_fidelity,
-                "--gate_fidelity", f"{gate_fidelity:.6f}",
-                "--measurement_fidelity", f"{measurement_fidelity:.6f}",
+                # "--gate_fidelity", f"{gate_fidelity:.6f}",
+                # "--measurement_fidelity", f"{measurement_fidelity:.6f}",
                 "--correction_mode", correction_mode,
             ]
             tasks.append(command + base_args + args)
@@ -145,9 +145,9 @@ def main_graph3_distance_sweep() -> None:
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
     correction_modes = ["none", "cec", "qec"]
-    config_duration_pairs = [#("config/standard_configs/line_2_2G.json"), ("config/standard_configs/line_6_2G.json"), 
-                             #("config/standard_configs/line_11_2G.json"), ("config/standard_configs/line_26_2G.json"), 
-                             #("config/standard_configs/line_51_2G.json"),
+    config_duration_pairs = [("config/standard_configs/line_2_2G.json"), ("config/standard_configs/line_6_2G.json"), 
+                             ("config/standard_configs/line_11_2G.json"), ("config/standard_configs/line_26_2G.json"), 
+                             ("config/standard_configs/line_51_2G.json"),
                              ("config/standard_configs/line_101_2G.json" )]
    
     for config_file in config_duration_pairs:
