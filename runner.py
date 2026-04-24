@@ -250,6 +250,62 @@ def main_graph6_physical_bell_pair_fidelity_sweep() -> None:
     run_tasks(tasks, parallel=21)
 
 
+# Graph 7
+def main_graph7_twoqubit_gate_fidelity_sweep_nice_params() -> None:
+    """Run a 5-link two-qubit gate-fidelity sweep with favorable parameters.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+
+    config_file = "config/standard_configs/line_6_2G.json"
+    inter_node_distance_km = 20
+    num_logical_pairs = "1000"
+    run_duration_ms = "10000.0"
+    log_directory = "log/runner/graph7_twoqubit_gate_fidelity_sweep_nice_params"
+    physical_bell_pair_fidelity = "0.9999"
+    gate_fidelity = "0.9999"
+    measurement_fidelity = "0.9999"
+    state_preparation_fidelity = "0.99999"
+    idle_t1_sec = "100.0"
+    idle_t2_sec = "100.0"
+    base_args = [
+        "--config_file", config_file,
+        "--css_code", "[[7,1,3]]",
+        "--target_fidelity", "0.8",
+        "--num_logical_pairs", num_logical_pairs,
+        "--link_distance_km", str(inter_node_distance_km),
+        "--gate_fidelity", gate_fidelity,
+        "--measurement_fidelity", measurement_fidelity,
+        "--state_preparation_fidelity", state_preparation_fidelity,
+        "--physical_bell_pair_fidelity", physical_bell_pair_fidelity,
+        "--gate_error_channel", "pauli",
+        "--idle_t1_sec", idle_t1_sec,
+        "--idle_t2_sec", idle_t2_sec,
+        "--ft_prep_mode", "minimal",
+        "--idle_pauli_x", "0.05",
+        "--idle_pauli_y", "0.05",
+        "--idle_pauli_z", "0.9",
+        "--run_duration_ms", run_duration_ms,
+        "--round_spacing_ms", "1.0",
+        "--log_directory", log_directory]
+
+    two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "0.9999", "1"]
+    correction_modes = ["none", "cec", "qec"]
+    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
+        for correction_mode in correction_modes:
+            args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity, "--correction_mode", correction_mode]
+            tasks.append(command + base_args + args)
+
+    run_tasks(tasks, parallel=24)
+
+
 if __name__ == "__main__":
 
     # Graphs are plotted in plot.ipynb, which reads from the log directories specified in each graph's function. To generate new data, uncomment the desired graph function calls below and run this script.
@@ -271,3 +327,6 @@ if __name__ == "__main__":
 
     # Graph 6
     # main_graph6_physical_bell_pair_fidelity_sweep()
+
+    # Graph 7
+    # main_graph7_twoqubit_gate_fidelity_sweep_nice_params()
