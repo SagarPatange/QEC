@@ -305,6 +305,67 @@ def main_graph7_twoqubit_gate_fidelity_sweep_nice_params() -> None:
 
     run_tasks(tasks, parallel=24)
 
+def main_graph8_ideal_params_distance_sweep() -> None:
+    """Run a fixed-20-km/link distance sweep with near-ideal hardware.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+
+    config_files = [
+        "config/standard_configs/line_2_2G.json",
+        "config/standard_configs/line_3_2G.json",
+        "config/standard_configs/line_6_2G.json",
+        "config/standard_configs/line_11_2G.json",
+        "config/standard_configs/line_21_2G.json",
+        "config/standard_configs/line_51_2G.json",
+        "config/standard_configs/line_101_2G.json",
+        "config/standard_configs/line_151_2G.json",
+        "config/standard_configs/line_201_2G.json",
+    ]
+
+    inter_node_distance_km = "20.0"
+    log_directory = "log/runner/graph8_ideal_params_distance_sweep"
+
+    base_args = [
+        "--css_code", "[[7,1,3]]",
+        "--target_fidelity", "0.8",
+        "--num_logical_pairs", "1000",
+        "--link_distance_km", inter_node_distance_km,
+        "--gate_fidelity", "0.9999",
+        "--two_qubit_gate_fidelity", "0.9999",
+        "--measurement_fidelity", "0.9999",
+        "--state_preparation_fidelity", "0.99999",
+        "--physical_bell_pair_fidelity", "0.999",
+        "--gate_error_channel", "pauli",
+        "--idle_t1_sec", "100.0",
+        "--idle_t2_sec", "100.0",
+        "--ft_prep_mode", "minimal",
+        "--idle_pauli_x", "0.05",
+        "--idle_pauli_y", "0.05",
+        "--idle_pauli_z", "0.9",
+        "--run_duration_ms", "10000.0",
+        "--round_spacing_ms", "1.0",
+        "--log_directory", log_directory,
+    ]
+
+    correction_modes = ["none", "cec", "qec"]
+    for config_file in config_files:
+        for correction_mode in correction_modes:
+            args = [
+                "--config_file", config_file,
+                "--correction_mode", correction_mode,
+            ]
+            tasks.append(command + base_args + args)
+
+    run_tasks(tasks, parallel=9)
+
 
 if __name__ == "__main__":
 
@@ -329,4 +390,8 @@ if __name__ == "__main__":
     # main_graph6_physical_bell_pair_fidelity_sweep()
 
     # Graph 7
-    main_graph7_twoqubit_gate_fidelity_sweep_nice_params()
+    # main_graph7_twoqubit_gate_fidelity_sweep_nice_params()
+
+    # Graph 8
+    main_graph8_ideal_params_distance_sweep()
+
