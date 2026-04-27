@@ -88,6 +88,7 @@ class RequestLogicalPairApp:
             "link_logical_fidelities": {},
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
+            "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
             "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
@@ -172,6 +173,7 @@ class RequestLogicalPairApp:
             "link_logical_fidelities": {},
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
+            "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
             "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
@@ -214,6 +216,7 @@ class RequestLogicalPairApp:
             "link_logical_fidelities": {},
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
+            "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
             "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
@@ -317,10 +320,11 @@ class RequestLogicalPairApp:
         Returns:
             float: Pair fidelity.
         """
+        qm = self.node.timeline.quantum_manager
+
         # Resolve the endpoint apps and the shared tableau manager for the pair being scored.
         left_app = self.node.timeline.get_entity_by_name(left_node).request_logical_pair_app
         right_app = self.node.timeline.get_entity_by_name(right_node).request_logical_pair_app
-        qm = self.node.timeline.quantum_manager
 
         # Build a read-only tableau copy for the requested qubits.
         # This keeps fidelity evaluation from mutating the live simulation state.
@@ -403,14 +407,15 @@ class RequestLogicalPairApp:
             if len(decode_table) == 0:
                 return {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
 
-            def syndrome_bit(stabilizer: str) -> int:
-                """Compute one binary syndrome bit from a stabilizer expectation.
+            def syndrome_bit(stabilizer: str) -> int | None:
+                """Compute one syndrome bit from a stabilizer expectation.
 
                 Args:
                     stabilizer: Pauli stabilizer string over the block.
 
                 Returns:
-                    int: Syndrome bit, where +1 maps to 0 and -1 maps to 1.
+                    int | None: Syndrome bit, where +1 maps to 0 and -1 maps to 1.
+                        Returns ``None`` when the stabilizer is non-deterministic.
                 """
                 # Peek the stabilizer on the copied tableau and convert the sign into a syndrome bit.
                 observable = stim.PauliString(len(key_to_local))
@@ -420,17 +425,35 @@ class RequestLogicalPairApp:
                 expectation = float(sim.peek_observable_expectation(observable))
                 if expectation > 0.5:
                     return 0
-                elif expectation < -0.5:
+                if expectation < -0.5:
                     return 1
-                elif abs(expectation) <= 0.5:
-                    return 0.5 # Non-deterministic stabilizer, which can happen in a non-trivial decode table when the error is uncorrectable. This will be treated as a decoding failure and not trigger any correction, but we allow it to be non-deterministic rather than forcing it to be either 0 or 1.
-                raise RuntimeError(f"{self.name}: non-deterministic stabilizer expectation for {stabilizer}: {expectation}")
+                if abs(expectation) <= 0.5:
+                    log.logger.warning(
+                        f"{self.name}: nondeterministic_stabilizer block_keys={block_keys} "
+                        f"stabilizer={stabilizer} expectation={expectation:.6f}"
+                    )
+                    return None  # Non-deterministic stabilizer; treat as decode failure and skip correction.
+                raise RuntimeError(f"{self.name}: unexpected stabilizer expectation {expectation}")
+
+            def decode_syndrome(syndrome: list[int | None]) -> int | None:
+                """Decode one syndrome when all bits are deterministic.
+
+                Args:
+                    syndrome: Syndrome bits for one error type.
+
+                Returns:
+                    int | None: Qubit index to correct, or ``None`` when the
+                        syndrome is zero or non-deterministic.
+                """
+                if any(bit is None for bit in syndrome):
+                    return None
+                return decode_table[tuple(int(bit) for bit in syndrome)]
 
             # In a CSS code, Z stabilizers locate X errors and X stabilizers locate Z errors.
             x_syndrome = [syndrome_bit(stabilizer) for stabilizer in self.code.get_x_stabilizer_strings()]
             z_syndrome = [syndrome_bit(stabilizer) for stabilizer in self.code.get_z_stabilizer_strings()]
-            x_error_qubit = decode_table[tuple(z_syndrome)]
-            z_error_qubit = decode_table[tuple(x_syndrome)]
+            x_error_qubit = decode_syndrome(z_syndrome)
+            z_error_qubit = decode_syndrome(x_syndrome)
             if x_error_qubit is not None:
                 sim.x(key_to_local[block_keys[int(x_error_qubit)]])
             if z_error_qubit is not None:
@@ -460,6 +483,10 @@ class RequestLogicalPairApp:
                 # Corrected fidelity: recover each endpoint block on the copied tableau before scoring it.
                 left_recovery = recover_block(sim, left_keys, key_to_local)
                 right_recovery = recover_block(sim, right_keys, key_to_local)
+                self.current_run["last_corrected_recovery"] = {
+                    "left_recovery": dict(left_recovery),
+                    "right_recovery": dict(right_recovery),
+                }
 
             # Score the final copied state with logical XX, YY, and ZZ Bell correlators.
             xx_obs = build_joint_observable(left_keys, right_keys, px, key_to_local)
@@ -556,6 +583,74 @@ class RequestLogicalPairApp:
             float: Corrected pair fidelity.
         """
         return self._calculate_pair_fidelity(left_node, right_node, pair_type, recover_endpoints=True)
+
+    def _log_block_stabilizer_snapshot(self, stage: str, block_label: str, block_keys: list[int]) -> None:
+        """Log one stabilizer snapshot for a logical block.
+
+        Args:
+            stage: Short lifecycle stage label for the snapshot.
+            block_label: Human-readable block identifier.
+            block_keys: Quantum-manager keys in code order.
+
+        Returns:
+            None
+        """
+        if len(block_keys) == 0:
+            return
+
+        qm = self.node.timeline.quantum_manager
+        if any(key not in qm.states for key in block_keys):
+            log.logger.info(
+                f"{self.name}: stabilizer_snapshot stage={stage} block={block_label} "
+                f"block_keys={block_keys} status=missing_keys"
+            )
+            return
+
+        unique_states: list["TableauState"] = []
+        seen_state_ids: set[int] = set()
+        for key in block_keys:
+            qstate = qm.states[key]
+            state_id = id(qstate)
+            if state_id not in seen_state_ids:
+                seen_state_ids.add(state_id)
+                unique_states.append(qstate)
+
+        merged_keys: list[int] = []
+        merged_tableau = None
+        for qstate in unique_states:
+            merged_keys.extend(qstate.keys)
+            block_tableau = qstate.current_tableau()
+            merged_tableau = block_tableau if merged_tableau is None else merged_tableau + block_tableau
+
+        if merged_tableau is None:
+            return
+
+        simulator = stim.TableauSimulator()
+        simulator.set_inverse_tableau(merged_tableau.inverse())
+        key_to_local = {key: idx for idx, key in enumerate(merged_keys)}
+
+        def expectation_for(pauli_string: str) -> float:
+            """Return one Pauli expectation for the current block ordering.
+
+            Args:
+                pauli_string: Pauli support string over the logical block.
+
+            Returns:
+                float: Observable expectation value.
+            """
+            observable = stim.PauliString(len(merged_keys))
+            for key, pauli in zip(block_keys, pauli_string):
+                if pauli != "I":
+                    observable[key_to_local[key]] = pauli
+            return float(simulator.peek_observable_expectation(observable))
+
+        x_expectations = [expectation_for(stabilizer) for stabilizer in self.code.get_x_stabilizer_strings()]
+        z_expectations = [expectation_for(stabilizer) for stabilizer in self.code.get_z_stabilizer_strings()]
+        log.logger.info(
+            f"{self.name}: stabilizer_snapshot stage={stage} block={block_label} "
+            f"block_keys={block_keys} state_keys={merged_keys} "
+            f"x_exp={x_expectations} z_exp={z_expectations}"
+        )
 
     def allocate_data_and_ancilla(self, neighbor: str) -> None:
         """Allocate data and required ancilla qubits for one link from local arrays.
@@ -806,6 +901,7 @@ class RequestLogicalPairApp:
                 qm.last_idle_time_ps_by_key[key] = now_ps
             for key in ancilla_keys:
                 qm.last_idle_time_ps_by_key[key] = now_ps
+            self._log_block_stabilizer_snapshot("post_encode", block_neighbor, block_keys)
 
         # Delay TCNOT launch by the total local FT-prep processing time.
         tcnot_start_t = int(self.node.timeline.now()) + total_prep_duration_ps
@@ -889,6 +985,7 @@ class RequestLogicalPairApp:
                 neighbor = reservation.initiator
             self.get_other_physical_reservation(reservation)
         log.logger.info(f"{self.name}: tcnot_complete neighbor={neighbor}")
+        self._log_block_stabilizer_snapshot("post_tcnot", neighbor, [m.qstate_key for m in self.data_qubits[neighbor]])
 
         # Record one-link logical fidelity only on one designated side.
         neighbor_pos = self._path_node_names.index(neighbor)
@@ -985,6 +1082,12 @@ class RequestLogicalPairApp:
 
         # Initiator-only: compute end-to-end logical fidelity for this attempt.
         if self._path_position == 0:
+            left_keys = [m.qstate_key for m in self.data_qubits[self._path_node_names[1]]]
+            right_router = self.node.timeline.get_entity_by_name(self._path_node_names[-1])
+            right_app = right_router.request_logical_pair_app
+            right_keys = [m.qstate_key for m in right_app.data_qubits[self._path_node_names[-2]]]
+            self._log_block_stabilizer_snapshot("pre_final_fidelity", self._path_node_names[0], left_keys)
+            self._log_block_stabilizer_snapshot("pre_final_fidelity", self._path_node_names[-1], right_keys)
             final_fidelity_raw = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
             final_fidelity_corrected = self.calculate_pair_fidelity_corrected(self._path_node_names[0], self._path_node_names[-1], "logical_end")
             log.logger.info(
@@ -1024,11 +1127,25 @@ class RequestLogicalPairApp:
         }
 
         if self.node.name == 'router_0':
+            recovery = self.current_run["last_corrected_recovery"]
+            if isinstance(recovery, dict):
+                left_recovery = dict(recovery["left_recovery"])
+                right_recovery = dict(recovery["right_recovery"])
+            else:
+                left_recovery = {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
+                right_recovery = {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
+            left_has_nd = any(bit is None for bit in left_recovery["x_syndrome"]) or any(bit is None for bit in left_recovery["z_syndrome"])
+            right_has_nd = any(bit is None for bit in right_recovery["x_syndrome"]) or any(bit is None for bit in right_recovery["z_syndrome"])
             log.logger.critical(
                 f"run_id={run_id}, time to serve={latency_ps / MILLISECOND}, "
                 f"fidelity_raw={self.current_run['final_end_to_end_fidelity_raw']:.6f}, "
                 f"fidelity_corrected={self.current_run['final_end_to_end_fidelity_corrected']:.6f}, "
-                f"fidelity={final_fidelity:.6f}"
+                f"fidelity={final_fidelity:.6f}, "
+                f"left_x_s={left_recovery['x_syndrome']}, left_z_s={left_recovery['z_syndrome']}, "
+                f"right_x_s={right_recovery['x_syndrome']}, right_z_s={right_recovery['z_syndrome']}, "
+                f"left_x_q={left_recovery['x_error_qubit']}, left_z_q={left_recovery['z_error_qubit']}, "
+                f"right_x_q={right_recovery['x_error_qubit']}, right_z_q={right_recovery['z_error_qubit']}, "
+                f"left_has_nd={left_has_nd}, right_has_nd={right_has_nd}"
             )
 
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1

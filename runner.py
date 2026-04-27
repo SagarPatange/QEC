@@ -102,7 +102,7 @@ def main_graph1_twoqubit_gate_sweep() -> None:
             ]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=21)
+    run_tasks(tasks, parallel=12)
 
 
 # Graph 2
