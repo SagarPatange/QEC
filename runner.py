@@ -390,52 +390,10 @@ def main_graph8_ideal_params_distance_sweep() -> None:
 
     run_tasks(tasks, parallel=9)
 
-# Test graph 3
-def test_graph_3() -> None:
-    """Run a minimal Graph 3 sweep over two-qubit gate fidelity.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-    base_args = [
-        "--config_file", "config/standard_configs/line_3_2G.json",
-        "--css_code", "[[7,1,3]]",
-        "--target_fidelity", "1",
-        "--num_logical_pairs", "",
-        "--link_distance_km", "1",
-        "--gate_fidelity", "1",
-        "--measurement_fidelity", "1",
-        "--state_preparation_fidelity", "1",
-        "--gate_error_channel", "pauli",
-        "--idle_t1_sec", "1",
-        "--idle_t2_sec", "1",
-        "--ft_prep_mode", "minimal",
-        "--idle_pauli_x", "0",
-        "--idle_pauli_y", "0",
-        "--idle_pauli_z", "1",
-        "--run_duration_ms", "1000",
-        "--round_spacing_ms", "1",
-        "--log_directory", "log/runner-ideal/test_graph3",
-        "--correction_mode", "cec",
-    ]
-
-    two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
-
-    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
-        args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity]
-        tasks.append(command + base_args + args)
-
-    run_tasks(tasks, parallel=7)
 
 
-# Test graph 3
-def test_graph_3() -> None:
+# Test graph 2 qubit sweep.  
+def test_graph_two_qubit_gate_sweep() -> None:
     """Run a minimal Graph 3 sweep over two-qubit gate fidelity.
 
     Args:
@@ -451,14 +409,14 @@ def test_graph_3() -> None:
         "--config_file", "config/standard_configs/line_6_2G.json",
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "1",
-        "--num_logical_pairs", "50",
+        "--num_logical_pairs", "300",
         "--link_distance_km", "1",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
         "--state_preparation_fidelity", "1",
         "--gate_error_channel", "pauli",
-        "--idle_t1_sec", "1",
-        "--idle_t2_sec", "1",
+        "--idle_t1_sec", "1e12",
+        "--idle_t2_sec", "1e12",
         "--ft_prep_mode", "minimal",
         "--idle_pauli_x", "0",
         "--idle_pauli_y", "0",
@@ -466,14 +424,103 @@ def test_graph_3() -> None:
         "--run_duration_ms", "1000",
         "--round_spacing_ms", "1",
         "--two_qubit_gate_fidelity", "1",
-        "--log_directory", "log/runner-ideal/test_graph3",
+        "--log_directory", "log/runner-ideal/test_graph_two_qubit_gate_sweep",
         "--correction_mode", "cec",
+        "--physical_bell_pair_fidelity", "1",
     ]
 
     two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
 
     for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
         args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity]
+        tasks.append(command + base_args + args)
+
+    run_tasks(tasks, parallel=7)
+
+# Test one-qubit gate sweep.
+def test_graph_one_qubit_gate_sweep() -> None:
+    """Run a minimal sweep over one-qubit gate fidelity.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = [
+        "--config_file", "config/standard_configs/line_6_2G.json",
+        "--css_code", "[[7,1,3]]",
+        "--target_fidelity", "1",
+        "--num_logical_pairs", "300",
+        "--link_distance_km", "1",
+        "--measurement_fidelity", "1",
+        "--state_preparation_fidelity", "1",
+        "--gate_error_channel", "pauli",
+        "--idle_t1_sec", "1e12",
+        "--idle_t2_sec", "1e12",
+        "--ft_prep_mode", "minimal",
+        "--idle_pauli_x", "0",
+        "--idle_pauli_y", "0",
+        "--idle_pauli_z", "1",
+        "--run_duration_ms", "1000",
+        "--round_spacing_ms", "1",
+        "--two_qubit_gate_fidelity", "1",
+        "--log_directory", "log/runner-ideal/test_graph_one_qubit_gate_sweep",
+        "--correction_mode", "cec",
+        "--physical_bell_pair_fidelity", "1",
+    ]
+
+    one_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
+
+    for one_qubit_gate_fidelity in one_qubit_gate_fidelities:
+        args = ["--gate_fidelity", one_qubit_gate_fidelity]
+        tasks.append(command + base_args + args)
+
+    run_tasks(tasks, parallel=7)
+
+
+def test_graph_measurement_fidelity_sweep() -> None:
+    """Run a minimal sweep over measurement fidelity.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    base_args = [
+        "--config_file", "config/standard_configs/line_6_2G.json",
+        "--css_code", "[[7,1,3]]",
+        "--target_fidelity", "1",
+        "--num_logical_pairs", "300",
+        "--link_distance_km", "1",
+        "--gate_fidelity", "1",
+        "--state_preparation_fidelity", "1",
+        "--gate_error_channel", "pauli",
+        "--idle_t1_sec", "1e12",
+        "--idle_t2_sec", "1e12",
+        "--ft_prep_mode", "minimal",
+        "--idle_pauli_x", "0",
+        "--idle_pauli_y", "0",
+        "--idle_pauli_z", "1",
+        "--run_duration_ms", "1000",
+        "--round_spacing_ms", "1",
+        "--two_qubit_gate_fidelity", "1",
+        "--log_directory", "log/runner-ideal/test_graph_measurement_fidelity_sweep",
+        "--correction_mode", "cec",
+        "--physical_bell_pair_fidelity", "1",
+    ]
+
+    measurement_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
+
+    for measurement_fidelity in measurement_fidelities:
+        args = ["--measurement_fidelity", measurement_fidelity]
         tasks.append(command + base_args + args)
 
     run_tasks(tasks, parallel=7)
@@ -491,7 +538,7 @@ if __name__ == "__main__":
 
     # Graph 3 (slow)
     # main_graph3_distance_sweep()
-    test_graph_3()
+    # test_graph_two_qubit_gate_sweep()
 
     # Graph 4 (slow)
     # main_graph4_link_count_sweep()
@@ -507,3 +554,15 @@ if __name__ == "__main__":
 
     # Graph 8 (slow)
     # main_graph8_ideal_params_distance_sweep()
+
+    # Test sweeps
+    # test_graph_measurement_fidelity_sweep()
+
+
+
+
+    # test_graph_two_qubit_gate_sweep()
+
+    # test_graph_one_qubit_gate_sweep()
+
+    test_graph_measurement_fidelity_sweep()
