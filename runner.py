@@ -372,7 +372,7 @@ if __name__ == "__main__":
     # Graphs are plotted in plot.ipynb, which reads from the log directories specified in each graph's function. To generate new data, uncomment the desired graph function calls below and run this script.
 
     # Graph 1
-    # main_graph1_twoqubit_gate_sweep() 
+    main_graph1_twoqubit_gate_sweep() 
 
     # Graph 2
     # main_graph2_data_coherence_sweep()
@@ -387,10 +387,10 @@ if __name__ == "__main__":
     # main_graph5_inter_node_distance_sweep()
 
     # Graph 6
-    main_graph6_physical_bell_pair_fidelity_sweep()
+    # main_graph6_physical_bell_pair_fidelity_sweep()
 
     # Graph 7
-    main_graph7_twoqubit_gate_fidelity_sweep_nice_params()
+    # main_graph7_twoqubit_gate_fidelity_sweep_nice_params()
 
     # Graph 8 (slow)
     # main_graph8_ideal_params_distance_sweep()
