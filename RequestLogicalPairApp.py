@@ -420,8 +420,10 @@ class RequestLogicalPairApp:
                 expectation = float(sim.peek_observable_expectation(observable))
                 if expectation > 0.5:
                     return 0
-                if expectation < -0.5:
+                elif expectation < -0.5:
                     return 1
+                elif abs(expectation) <= 0.5:
+                    return 0.5 # Non-deterministic stabilizer, which can happen in a non-trivial decode table when the error is uncorrectable. This will be treated as a decoding failure and not trigger any correction, but we allow it to be non-deterministic rather than forcing it to be either 0 or 1.
                 raise RuntimeError(f"{self.name}: non-deterministic stabilizer expectation for {stabilizer}: {expectation}")
 
             # In a CSS code, Z stabilizers locate X errors and X stabilizers locate Z errors.
