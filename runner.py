@@ -448,10 +448,10 @@ def test_graph_3() -> None:
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
     base_args = [
-        "--config_file", "config/standard_configs/line_3_2G.json",
+        "--config_file", "config/standard_configs/line_6_2G.json",
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "1",
-        "--num_logical_pairs", "",
+        "--num_logical_pairs", "50",
         "--link_distance_km", "1",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
@@ -465,7 +465,7 @@ def test_graph_3() -> None:
         "--idle_pauli_z", "1",
         "--run_duration_ms", "1000",
         "--round_spacing_ms", "1",
-        "two_qubit_gate_fidelity", "1",
+        "--two_qubit_gate_fidelity", "1",
         "--log_directory", "log/runner-ideal/test_graph3",
         "--correction_mode", "cec",
     ]
