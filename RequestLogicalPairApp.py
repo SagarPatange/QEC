@@ -89,6 +89,8 @@ class RequestLogicalPairApp:
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
             "final_end_to_end_fidelity": None,
+            "final_end_to_end_fidelity_raw": None,
+            "final_end_to_end_fidelity_corrected": None,
             "success": None,
             "start_time": None,
             "end_time": None,
@@ -171,6 +173,8 @@ class RequestLogicalPairApp:
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
             "final_end_to_end_fidelity": None,
+            "final_end_to_end_fidelity_raw": None,
+            "final_end_to_end_fidelity_corrected": None,
             "success": None,
             "start_time": None,
             "end_time": None,
@@ -211,6 +215,8 @@ class RequestLogicalPairApp:
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
             "final_end_to_end_fidelity": None,
+            "final_end_to_end_fidelity_raw": None,
+            "final_end_to_end_fidelity_corrected": None,
             "success": None,
             "start_time": int(start_t),
             "end_time": int(end_t),
@@ -299,23 +305,25 @@ class RequestLogicalPairApp:
 
         return False
 
-    def calculate_pair_fidelity(self, left_node: str, right_node: str, pair_type: str) -> float:
-        """Compute non-LOCC fidelity for a physical, one-link logical, or end-to-end logical pair.
+    def _calculate_pair_fidelity(self, left_node: str, right_node: str, pair_type: str, recover_endpoints: bool) -> float:
+        """Compute pair fidelity with optional noiseless endpoint recovery on a copied tableau.
 
         Args:
             left_node: Left node name.
             right_node: Right node name.
             pair_type: One of "physical", "logical_link", or "logical_end".
+            recover_endpoints: Whether to apply noiseless endpoint recovery before evaluating logical correlators.
 
         Returns:
             float: Pair fidelity.
         """
-        # Initialize references to the left and right nodes' logical pair applications.
+        # Resolve the endpoint apps and the shared tableau manager for the pair being scored.
         left_app = self.node.timeline.get_entity_by_name(left_node).request_logical_pair_app
         right_app = self.node.timeline.get_entity_by_name(right_node).request_logical_pair_app
         qm = self.node.timeline.quantum_manager
 
-        # Helper function to build a temporary simulator view for a set of keys, merging tableau blocks if needed.
+        # Build a read-only tableau copy for the requested qubits.
+        # This keeps fidelity evaluation from mutating the live simulation state.
         def build_simulator_from_keys(keys: list[int]) -> tuple[stim.TableauSimulator, dict[int, int]]:
             """Build a temporary simulator view for keys without mutating manager state.
 
@@ -335,6 +343,7 @@ class RequestLogicalPairApp:
                     unique_states.append(qstate)
 
             if len(unique_states) == 1:
+                # Fast path: all requested qubits already share one tableau block.
                 state_obj = unique_states[0]
                 simulator = stim.TableauSimulator()
                 simulator.set_inverse_tableau(state_obj.current_inverse_tableau())
@@ -344,6 +353,7 @@ class RequestLogicalPairApp:
             merged_keys: list[int] = []
             merged_tableau = None
             for qstate in unique_states:
+                # When the pair spans multiple independent blocks, merge them into one temporary tableau.
                 merged_keys.extend(qstate.keys)
                 block_tableau = qstate.current_tableau()
                 merged_tableau = block_tableau if merged_tableau is None else merged_tableau + block_tableau
@@ -356,7 +366,77 @@ class RequestLogicalPairApp:
             key_to_local = {key: idx for idx, key in enumerate(merged_keys)}
             return simulator, key_to_local
 
-        # Helper function to evaluate fidelity from key sets and Pauli support strings.
+        # Build one logical Pauli observable that acts on both encoded endpoint blocks.
+        def build_joint_observable(left_keys: list[int], right_keys: list[int], pauli_string: str, key_to_local: dict[int, int]) -> stim.PauliString:
+            """Build one logical observable spanning both endpoint blocks.
+
+            Args:
+                left_keys: Left block keys in code order.
+                right_keys: Right block keys in code order.
+                pauli_string: Pauli support string to apply on each block.
+                key_to_local: Map from quantum-manager keys to simulator-local indices.
+
+            Returns:
+                stim.PauliString: Joint logical observable on the temporary simulator.
+            """
+            observable = stim.PauliString(len(key_to_local))
+            for keys in (left_keys, right_keys):
+                for key, pauli in zip(keys, pauli_string):
+                    if pauli != "I":
+                        observable[key_to_local[key]] = pauli
+            return observable
+
+        # Run one ideal recovery pass on a copied endpoint block.
+        # This is only used for the corrected end-to-end metric.
+        def recover_block(sim: stim.TableauSimulator, block_keys: list[int], key_to_local: dict[int, int]) -> dict[str, object]:
+            """Apply one noiseless recovery round on a copied endpoint block.
+
+            Args:
+                sim: Temporary simulator copy used only for fidelity evaluation.
+                block_keys: Quantum-manager keys for one encoded endpoint block.
+                key_to_local: Map from quantum-manager keys to simulator-local indices.
+
+            Returns:
+                dict[str, object]: Measured syndromes and decoded correction indices.
+            """
+            decode_table = self.code.get_decode_table()
+            if len(decode_table) == 0:
+                return {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
+
+            def syndrome_bit(stabilizer: str) -> int:
+                """Compute one binary syndrome bit from a stabilizer expectation.
+
+                Args:
+                    stabilizer: Pauli stabilizer string over the block.
+
+                Returns:
+                    int: Syndrome bit, where +1 maps to 0 and -1 maps to 1.
+                """
+                # Peek the stabilizer on the copied tableau and convert the sign into a syndrome bit.
+                observable = stim.PauliString(len(key_to_local))
+                for key, pauli in zip(block_keys, stabilizer):
+                    if pauli != "I":
+                        observable[key_to_local[key]] = pauli
+                expectation = float(sim.peek_observable_expectation(observable))
+                if expectation > 0.5:
+                    return 0
+                if expectation < -0.5:
+                    return 1
+                raise RuntimeError(f"{self.name}: non-deterministic stabilizer expectation for {stabilizer}: {expectation}")
+
+            # In a CSS code, Z stabilizers locate X errors and X stabilizers locate Z errors.
+            x_syndrome = [syndrome_bit(stabilizer) for stabilizer in self.code.get_x_stabilizer_strings()]
+            z_syndrome = [syndrome_bit(stabilizer) for stabilizer in self.code.get_z_stabilizer_strings()]
+            x_error_qubit = decode_table[tuple(z_syndrome)]
+            z_error_qubit = decode_table[tuple(x_syndrome)]
+            if x_error_qubit is not None:
+                sim.x(key_to_local[block_keys[int(x_error_qubit)]])
+            if z_error_qubit is not None:
+                sim.z(key_to_local[block_keys[int(z_error_qubit)]])
+
+            return {"x_syndrome": x_syndrome,"z_syndrome": z_syndrome, "x_error_qubit": x_error_qubit, "z_error_qubit": z_error_qubit}
+
+        # Evaluate Bell-pair fidelity once the relevant endpoint keys and logical supports are known.
         def fidelity_from_keys(left_keys: list[int], right_keys: list[int], px: str, py: str, pz: str) -> float:
             """Evaluate fidelity from key sets and Pauli support strings.
 
@@ -372,36 +452,31 @@ class RequestLogicalPairApp:
             """
             all_keys = left_keys + right_keys
             sim, key_to_local = build_simulator_from_keys(all_keys)
+            left_recovery = {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None,}
+            right_recovery = {"x_syndrome": [],"z_syndrome": [],"x_error_qubit": None,"z_error_qubit": None,}
+            if pair_type == "logical_end" and recover_endpoints:
+                # Corrected fidelity: recover each endpoint block on the copied tableau before scoring it.
+                left_recovery = recover_block(sim, left_keys, key_to_local)
+                right_recovery = recover_block(sim, right_keys, key_to_local)
 
-            xx_obs = stim.PauliString(len(key_to_local))
-            for key, pauli in zip(left_keys, px):
-                if pauli != "I":
-                    xx_obs[key_to_local[key]] = pauli
-            for key, pauli in zip(right_keys, px):
-                if pauli != "I":
-                    xx_obs[key_to_local[key]] = pauli
+            # Score the final copied state with logical XX, YY, and ZZ Bell correlators.
+            xx_obs = build_joint_observable(left_keys, right_keys, px, key_to_local)
             cx = float(sim.peek_observable_expectation(xx_obs))
 
-            yy_obs = stim.PauliString(len(key_to_local))
-            for key, pauli in zip(left_keys, py):
-                if pauli != "I":
-                    yy_obs[key_to_local[key]] = pauli
-            for key, pauli in zip(right_keys, py):
-                if pauli != "I":
-                    yy_obs[key_to_local[key]] = pauli
+            yy_obs = build_joint_observable(left_keys, right_keys, py, key_to_local)
             cy = float(sim.peek_observable_expectation(yy_obs))
 
-            zz_obs = stim.PauliString(len(key_to_local))
-            for key, pauli in zip(left_keys, pz):
-                if pauli != "I":
-                    zz_obs[key_to_local[key]] = pauli
-            for key, pauli in zip(right_keys, pz):
-                if pauli != "I":
-                    zz_obs[key_to_local[key]] = pauli
+            zz_obs = build_joint_observable(left_keys, right_keys, pz, key_to_local)
             cz = float(sim.peek_observable_expectation(zz_obs))
 
+            # Bell-state fidelity for |Phi+> from the three logical correlators.
             value = (1.0 + cx - cy + cz) / 4.0
-            log.logger.info(f"{self.name}: fidelity_components pair_type={pair_type} left={left_node} right={right_node} cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} value={value:.6f}")
+            log.logger.info(
+                f"{self.name}: fidelity_components pair_type={pair_type} recover_endpoints={recover_endpoints} left={left_node} right={right_node} "
+                f"left_x_s={left_recovery['x_syndrome']} left_z_s={left_recovery['z_syndrome']} "
+                f"right_x_s={right_recovery['x_syndrome']} right_z_s={right_recovery['z_syndrome']} "
+                f"cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} value={value:.6f}"
+            )
             return value
 
         if pair_type == "physical":
@@ -438,7 +513,7 @@ class RequestLogicalPairApp:
             log.logger.info(f"{self.name}: physical_avg left={left_node} right={right_node} pairs={len(pair_values)} avg={avg_f:.6f}")
             return avg_f
 
-        # Logical link/end fidelities use code-level logical Pauli supports over data blocks.
+        # Select the encoded data blocks to score.
         if pair_type == "logical_link":
             left_keys = [m.qstate_key for m in left_app.data_qubits[right_node]]
             right_keys = [m.qstate_key for m in right_app.data_qubits[left_node]]
@@ -448,11 +523,37 @@ class RequestLogicalPairApp:
         else:
             raise ValueError(f"{self.name}: unknown pair_type {pair_type}")
 
-        # Logical pair fidelity is computed once per link or end-to-end, using the code's logical Pauli support strings to construct the observables.
+        # Build the logical Pauli supports once, then pass them to the shared evaluator.
         px = self.code.get_logical_x_string()
         pz = self.code.get_logical_z_string()
         py = "".join("Y" if x == "X" and z == "Z" else x if x == "X" else z for x, z in zip(px, pz))
         return float(fidelity_from_keys(left_keys, right_keys, px, py, pz))
+
+    def calculate_pair_fidelity(self, left_node: str, right_node: str, pair_type: str) -> float:
+        """Compute raw pair fidelity without endpoint recovery.
+
+        Args:
+            left_node: Left node name.
+            right_node: Right node name.
+            pair_type: One of "physical", "logical_link", or "logical_end".
+
+        Returns:
+            float: Raw pair fidelity.
+        """
+        return self._calculate_pair_fidelity(left_node, right_node, pair_type, recover_endpoints=False)
+
+    def calculate_pair_fidelity_corrected(self, left_node: str, right_node: str, pair_type: str) -> float:
+        """Compute corrected pair fidelity with noiseless recovery on endpoint blocks.
+
+        Args:
+            left_node: Left node name.
+            right_node: Right node name.
+            pair_type: One of "physical", "logical_link", or "logical_end".
+
+        Returns:
+            float: Corrected pair fidelity.
+        """
+        return self._calculate_pair_fidelity(left_node, right_node, pair_type, recover_endpoints=True)
 
     def allocate_data_and_ancilla(self, neighbor: str) -> None:
         """Allocate data and required ancilla qubits for one link from local arrays.
@@ -882,9 +983,16 @@ class RequestLogicalPairApp:
 
         # Initiator-only: compute end-to-end logical fidelity for this attempt.
         if self._path_position == 0:
-            final_fidelity = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
-            log.logger.info(f"{self.name}: final_e2e_measure run_id={self.current_run['run_id']} fidelity={final_fidelity:.6f} frame_updates={self.current_run['frame_updates_by_src']}")
-            self.current_run["final_end_to_end_fidelity"] = final_fidelity  # Persist the run result in one place.
+            final_fidelity_raw = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
+            final_fidelity_corrected = self.calculate_pair_fidelity_corrected(self._path_node_names[0], self._path_node_names[-1], "logical_end")
+            log.logger.info(
+                f"{self.name}: final_e2e_measure run_id={self.current_run['run_id']} "
+                f"raw={final_fidelity_raw:.6f} corrected={final_fidelity_corrected:.6f} "
+                f"frame_updates={self.current_run['frame_updates_by_src']}"
+            )
+            self.current_run["final_end_to_end_fidelity_raw"] = final_fidelity_raw
+            self.current_run["final_end_to_end_fidelity_corrected"] = final_fidelity_corrected
+            self.current_run["final_end_to_end_fidelity"] = final_fidelity_corrected  # Persist the corrected run result as the default metric.
             self.current_run["completion_time"] = int(self.node.timeline.now())
             self.current_run["status"] = "complete"
 
@@ -905,6 +1013,8 @@ class RequestLogicalPairApp:
             "status": self.current_run["status"],
             "success": self.current_run["success"],
             "final_end_to_end_fidelity": final_fidelity,
+            "final_end_to_end_fidelity_raw": self.current_run["final_end_to_end_fidelity_raw"],
+            "final_end_to_end_fidelity_corrected": self.current_run["final_end_to_end_fidelity_corrected"],
             "initial_link_fidelities": dict(self.current_run["initial_link_fidelities"]),
             "link_logical_fidelities": dict(self.current_run["link_logical_fidelities"]),
             "physical_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["physical_pair_fidelity_rows"].items()},
@@ -912,7 +1022,12 @@ class RequestLogicalPairApp:
         }
 
         if self.node.name == 'router_0':
-            log.logger.critical(f"run_id={run_id}, time to serve={latency_ps / MILLISECOND}, fidelity={final_fidelity:.6f}")
+            log.logger.critical(
+                f"run_id={run_id}, time to serve={latency_ps / MILLISECOND}, "
+                f"fidelity_raw={self.current_run['final_end_to_end_fidelity_raw']:.6f}, "
+                f"fidelity_corrected={self.current_run['final_end_to_end_fidelity_corrected']:.6f}, "
+                f"fidelity={final_fidelity:.6f}"
+            )
 
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1
         current_end_t = int(self.current_run["end_time"]) if self.current_run["end_time"] is not None else int(self.node.timeline.now())

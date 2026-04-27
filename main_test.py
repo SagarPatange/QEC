@@ -176,7 +176,7 @@ def three_node_logical_pair_with_app(verbose=False, config_file='config/line_3_2
     # Set gate fidelities on quantum manager from node config
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
-    tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+    tl.quantum_manager.two_qubit_gate_fid = 0.99
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -275,7 +275,7 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     # Set gate fidelities on quantum manager from node config
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
-    tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+    tl.quantum_manager.two_qubit_gate_fid = 0.99
 
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level('DEBUG')
@@ -381,8 +381,14 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     final_app = apps[node_names[0]]
     if final_app.current_run["final_end_to_end_fidelity"] is not None:
         metrics["end_to_end_logical"] = float(final_app.current_run["final_end_to_end_fidelity"])
+        metrics["end_to_end_logical_raw"] = float(final_app.current_run["final_end_to_end_fidelity_raw"])
+        metrics["end_to_end_logical_corrected"] = float(final_app.current_run["final_end_to_end_fidelity_corrected"])
         print("\nEnd-to-End")
-        print(f"{node_names[0]} <-> {node_names[-1]} | end_to_end_logical={final_app.current_run['final_end_to_end_fidelity']:.6f}")
+        print(
+            f"{node_names[0]} <-> {node_names[-1]} | "
+            f"raw={final_app.current_run['final_end_to_end_fidelity_raw']:.6f} | "
+            f"corrected={final_app.current_run['final_end_to_end_fidelity_corrected']:.6f}"
+        )
 
     if initial_values:
         metrics["avg_initial_phys"] = float(np.mean(initial_values))
@@ -414,7 +420,7 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
 
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
-    tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+    tl.quantum_manager.two_qubit_gate_fid = 0.99
     idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
     idle_t1_sec = 1e-1
     idle_t2_sec = 1e-1
@@ -493,6 +499,8 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
             "avg_initial_phys": float("nan"),
             "avg_link_logical": float("nan"),
             "avg_end_to_end_logical": float("nan"),
+            "avg_end_to_end_logical_raw": float("nan"),
+            "avg_end_to_end_logical_corrected": float("nan"),
             "avg_latency_ps": float("nan"),
             "avg_latency_s": float("nan"),
             "avg_throughput_pairs_per_s": float("nan"),
@@ -536,7 +544,15 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
                     latency_s = latency_ps * 1e-12
                     throughput_pairs_per_s = 0.0 if latency_s <= 0.0 else 1.0 / latency_s
 
-                metrics["end_to_end_rows"].append({"run_id": int(run_id), "fidelity": float(run_stats["final_end_to_end_fidelity"]) if run_stats["final_end_to_end_fidelity"] is not None else float("nan"), "latency_ps": latency_ps if latency_ps is not None else float("nan"), "latency_s": latency_s, "throughput_pairs_per_s": throughput_pairs_per_s})
+                metrics["end_to_end_rows"].append({
+                    "run_id": int(run_id),
+                    "fidelity": float(run_stats["final_end_to_end_fidelity"]) if run_stats["final_end_to_end_fidelity"] is not None else float("nan"),
+                    "fidelity_raw": float(run_stats["final_end_to_end_fidelity_raw"]) if run_stats["final_end_to_end_fidelity_raw"] is not None else float("nan"),
+                    "fidelity_corrected": float(run_stats["final_end_to_end_fidelity_corrected"]) if run_stats["final_end_to_end_fidelity_corrected"] is not None else float("nan"),
+                    "latency_ps": latency_ps if latency_ps is not None else float("nan"),
+                    "latency_s": latency_s,
+                    "throughput_pairs_per_s": throughput_pairs_per_s,
+                })
         metrics["num_logical_pairs_completed"] = len(metrics["end_to_end_rows"])
         # Aggregate link-level averages.
         initial_values = [r["initial_phys"] for r in metrics["link_rows"] if not np.isnan(r["initial_phys"])]
@@ -546,10 +562,16 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
         if logical_values:
             metrics["avg_link_logical"] = float(np.mean(logical_values))
         e2e_values = [r["fidelity"] for r in metrics["end_to_end_rows"] if not np.isnan(r["fidelity"])]
+        e2e_raw_values = [r["fidelity_raw"] for r in metrics["end_to_end_rows"] if not np.isnan(r["fidelity_raw"])]
+        e2e_corrected_values = [r["fidelity_corrected"] for r in metrics["end_to_end_rows"] if not np.isnan(r["fidelity_corrected"])]
         latency_values = [r["latency_ps"] for r in metrics["end_to_end_rows"] if not np.isnan(r["latency_ps"])]
         throughput_values = [r["throughput_pairs_per_s"] for r in metrics["end_to_end_rows"] if not np.isnan(r["throughput_pairs_per_s"])]
         if e2e_values:
             metrics["avg_end_to_end_logical"] = float(np.mean(e2e_values))
+        if e2e_raw_values:
+            metrics["avg_end_to_end_logical_raw"] = float(np.mean(e2e_raw_values))
+        if e2e_corrected_values:
+            metrics["avg_end_to_end_logical_corrected"] = float(np.mean(e2e_corrected_values))
         if latency_values:
             metrics["avg_latency_ps"] = float(np.mean(latency_values))
             metrics["avg_latency_s"] = metrics["avg_latency_ps"] * 1e-12
@@ -584,15 +606,15 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
             print(f"\nAverages: phys={metrics['avg_initial_phys']:.4f} | logical={metrics['avg_link_logical']:.4f}")
         if verbose and metrics["end_to_end_rows"]:
             print(f"\nLogical Pair Runs ({node_names[0]} <-> {node_names[-1]})")
-            header = f"{'Run':>4} {'E2E Fid':>10} {'Latency (ps)':>14} {'Latency (ms)':>14} {'Throughput':>14}"
+            header = f"{'Run':>4} {'Raw Fid':>10} {'Corr Fid':>10} {'Latency (ps)':>14} {'Latency (ms)':>14} {'Throughput':>14}"
             print(header)
             print("-" * len(header))
             for row in metrics["end_to_end_rows"]:
-                print(f"{row['run_id']:>4d} {row['fidelity']:>10.4f} {row['latency_ps']:>14.0f} {row['latency_ps'] * 1e-9:>14.6f} {row['throughput_pairs_per_s']:>14.6e}")
+                print(f"{row['run_id']:>4d} {row['fidelity_raw']:>10.4f} {row['fidelity_corrected']:>10.4f} {row['latency_ps']:>14.0f} {row['latency_ps'] * 1e-9:>14.6f} {row['throughput_pairs_per_s']:>14.6e}")
 
-            print(f"{'Avg':>4} {metrics['avg_end_to_end_logical']:>10.4f} {metrics['avg_latency_ps']:>14.0f} {metrics['avg_latency_ps'] * 1e-9:>14.6f} {metrics['avg_throughput_pairs_per_s']:>14.6e}")
+            print(f"{'Avg':>4} {metrics['avg_end_to_end_logical_raw']:>10.4f} {metrics['avg_end_to_end_logical_corrected']:>10.4f} {metrics['avg_latency_ps']:>14.0f} {metrics['avg_latency_ps'] * 1e-9:>14.6f} {metrics['avg_throughput_pairs_per_s']:>14.6e}")
         if not np.isnan(metrics["avg_end_to_end_logical"]):
-            print(f"Avg end-to-end ({node_names[0]} <-> {node_names[-1]}): {metrics['avg_end_to_end_logical']:.4f}")
+            print(f"Avg end-to-end ({node_names[0]} <-> {node_names[-1]}): raw={metrics['avg_end_to_end_logical_raw']:.4f} | corrected={metrics['avg_end_to_end_logical_corrected']:.4f}")
         if not np.isnan(metrics["avg_latency_ps"]):
             print(f"Avg latency: {metrics['avg_latency_ps']:.0f} ps ({metrics['avg_latency_s']:.6e} s, {metrics['avg_latency_ps'] * 1e-9:.6f} ms)")
             print(f"Avg throughput: {metrics['avg_throughput_pairs_per_s']:.6e} pairs/s")
