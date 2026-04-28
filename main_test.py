@@ -1,7 +1,10 @@
 print('importing ...')
+from concurrent.futures import ProcessPoolExecutor
+import json
 import time
 import numpy as np
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from sequence.topology.router_net_topo import RouterNetTopo
 from router_net_topo_2G import RouterNetTopo2G
 import sequence.utils.log as log
@@ -18,6 +21,41 @@ def resolve_config_path(config_file: str) -> str:
     if not config_path.is_absolute():
         config_path = Path(__file__).resolve().parent / config_file
     return str(config_path)
+
+
+def build_n_node_params() -> dict[str, object]:
+    """Build default parameters for the N-node app run.
+
+    Args:
+        None.
+
+    Returns:
+        dict[str, object]: Default run parameters.
+    """
+    return {
+        "log_level": "WARNING",
+        "start_time_s": 1.0,
+        "run_duration_ms": 1000.0,
+        "round_spacing_ms": 1.0,
+        "correction_mode": "cec",
+        "target_fidelity": 0.8,
+        "num_logical_pairs": 1000,
+        "link_distance_km": 1,
+        "gate_fidelity": 1,
+        "two_qubit_gate_fidelity": 0.995,
+        "measurement_fidelity": 1,
+        "state_preparation_fidelity": 1,
+        "gate_error_channel": "depolarize",
+        "pauli_1q_weights": None,
+        "pauli_2q_weights": None,
+        "idle_t1_sec": 1e12,
+        "idle_t2_sec": 1e12,
+        "ft_prep_mode": "minimal",
+        "idle_pauli_x": 0.05,
+        "idle_pauli_y": 0.05,
+        "idle_pauli_z": 0.90,
+        "physical_bell_pair_fidelity": 1,
+    }
 
 
 def run_five_node_pair(label: str, css_code: str, non_ft_config: str, ft_config: str):
@@ -400,8 +438,9 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     return {"apps": apps, "metrics": metrics}
 
 
-def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "config/line_5_2G_near_term.json", 
-                                 css_code: str = "[[7,1,3]]", log_filename: str = "log/n_node_logical_pair") -> dict[str, object]:
+def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "config/standard_configs/line_2_2G.json",
+                                 css_code: str = "[[7,1,3]]", log_filename: str = "log/n_node_logical_pair",
+                                 params: dict[str, object] | None = None) -> dict[str, object]:
     """Create end-to-end logical entanglement across an N-node linear chain.
 
     Args:
@@ -409,29 +448,98 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
         config_file: Topology config file path.
         css_code: CSS code label for the run.
         log_filename: Log file prefix.
+        params: Run-parameter overrides.
 
     Returns:
         dict[str, object]: App objects and collected run metrics.
     """
-    network_config = resolve_config_path(config_file)
+    merged_params = build_n_node_params()
+    if params is not None:
+        merged_params.update(params)
+    params = merged_params
+
+    resolved_config = resolve_config_path(config_file)
+    with open(resolved_config, "r", encoding="utf-8") as file:
+        config = json.load(file)
+
+    idle_pauli_x = params["idle_pauli_x"]
+    idle_pauli_y = params["idle_pauli_y"]
+    idle_pauli_z = params["idle_pauli_z"]
+    pauli_1q_weights = params["pauli_1q_weights"]
+    pauli_2q_weights = params["pauli_2q_weights"]
+
+    if (idle_pauli_x is None) != (idle_pauli_y is None) or (idle_pauli_x is None) != (idle_pauli_z is None):
+        raise RuntimeError("idle_pauli_x, idle_pauli_y, idle_pauli_z must be set together")
+    if pauli_1q_weights is not None and len(pauli_1q_weights) != 3:
+        raise RuntimeError("pauli_1q_weights must have 3 entries")
+    if pauli_2q_weights is not None and len(pauli_2q_weights) != 15:
+        raise RuntimeError("pauli_2q_weights must have 15 entries")
+
+    config["templates"]["qec"]["memory"]["fidelity"] = float(params["physical_bell_pair_fidelity"])
+
+    for node in config["nodes"]:
+        if node.get("type") != "QuantumRouter":
+            continue
+        if params["gate_fidelity"] is not None:
+            node["gate_fidelity"] = float(params["gate_fidelity"])
+        if params["two_qubit_gate_fidelity"] is not None:
+            node["two_qubit_gate_fidelity"] = float(params["two_qubit_gate_fidelity"])
+        if params["measurement_fidelity"] is not None:
+            node["measurement_fidelity"] = float(params["measurement_fidelity"])
+        if params["state_preparation_fidelity"] is not None:
+            node["state_preparation_fidelity"] = float(params["state_preparation_fidelity"])
+        if params["gate_error_channel"] is not None:
+            node["gate_error_channel"] = str(params["gate_error_channel"])
+        if pauli_1q_weights is not None:
+            node["pauli_1q_weights"] = list(pauli_1q_weights)
+        if pauli_2q_weights is not None:
+            node["pauli_2q_weights"] = list(pauli_2q_weights)
+        if params["idle_t1_sec"] is not None:
+            node["idle_t1_sec"] = float(params["idle_t1_sec"])
+        if params["idle_t2_sec"] is not None:
+            node["idle_t2_sec"] = float(params["idle_t2_sec"])
+        if params["ft_prep_mode"] is not None:
+            node["ft_prep_mode"] = str(params["ft_prep_mode"])
+        node["correction_mode"] = str(params["correction_mode"])
+        if idle_pauli_x is not None:
+            node["idle_pauli_weights"] = {
+                "x": float(idle_pauli_x),
+                "y": float(idle_pauli_y),
+                "z": float(idle_pauli_z),
+            }
+
+    if params["link_distance_km"] is not None:
+        half_distance_m = float(params["link_distance_km"]) * 1000.0 / 2.0
+        for qchannel in config["qchannels"]:
+            qchannel["distance"] = half_distance_m
+
+    temp_config = NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8")
+    json.dump(config, temp_config, indent=4)
+    temp_config.write("\n")
+    temp_config.close()
+
+    network_config = temp_config.name
 
     network_topo = RouterNetTopo2G(network_config)
     tl = network_topo.get_timeline()
 
     routers = network_topo.get_nodes_by_type(RouterNetTopo.QUANTUM_ROUTER)
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
-    tl.quantum_manager.two_qubit_gate_fid = 0.99
-    idle_pauli_weights = {"x": 0.05, "y": 0.05, "z": 0.90}
-    idle_t1_sec = 1e-1
-    idle_t2_sec = 1e-1
-    correction_mode = "cec"
+    tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
+    tl.quantum_manager.measurement_fid = getattr(routers[0], 'meas_fid', 1.0)
+    tl.quantum_manager.state_preparation_fid = getattr(routers[0], 'state_preparation_fid', 1.0)
+    if params["gate_error_channel"] is not None:
+        tl.quantum_manager.gate_error_channel = str(params["gate_error_channel"])
+    if pauli_1q_weights is not None:
+        tl.quantum_manager.pauli_1q_weights = tuple(float(w) for w in pauli_1q_weights)
+    if pauli_2q_weights is not None:
+        tl.quantum_manager.pauli_2q_weights = tuple(float(w) for w in pauli_2q_weights)
 
     log.set_logger(__name__, tl, log_filename)
-    # log.set_logger_level('INFO')
-    log.set_logger_level('WARNING')
+    log.set_logger_level("WARNING")
     # modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm', 'barret_kok', 'RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
     # modules = ['barret_kok']
-    modules = ['RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
+    modules = ['RequestLogicalPairApp']
 
     for module in modules:
         log.track_module(module)
@@ -447,16 +555,26 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     node_names.sort(key=lambda name: int(name.split('_')[-1]))
     assert len(node_names) >= 2, f"Expected at least 2 nodes, got {len(node_names)}"
 
-    start_time_ps = int(1e12)
-    window_duration_ps = int(1e10)
-    default_target_fidelity = 0.8
-    num_logical_pairs = 10
+    start_time_ps = int(float(params["start_time_s"]) * 1e12)
+    window_duration_ps = int(float(params["run_duration_ms"]) * 1e9)
+    round_spacing_ps = int(float(params["round_spacing_ms"]) * 1e9)
+    target_fidelity = float(params["target_fidelity"])
+    num_logical_pairs = int(params["num_logical_pairs"])
+    correction_mode = str(params["correction_mode"])
 
     apps = {}
     for node_name in node_names:
-        routers_by_name[node_name].idle_pauli_weights = dict(idle_pauli_weights)
-        routers_by_name[node_name].idle_t1_sec = float(idle_t1_sec)
-        routers_by_name[node_name].idle_t2_sec = float(idle_t2_sec)
+        routers_by_name[node_name].round_spacing_ps = round_spacing_ps
+        if idle_pauli_x is not None:
+            routers_by_name[node_name].idle_pauli_weights = {
+                "x": float(idle_pauli_x),
+                "y": float(idle_pauli_y),
+                "z": float(idle_pauli_z),
+            }
+        if params["idle_t1_sec"] is not None:
+            routers_by_name[node_name].idle_t1_sec = float(params["idle_t1_sec"])
+        if params["idle_t2_sec"] is not None:
+            routers_by_name[node_name].idle_t2_sec = float(params["idle_t2_sec"])
         routers_by_name[node_name].correction_mode = correction_mode
         apps[node_name] = RequestLogicalPairApp(
             routers_by_name[node_name],
@@ -469,7 +587,7 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
             responder=node_names[i + 1],
             start_t=start_time_ps,
             end_t=start_time_ps + window_duration_ps,
-            fidelity=default_target_fidelity,
+            fidelity=target_fidelity,
             num_logical_pairs=num_logical_pairs)
 
     tl.init()
@@ -624,12 +742,185 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     print(f"=== {num_links}-link pipeline complete ===")
     return {"apps": apps, "metrics": metrics}
 
+
+def split_pair_counts(total_pairs: int, workers: int) -> list[int]:
+    """Split a total logical-pair budget across workers.
+
+    Args:
+        total_pairs: Total number of logical pairs to simulate.
+        workers: Number of worker processes.
+
+    Returns:
+        list[int]: Per-worker logical-pair counts.
+    """
+    base = total_pairs // workers
+    extra = total_pairs % workers
+    return [base + (1 if i < extra else 0) for i in range(workers)]
+
+
+def run_n_node_worker(worker_index: int, pair_count: int, base_log_filename: str) -> dict[str, object]:
+    """Run one independent N-node simulation worker.
+
+    Args:
+        worker_index: Worker index for unique log naming.
+        pair_count: Number of logical pairs assigned to this worker.
+        base_log_filename: Base log filename shared by all workers.
+
+    Returns:
+        dict[str, object]: Metrics dictionary for the worker.
+    """
+    params = build_n_node_params()
+    params["num_logical_pairs"] = pair_count
+
+    result = n_node_logical_pair_with_app(
+        verbose=False,
+        config_file="config/standard_configs/line_2_2G.json",
+        css_code="[[7,1,3]]",
+        log_filename=f"{base_log_filename}_worker_{worker_index}",
+        params=params,
+    )
+    return result["metrics"]
+
+
+def run_parallel_n_node_trials(total_pairs: int, workers: int, log_filename: str) -> list[dict[str, object]]:
+    """Run multiple independent N-node simulations in parallel.
+
+    Args:
+        total_pairs: Total logical-pair budget across all workers.
+        workers: Number of worker processes.
+        log_filename: Base log filename shared by all workers.
+
+    Returns:
+        list[dict[str, object]]: Per-worker metrics.
+    """
+    pair_counts = split_pair_counts(total_pairs, workers)
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(run_n_node_worker, worker_index, pair_count, log_filename)
+            for worker_index, pair_count in enumerate(pair_counts)
+            if pair_count > 0
+        ]
+        return [future.result() for future in futures]
+
+
+def merge_worker_logs(base_log_filename: str, workers: int) -> str:
+    """Merge worker log files into one combined log file.
+
+    Args:
+        base_log_filename: Destination log filename.
+        workers: Number of worker log files to merge.
+
+    Returns:
+        str: Combined log filename.
+    """
+    destination = Path(base_log_filename)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    with destination.open("w", encoding="utf-8") as output_file:
+        for worker_index in range(workers):
+            worker_log = Path(f"{base_log_filename}_worker_{worker_index}")
+            if not worker_log.exists():
+                continue
+            with worker_log.open("r", encoding="utf-8") as input_file:
+                contents = input_file.read()
+            output_file.write(contents)
+            if contents and not contents.endswith("\n"):
+                output_file.write("\n")
+
+    return str(destination)
+
+
+def summarize_parallel_worker_metrics(worker_metrics: list[dict[str, object]]) -> dict[str, float | int]:
+    """Aggregate per-worker metrics into one combined summary.
+
+    Args:
+        worker_metrics: Metrics returned by parallel workers.
+
+    Returns:
+        dict[str, float | int]: Combined summary values.
+    """
+    completed_pairs = sum(int(m["num_logical_pairs_completed"]) for m in worker_metrics)
+    requested_pairs = sum(int(m["num_logical_pairs_requested"]) for m in worker_metrics)
+
+    raw_values = [
+        float(row["fidelity_raw"])
+        for metrics in worker_metrics
+        for row in metrics["end_to_end_rows"]
+        if not np.isnan(row["fidelity_raw"])
+    ]
+    corrected_values = [
+        float(row["fidelity_corrected"])
+        for metrics in worker_metrics
+        for row in metrics["end_to_end_rows"]
+        if not np.isnan(row["fidelity_corrected"])
+    ]
+    latency_values = [
+        float(row["latency_ps"])
+        for metrics in worker_metrics
+        for row in metrics["end_to_end_rows"]
+        if not np.isnan(row["latency_ps"])
+    ]
+    throughput_values = [
+        float(row["throughput_pairs_per_s"])
+        for metrics in worker_metrics
+        for row in metrics["end_to_end_rows"]
+        if not np.isnan(row["throughput_pairs_per_s"])
+    ]
+
+    return {
+        "num_workers": len(worker_metrics),
+        "num_logical_pairs_requested": requested_pairs,
+        "num_logical_pairs_completed": completed_pairs,
+        "avg_end_to_end_logical_raw": float(np.mean(raw_values)) if raw_values else float("nan"),
+        "avg_end_to_end_logical_corrected": float(np.mean(corrected_values)) if corrected_values else float("nan"),
+        "avg_latency_ps": float(np.mean(latency_values)) if latency_values else float("nan"),
+        "avg_latency_s": float(np.mean(latency_values)) * 1e-12 if latency_values else float("nan"),
+        "avg_throughput_pairs_per_s": float(np.mean(throughput_values)) if throughput_values else float("nan"),
+    }
+
+
+def print_parallel_run_summary(summary: dict[str, float | int]) -> None:
+    """Print one combined summary for all parallel workers.
+
+    Args:
+        summary: Aggregated parallel-run summary.
+
+    Returns:
+        None.
+    """
+    print("\n=== Combined Parallel Run Summary ===")
+    print(f"workers={summary['num_workers']}")
+    print(
+        f"logical_pairs: requested={summary['num_logical_pairs_requested']} "
+        f"completed={summary['num_logical_pairs_completed']}"
+    )
+    print(
+        f"Avg end-to-end: raw={summary['avg_end_to_end_logical_raw']:.4f} | "
+        f"corrected={summary['avg_end_to_end_logical_corrected']:.4f}"
+    )
+    print(
+        f"Avg latency: {summary['avg_latency_ps']:.0f} ps "
+        f"({summary['avg_latency_s']:.6e} s, {summary['avg_latency_ps'] * 1e-9:.6f} ms)"
+    )
+    print(f"Avg throughput: {summary['avg_throughput_pairs_per_s']:.6e} pairs/s")
+
 if __name__ == "__main__":
 
     start = time.time()
     print("main start ...")
     # ----- N-node runs -----
-    n_node_logical_pair_with_app(verbose=False)
+    total_pairs = 1080
+    workers = 12
+    base_log_filename = "log/n_node_logical_pair"
+    worker_metrics = run_parallel_n_node_trials(
+        total_pairs=total_pairs,
+        workers=workers,
+        log_filename=base_log_filename,
+    )
+    merged_log = merge_worker_logs(base_log_filename, workers)
+    combined_summary = summarize_parallel_worker_metrics(worker_metrics)
+    print_parallel_run_summary(combined_summary)
+    print(f"merged log: {merged_log}")
 
     # Add more N-node runs as needed:
     # n_node_logical_pair_with_app(verbose=True)

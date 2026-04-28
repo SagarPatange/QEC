@@ -134,6 +134,7 @@ def main() -> None:
     dist_tag = "cfg" if args.link_distance_km is None else str(args.link_distance_km)
     gate_tag = "cfg" if args.gate_fidelity is None else str(args.gate_fidelity)
     twoq_tag = "cfg" if args.two_qubit_gate_fidelity is None else str(args.two_qubit_gate_fidelity)
+    meas_tag = "cfg" if args.measurement_fidelity is None else str(args.measurement_fidelity)
     prep_tag = "cfg" if args.state_preparation_fidelity is None else str(args.state_preparation_fidelity)
     t1_tag = "cfg" if args.idle_t1_sec is None else str(args.idle_t1_sec)
     t2_tag = "cfg" if args.idle_t2_sec is None else str(args.idle_t2_sec)
@@ -141,14 +142,14 @@ def main() -> None:
     pauli_tag = "cfg" if args.idle_pauli_x is None else f"{args.idle_pauli_x}_{args.idle_pauli_y}_{args.idle_pauli_z}"
     phys_bell_tag = "cfg" if args.physical_bell_pair_fidelity is None else str(args.physical_bell_pair_fidelity)
     correction_tag = args.correction_mode
-    timestamp_tag = datetime.now().strftime("%Y%m%d_%H%M")
+    timestamp_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     network_topo = RouterNetTopo2G(temp_config.name)
     tl = network_topo.get_timeline()
 
     log_filename = (
         f"{args.log_directory}/{config_tag},code={args.css_code},dist={dist_tag},"
-        f"gate={gate_tag},twoq={twoq_tag},prep={prep_tag},T1={t1_tag},T2={t2_tag},"
+        f"gate={gate_tag},twoq={twoq_tag},meas={meas_tag},prep={prep_tag},T1={t1_tag},T2={t2_tag},"
         f"ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag},physbell={phys_bell_tag},ts={timestamp_tag}"
     )
 
