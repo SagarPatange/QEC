@@ -99,7 +99,7 @@ def test_graph_two_qubit_gate_sweep() -> None:
         args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity, "--log_directory", "log/runner-test/graph_two_qubit_gate_sweep"]
         tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=14)
+    run_tasks(tasks, parallel=20)
 
 
 def test_graph_physical_bell_pair_fidelity_sweep() -> None:
@@ -138,7 +138,7 @@ def t2_sweep():
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=14)
+    run_tasks(tasks, parallel=20)
 
 
 def one_qubit_gate_sweep():
@@ -150,11 +150,11 @@ def one_qubit_gate_sweep():
     log_directory = "log/runner-threshold/one_qubit_gate_sweep"
     for one_qubit_gate_fidelity in one_qubit_gate_fidelities:
         for config_file in CONFIG_FILES:
-            args = ["--one_qubit_gate_fidelity", one_qubit_gate_fidelity,
+            args = ["--gate_fidelity", one_qubit_gate_fidelity,
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=14)
+    run_tasks(tasks, parallel=20)
 
 
 def two_qubit_gate_sweep():
@@ -170,7 +170,7 @@ def two_qubit_gate_sweep():
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=14)
+    run_tasks(tasks, parallel=20)
 
 
 def physical_bell_pair_sweep():
@@ -185,7 +185,7 @@ def physical_bell_pair_sweep():
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=14)
+    run_tasks(tasks, parallel=20)
 
 
 def measurement_sweep():
@@ -201,7 +201,7 @@ def measurement_sweep():
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=14)
+    run_tasks(tasks, parallel=20)
 
 
 def state_preparation_sweep():
@@ -217,16 +217,17 @@ def state_preparation_sweep():
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=14)
+    run_tasks(tasks, parallel=20)
 
 
 if __name__ == "__main__":
 
     """
     Find the threshold of a parameter while other parameters are set to perfect
-    A large figure with 6 subplots, arranged in a 2x3 grid. 
+    A large figure with 6 subplots, arranged in a 2x3 grid:
     (a) (b) (c)
     (d) (e) (f)
+    Each subplot has three lines, one for each of the three configurations (line_2_2G, line_3_2G, line_6_2G).
     """
 
     t2_sweep()                  # subfigure (a) sweep over T2 time
@@ -235,4 +236,3 @@ if __name__ == "__main__":
     physical_bell_pair_sweep()  # subfigure (d) sweep over physical Bell pair fidelity
     measurement_sweep()         # subfigure (e) sweep over measurement fidelity
     state_preparation_sweep()   # subfigure (f) sweep over state preparation fidelity
-
