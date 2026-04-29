@@ -80,52 +80,6 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
             ps = new_ps
 
 
-def test_graph_two_qubit_gate_sweep() -> None:
-    """Run a minimal Graph 3 sweep over two-qubit gate fidelity.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-
-    two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
-
-    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
-        args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity, "--log_directory", "log/runner-test/graph_two_qubit_gate_sweep"]
-        tasks.append(command + BASE_ARGS + args)
-
-    run_tasks(tasks, parallel=20)
-
-
-def test_graph_physical_bell_pair_fidelity_sweep() -> None:
-    """Run a 6-node sweep while varying only the physical Bell-pair fidelity.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-
-    log_directory = "log/runner-test/graph_physical_bell_pair_fidelity_sweep"
-    physical_bell_pair_fidelities = ["0.96", "0.97", "0.98", "0.99", "0.995", "0.999", "1.0"]
-
-    for physical_bell_pair_fidelity in physical_bell_pair_fidelities:
-            args = ["--physical_bell_pair_fidelity", physical_bell_pair_fidelity, "--log_directory", log_directory]
-            tasks.append(command + BASE_ARGS + args)
-
-    run_tasks(tasks, parallel=21)
-
-
-
 def t2_sweep():
     tasks = []
     command = ["python", "main.py"]
@@ -185,7 +139,7 @@ def physical_bell_pair_sweep():
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=20)
+    run_tasks(tasks, parallel=15)
 
 
 def measurement_sweep():
@@ -201,7 +155,7 @@ def measurement_sweep():
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=20)
+    run_tasks(tasks, parallel=15)
 
 
 def state_preparation_sweep():
@@ -217,7 +171,7 @@ def state_preparation_sweep():
                     "--config_file", config_file,
                     "--log_directory", log_directory]
             tasks.append(command + BASE_ARGS + args)
-    run_tasks(tasks, parallel=20)
+    run_tasks(tasks, parallel=15)
 
 
 if __name__ == "__main__":
@@ -230,9 +184,9 @@ if __name__ == "__main__":
     Each subplot has three lines, one for each of the three configurations (line_2_2G, line_3_2G, line_6_2G).
     """
 
-    t2_sweep()                  # subfigure (a) sweep over T2 time
-    one_qubit_gate_sweep()      # subfigure (b) sweep over one-qubit gate fidelity
-    two_qubit_gate_sweep()      # subfigure (c) sweep over two-qubit gate fidelity
-    physical_bell_pair_sweep()  # subfigure (d) sweep over physical Bell pair fidelity
-    measurement_sweep()         # subfigure (e) sweep over measurement fidelity
+    # t2_sweep()                  # subfigure (a) sweep over T2 time
+    # one_qubit_gate_sweep()      # subfigure (b) sweep over one-qubit gate fidelity
+    # two_qubit_gate_sweep()      # subfigure (c) sweep over two-qubit gate fidelity
+    # physical_bell_pair_sweep()  # subfigure (d) sweep over physical Bell pair fidelity
+    # measurement_sweep()         # subfigure (e) sweep over measurement fidelity
     state_preparation_sweep()   # subfigure (f) sweep over state preparation fidelity
