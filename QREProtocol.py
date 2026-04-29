@@ -99,6 +99,7 @@ class QREProtocol(Protocol):
         self.idle_pauli_weights: dict[str, float] = dict(self.app.idle_pauli_weights)
         self.idle_t1_sec = float(self.app.idle_t1_sec)
         self.idle_t2_sec = float(self.app.idle_t2_sec)
+        self.idle_decoherence_enabled = bool(self.app.idle_decoherence_enabled)
         self.correction_mode = str(self.app.correction_mode)
 
         # Frame contributions for local and final Pauli-frame corrections.
@@ -165,6 +166,7 @@ class QREProtocol(Protocol):
         # Initiator endpoint waits for frame updates from middle nodes.
         if self.is_initiator:
             if self.expected_frame_updates == 0:
+                self.app.record_pre_final_frame_fidelity()
                 self.result = {"final_bx": 0, "final_bz": 0, "frame_updates_received": 0}
                 time_now = self.owner.timeline.now()
                 process = Process(self, "complete_qre", [])
@@ -234,7 +236,8 @@ class QREProtocol(Protocol):
 
         qm = self.owner.timeline.quantum_manager
         # Apply accumulated idle noise before the local swap circuit.
-        qm.apply_idling_decoherence(keys=run_keys, now_ps=int(self.owner.timeline.now()), t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
+        if self.idle_decoherence_enabled:
+            qm.apply_idling_decoherence(keys=run_keys, now_ps=int(self.owner.timeline.now()), t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
 
         pre_swap_duration_ps = 0
         if self.correction_mode in {"qec", "qec+cec"}: # TODO: Make these constants?
@@ -259,7 +262,7 @@ class QREProtocol(Protocol):
 
         meas_samp = self.owner.get_generator().random()
         # Execute the encoded Bell-basis measurement across both blocks.
-        results = qm.run_circuit(circ, run_keys, meas_samp)
+        results = qm.run_circuit(circ, run_keys, meas_samp, inject_gate_error=False)
         # Delay swap outputs by the full local pre-swap processing time.
         finish_t = int(self.owner.timeline.now()) + pre_swap_duration_ps + qm.get_circuit_duration(circ)
         log.logger.info(f"{self.name}: swap_timing now={int(self.owner.timeline.now())} pre_swap_duration_ps={pre_swap_duration_ps} swap_duration_ps={qm.get_circuit_duration(circ)} finish_t={finish_t}")
@@ -360,12 +363,14 @@ class QREProtocol(Protocol):
         final_bx = sum(bx for bx, _ in self.app.current_run["frame_updates_by_src"].values()) % 2
         final_bz = sum(bz for _, bz in self.app.current_run["frame_updates_by_src"].values()) % 2
         log.logger.info(f"{self.name}: frame_final run_id={self.app.current_run['run_id']} final_bx={final_bx} final_bz={final_bz} local_data_keys={self.local_data_keys}")
+        self.app.record_pre_final_frame_fidelity()
         finish_t = int(self.owner.timeline.now())
         # Apply final logical frame on the local endpoint block when non-trivial.
         if (final_bx or final_bz) and self.local_data_keys:
             # Apply time-based idle decoherence before endpoint frame-correction circuit.
             now_ps = int(self.owner.timeline.now())
-            self.owner.timeline.quantum_manager.apply_idling_decoherence(keys=self.local_data_keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
+            if self.idle_decoherence_enabled:
+                self.owner.timeline.quantum_manager.apply_idling_decoherence(keys=self.local_data_keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
             correction_circuit = Circuit(len(self.local_data_keys))
             for i in range(len(self.local_data_keys)):
                 if final_bx:
@@ -373,7 +378,7 @@ class QREProtocol(Protocol):
                 if final_bz:
                     correction_circuit.z(i)
             log.logger.info(f"{self.name}: apply_final_frame final_bx={final_bx} final_bz={final_bz} local_data_keys={self.local_data_keys}")
-            self.owner.timeline.quantum_manager.run_circuit(correction_circuit, self.local_data_keys)
+            self.owner.timeline.quantum_manager.run_circuit(correction_circuit, self.local_data_keys, inject_gate_error=False)
             # Delay endpoint completion by the estimated local frame-correction time.
             finish_t = int(self.owner.timeline.now()) + self.owner.timeline.quantum_manager.get_circuit_duration(correction_circuit)
             log.logger.info(f"{self.name}: final_frame_timing now={int(self.owner.timeline.now())} duration_ps={self.owner.timeline.quantum_manager.get_circuit_duration(correction_circuit)} finish_t={finish_t}")

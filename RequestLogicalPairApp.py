@@ -16,7 +16,6 @@ from sequence.kernel.event import Event
 from sequence.kernel.process import Process
 from sequence.utils import log
 from TeleportedCNOT import TeleportedCNOTMessage, TeleportedCNOTProtocol
-from sequence.constants import MILLISECOND
 
 if TYPE_CHECKING:
     from sequence.kernel.quantum_state import TableauState
@@ -85,13 +84,18 @@ class RequestLogicalPairApp:
             "tcnot_done": set(),
             "frame_updates_by_src": {},
             "initial_link_fidelities": {},
+            "post_idle_link_fidelities": {},
             "link_logical_fidelities": {},
+            "link_logical_fidelities_corrected": {},
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
             "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
             "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
+            "pre_frame_end_to_end_fidelity_raw": None,
+            "pre_frame_end_to_end_fidelity_corrected": None,
+            "final_end_to_end_corrected_bell_state": None,
             "success": None,
             "start_time": None,
             "end_time": None,
@@ -109,6 +113,7 @@ class RequestLogicalPairApp:
         self.idle_pauli_weights: dict[str, float] = dict(getattr(node, "idle_pauli_weights", {"x": 0.05, "y": 0.05, "z": 0.90}))  # Biased idle Pauli weights.
         self.idle_t1_sec = float(getattr(node, "idle_t1_sec", 1e12))  # Shared idle T1.
         self.idle_t2_sec = float(getattr(node, "idle_t2_sec", 1e12))  # Shared idle T2.
+        self.idle_decoherence_enabled = bool(getattr(node, "idle_decoherence_enabled", True))
         
         # Correction mode setting.
         self.correction_mode = str(getattr(node, "correction_mode"))
@@ -170,13 +175,18 @@ class RequestLogicalPairApp:
             "tcnot_done": set(),
             "frame_updates_by_src": {},
             "initial_link_fidelities": {},
+            "post_idle_link_fidelities": {},
             "link_logical_fidelities": {},
+            "link_logical_fidelities_corrected": {},
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
             "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
             "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
+            "pre_frame_end_to_end_fidelity_raw": None,
+            "pre_frame_end_to_end_fidelity_corrected": None,
+            "final_end_to_end_corrected_bell_state": None,
             "success": None,
             "start_time": None,
             "end_time": None,
@@ -213,13 +223,18 @@ class RequestLogicalPairApp:
             "tcnot_done": set(),
             "frame_updates_by_src": {},
             "initial_link_fidelities": {},
+            "post_idle_link_fidelities": {},
             "link_logical_fidelities": {},
+            "link_logical_fidelities_corrected": {},
             "physical_pair_fidelity_rows": {},
             "post_idle_pair_fidelity_rows": {},
             "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
             "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
+            "pre_frame_end_to_end_fidelity_raw": None,
+            "pre_frame_end_to_end_fidelity_corrected": None,
+            "final_end_to_end_corrected_bell_state": None,
             "success": None,
             "start_time": int(start_t),
             "end_time": int(end_t),
@@ -234,6 +249,246 @@ class RequestLogicalPairApp:
                 self.allocate_data_and_ancilla(neighbor)
             if neighbor not in self.current_run["qre_protocols"]:
                 self.current_run["qre_protocols"][neighbor] = QREProtocol(owner=self.node, app=self, remote_node_name=neighbor)
+
+    def record_post_idle_link_fidelity(self, neighbor: str) -> None:
+        """Store one post-idle physical-link fidelity checkpoint.
+
+        Args:
+            neighbor: Adjacent node name for the physical link.
+
+        Returns:
+            None.
+        """
+        neighbor_pos = self._path_node_names.index(neighbor)
+        if self._path_position > neighbor_pos:
+            return
+        if neighbor in self.current_run["post_idle_link_fidelities"]:
+            return
+
+        measured_fidelity = self.calculate_pair_fidelity(self.node.name, neighbor, "physical")
+        self.current_run["post_idle_link_fidelities"][neighbor] = measured_fidelity
+        log.logger.info(
+            f"{self.name}: post_idle_link_fidelity run_id={self.current_run['run_id']} "
+            f"neighbor={neighbor} value={measured_fidelity:.6f}"
+        )
+
+    def record_pre_final_frame_fidelity(self) -> None:
+        """Store the end-to-end fidelity right before final frame correction.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+        """
+        if self._path_position != 0:
+            return
+
+        raw_value = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
+        corrected_value = self.calculate_pair_fidelity_corrected(self._path_node_names[0], self._path_node_names[-1], "logical_end")
+        self.current_run["pre_frame_end_to_end_fidelity_raw"] = raw_value
+        self.current_run["pre_frame_end_to_end_fidelity_corrected"] = corrected_value
+        log.logger.info(
+            f"{self.name}: pre_final_frame_fidelity run_id={self.current_run['run_id']} "
+            f"raw={raw_value:.6f} corrected={corrected_value:.6f}"
+        )
+
+    def _build_key_label_maps(self) -> tuple[dict[int, str], dict[int, str]]:
+        """Build per-key block and qubit labels for critical summaries.
+
+        Args:
+            None.
+
+        Returns:
+            tuple[dict[int, str], dict[int, str]]: Block-label and qubit-label maps keyed by quantum-manager key.
+        """
+        block_labels: dict[int, str] = {}
+        qubit_labels: dict[int, str] = {}
+        for node_name in self._path_node_names:
+            router = self.node.timeline.get_entity_by_name(node_name)
+            app = router.request_logical_pair_app
+
+            for peer_name, memories in app.data_qubits.items():
+                for idx, memory in enumerate(memories):
+                    block_label = f"{node_name}:data:{peer_name}"
+                    block_labels[int(memory.qstate_key)] = block_label
+                    qubit_labels[int(memory.qstate_key)] = f"{block_label}:q{idx}:key{int(memory.qstate_key)}"
+
+            for peer_name, memories in app.ancilla_qubits.items():
+                for idx, memory in enumerate(memories):
+                    block_label = f"{node_name}:ancilla:{peer_name}"
+                    block_labels[int(memory.qstate_key)] = block_label
+                    qubit_labels[int(memory.qstate_key)] = f"{block_label}:q{idx}:key{int(memory.qstate_key)}"
+
+            for peer_name, memories in app.current_run["comm_qubits"].items():
+                for idx, memory in enumerate(memories):
+                    block_label = f"{node_name}:comm:{peer_name}"
+                    block_labels[int(memory.qstate_key)] = block_label
+                    qubit_labels[int(memory.qstate_key)] = f"{block_label}:q{idx}:key{int(memory.qstate_key)}"
+
+        return block_labels, qubit_labels
+
+    def _log_critical_run_summary(self, run_id: int, latency_ps: int | None) -> None:
+        """Emit critical run summaries for fidelity, syndromes, and noise counts.
+
+        Args:
+            run_id: Logical-pair run identifier.
+            latency_ps: End-to-end latency in picoseconds, if known.
+
+        Returns:
+            None.
+        """
+        qm = self.node.timeline.quantum_manager
+        block_labels, qubit_labels = self._build_key_label_maps()
+
+        idle_by_block: dict[str, int] = {}
+        idle_by_qubit: dict[str, int] = {}
+        for key, count in qm.idle_error_counts_by_key.items():
+            qubit_label = qubit_labels.get(int(key), f"key:{int(key)}")
+            block_label = block_labels.get(int(key), qubit_label)
+            idle_by_qubit[qubit_label] = int(count)
+            idle_by_block[block_label] = idle_by_block.get(block_label, 0) + int(count)
+
+        gate_1q_by_block: dict[str, int] = {}
+        for stat_key, count in qm.gate_1q_error_counts.items():
+            gate_name, key, branch = stat_key
+            block_label = block_labels.get(int(key), f"key:{int(key)}")
+            summary_key = f"{gate_name}|{block_label}|{branch}"
+            gate_1q_by_block[summary_key] = gate_1q_by_block.get(summary_key, 0) + int(count)
+
+        gate_1q_attempts_by_block: dict[str, int] = {}
+        for stat_key, count in qm.gate_1q_attempt_counts.items():
+            gate_name, key = stat_key
+            block_label = block_labels.get(int(key), f"key:{int(key)}")
+            summary_key = f"{gate_name}|{block_label}"
+            gate_1q_attempts_by_block[summary_key] = gate_1q_attempts_by_block.get(summary_key, 0) + int(count)
+
+        gate_2q_by_block_pair: dict[str, int] = {}
+        for stat_key, count in qm.gate_2q_error_counts.items():
+            gate_name, left_key, right_key, branch = stat_key
+            left_label = block_labels.get(int(left_key), f"key:{int(left_key)}")
+            right_label = block_labels.get(int(right_key), f"key:{int(right_key)}")
+            summary_key = f"{gate_name}|{left_label}->{right_label}|{branch}"
+            gate_2q_by_block_pair[summary_key] = gate_2q_by_block_pair.get(summary_key, 0) + int(count)
+
+        gate_2q_attempts_by_block_pair: dict[str, int] = {}
+        gate_2q_errors_total_by_block_pair: dict[str, int] = {}
+        gate_2q_observed_rate_by_block_pair: dict[str, float] = {}
+        for stat_key, count in qm.gate_2q_attempt_counts.items():
+            gate_name, left_key, right_key = stat_key
+            left_label = block_labels.get(int(left_key), f"key:{int(left_key)}")
+            right_label = block_labels.get(int(right_key), f"key:{int(right_key)}")
+            summary_key = f"{gate_name}|{left_label}->{right_label}"
+            gate_2q_attempts_by_block_pair[summary_key] = gate_2q_attempts_by_block_pair.get(summary_key, 0) + int(count)
+
+        for stat_key, count in qm.gate_2q_error_counts.items():
+            gate_name, left_key, right_key, _branch = stat_key
+            left_label = block_labels.get(int(left_key), f"key:{int(left_key)}")
+            right_label = block_labels.get(int(right_key), f"key:{int(right_key)}")
+            summary_key = f"{gate_name}|{left_label}->{right_label}"
+            gate_2q_errors_total_by_block_pair[summary_key] = gate_2q_errors_total_by_block_pair.get(summary_key, 0) + int(count)
+
+        for summary_key, attempts in gate_2q_attempts_by_block_pair.items():
+            errors = gate_2q_errors_total_by_block_pair.get(summary_key, 0)
+            gate_2q_observed_rate_by_block_pair[summary_key] = 0.0 if attempts == 0 else float(errors) / float(attempts)
+
+        measurement_by_block: dict[str, int] = {}
+        measurement_by_qubit: dict[str, int] = {}
+        for key, count in qm.measurement_flip_counts_by_key.items():
+            qubit_label = qubit_labels.get(int(key), f"key:{int(key)}")
+            block_label = block_labels.get(int(key), qubit_label)
+            measurement_by_qubit[qubit_label] = int(count)
+            measurement_by_block[block_label] = measurement_by_block.get(block_label, 0) + int(count)
+
+        measurement_attempts_by_block: dict[str, int] = {}
+        measurement_attempts_by_qubit: dict[str, int] = {}
+        for key, count in qm.measurement_attempt_counts_by_key.items():
+            qubit_label = qubit_labels.get(int(key), f"key:{int(key)}")
+            block_label = block_labels.get(int(key), qubit_label)
+            measurement_attempts_by_qubit[qubit_label] = int(count)
+            measurement_attempts_by_block[block_label] = measurement_attempts_by_block.get(block_label, 0) + int(count)
+
+        measurement_observed_rate_by_block: dict[str, float] = {}
+        for block_label, attempts in measurement_attempts_by_block.items():
+            flips = measurement_by_block.get(block_label, 0)
+            measurement_observed_rate_by_block[block_label] = 0.0 if attempts == 0 else float(flips) / float(attempts)
+
+        measurement_observed_rate_by_qubit: dict[str, float] = {}
+        for qubit_label, attempts in measurement_attempts_by_qubit.items():
+            flips = measurement_by_qubit.get(qubit_label, 0)
+            measurement_observed_rate_by_qubit[qubit_label] = 0.0 if attempts == 0 else float(flips) / float(attempts)
+
+        initialization_by_block: dict[str, int] = {}
+        initialization_by_qubit: dict[str, int] = {}
+        for key, count in qm.initialization_flip_counts_by_key.items():
+            qubit_label = qubit_labels.get(int(key), f"key:{int(key)}")
+            block_label = block_labels.get(int(key), qubit_label)
+            initialization_by_qubit[qubit_label] = int(count)
+            initialization_by_block[block_label] = initialization_by_block.get(block_label, 0) + int(count)
+
+        recovery = self.current_run["last_corrected_recovery"]
+        if isinstance(recovery, dict):
+            left_recovery = dict(recovery["left_recovery"])
+            right_recovery = dict(recovery["right_recovery"])
+        else:
+            left_recovery = {
+                "x_syndrome_before": [],
+                "z_syndrome_before": [],
+                "x_syndrome_after": [],
+                "z_syndrome_after": [],
+                "x_error_qubit": None,
+                "z_error_qubit": None,
+            }
+            right_recovery = {
+                "x_syndrome_before": [],
+                "z_syndrome_before": [],
+                "x_syndrome_after": [],
+                "z_syndrome_after": [],
+                "x_error_qubit": None,
+                "z_error_qubit": None,
+            }
+
+        final_raw = self.current_run["final_end_to_end_fidelity_raw"]
+        final_corrected = self.current_run["final_end_to_end_fidelity_corrected"]
+        raw_corrected_delta = None
+        if isinstance(final_raw, float) and isinstance(final_corrected, float):
+            raw_corrected_delta = final_corrected - final_raw
+
+        log.logger.critical(
+            f"critical_e2e run_id={run_id} latency_ps={latency_ps} "
+            f"fidelity_raw={final_raw} fidelity_corrected={final_corrected} "
+            f"fidelity_delta={raw_corrected_delta}"
+        )
+        log.logger.critical(
+            f"critical_recovery run_id={run_id} "
+            f"left_x_before={left_recovery['x_syndrome_before']} left_z_before={left_recovery['z_syndrome_before']} "
+            f"left_x_after={left_recovery['x_syndrome_after']} left_z_after={left_recovery['z_syndrome_after']} "
+            f"right_x_before={right_recovery['x_syndrome_before']} right_z_before={right_recovery['z_syndrome_before']} "
+            f"right_x_after={right_recovery['x_syndrome_after']} right_z_after={right_recovery['z_syndrome_after']}"
+        )
+        log.logger.critical(
+            f"critical_ladder run_id={run_id} "
+            f"physical_pre_idle={dict(self.current_run['initial_link_fidelities'])} "
+            f"physical_post_idle={dict(self.current_run['post_idle_link_fidelities'])} "
+            f"logical_post_tcnot_raw={dict(self.current_run['link_logical_fidelities'])} "
+            f"logical_post_tcnot_corrected={dict(self.current_run['link_logical_fidelities_corrected'])} "
+            f"pre_final_frame_raw={self.current_run['pre_frame_end_to_end_fidelity_raw']} "
+            f"pre_final_frame_corrected={self.current_run['pre_frame_end_to_end_fidelity_corrected']} "
+            f"final_corrected={final_corrected}"
+        )
+        log.logger.critical(
+            f"critical_noise run_id={run_id} idle_by_block={idle_by_block} idle_by_qubit={idle_by_qubit} "
+            f"gate_1q_by_block={gate_1q_by_block} gate_1q_attempts_by_block={gate_1q_attempts_by_block} "
+            f"gate_2q_by_block_pair={gate_2q_by_block_pair} "
+            f"gate_2q_attempts_by_block_pair={gate_2q_attempts_by_block_pair} "
+            f"gate_2q_observed_rate_by_block_pair={gate_2q_observed_rate_by_block_pair} "
+            f"measurement_by_block={measurement_by_block} measurement_by_qubit={measurement_by_qubit} "
+            f"measurement_attempts_by_block={measurement_attempts_by_block} "
+            f"measurement_attempts_by_qubit={measurement_attempts_by_qubit} "
+            f"measurement_observed_rate_by_block={measurement_observed_rate_by_block} "
+            f"measurement_observed_rate_by_qubit={measurement_observed_rate_by_qubit} "
+            f"initialization_by_block={initialization_by_block} initialization_by_qubit={initialization_by_qubit}"
+        )
 
     def start(self, responder: str, start_t: int, end_t: int, fidelity: float, num_logical_pairs: int) -> None:
         """Schedule one or more logical-pair runs.
@@ -263,6 +518,11 @@ class RequestLogicalPairApp:
             run_start_t = int(start_t) + run_index * (run_duration_ps + round_spacing_ps)
             run_end_t = run_start_t + run_duration_ps
             self.scheduled_run_starts.append(run_start_t)
+
+            if self._path_position == 0:
+                reset_process = Process(self.node.timeline.quantum_manager, "reset_error_statistics", [])
+                reset_event = Event(run_start_t, reset_process, self.node.timeline.schedule_counter)
+                self.node.timeline.schedule(reset_event)
 
             process = Process(self, "begin_run", [run_start_t, run_end_t])
             event = Event(run_start_t, process, self.node.timeline.schedule_counter)
@@ -392,20 +652,28 @@ class RequestLogicalPairApp:
 
         # Run one ideal recovery pass on a copied endpoint block.
         # This is only used for the corrected end-to-end metric.
-        def recover_block(sim: stim.TableauSimulator, block_keys: list[int], key_to_local: dict[int, int]) -> dict[str, object]:
+        def recover_block(sim: stim.TableauSimulator, block_keys: list[int], key_to_local: dict[int, int], block_label: str) -> dict[str, object]:
             """Apply one noiseless recovery round on a copied endpoint block.
 
             Args:
                 sim: Temporary simulator copy used only for fidelity evaluation.
                 block_keys: Quantum-manager keys for one encoded endpoint block.
                 key_to_local: Map from quantum-manager keys to simulator-local indices.
+                block_label: Human-readable block label for logging.
 
             Returns:
-                dict[str, object]: Measured syndromes and decoded correction indices.
+                dict[str, object]: Measured before/after syndromes and decoded correction indices.
             """
             decode_table = self.code.get_decode_table()
             if len(decode_table) == 0:
-                return {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
+                return {
+                    "x_syndrome_before": [],
+                    "z_syndrome_before": [],
+                    "x_syndrome_after": [],
+                    "z_syndrome_after": [],
+                    "x_error_qubit": None,
+                    "z_error_qubit": None,
+                }
 
             def syndrome_bit(stabilizer: str) -> int | None:
                 """Compute one syndrome bit from a stabilizer expectation.
@@ -450,16 +718,32 @@ class RequestLogicalPairApp:
                 return decode_table[tuple(int(bit) for bit in syndrome)]
 
             # In a CSS code, Z stabilizers locate X errors and X stabilizers locate Z errors.
-            x_syndrome = [syndrome_bit(stabilizer) for stabilizer in self.code.get_x_stabilizer_strings()]
-            z_syndrome = [syndrome_bit(stabilizer) for stabilizer in self.code.get_z_stabilizer_strings()]
-            x_error_qubit = decode_syndrome(z_syndrome)
-            z_error_qubit = decode_syndrome(x_syndrome)
+            x_syndrome_before = [syndrome_bit(stabilizer) for stabilizer in self.code.get_x_stabilizer_strings()]
+            z_syndrome_before = [syndrome_bit(stabilizer) for stabilizer in self.code.get_z_stabilizer_strings()]
+            x_error_qubit = decode_syndrome(z_syndrome_before)
+            z_error_qubit = decode_syndrome(x_syndrome_before)
             if x_error_qubit is not None:
                 sim.x(key_to_local[block_keys[int(x_error_qubit)]])
             if z_error_qubit is not None:
                 sim.z(key_to_local[block_keys[int(z_error_qubit)]])
 
-            return {"x_syndrome": x_syndrome,"z_syndrome": z_syndrome, "x_error_qubit": x_error_qubit, "z_error_qubit": z_error_qubit}
+            x_syndrome_after = [syndrome_bit(stabilizer) for stabilizer in self.code.get_x_stabilizer_strings()]
+            z_syndrome_after = [syndrome_bit(stabilizer) for stabilizer in self.code.get_z_stabilizer_strings()]
+            log.logger.warning(
+                f"{self.name}: ideal_recovery block={block_label} block_keys={block_keys} "
+                f"x_before={x_syndrome_before} z_before={z_syndrome_before} "
+                f"x_q={x_error_qubit} z_q={z_error_qubit} "
+                f"x_after={x_syndrome_after} z_after={z_syndrome_after}"
+            )
+
+            return {
+                "x_syndrome_before": x_syndrome_before,
+                "z_syndrome_before": z_syndrome_before,
+                "x_syndrome_after": x_syndrome_after,
+                "z_syndrome_after": z_syndrome_after,
+                "x_error_qubit": x_error_qubit,
+                "z_error_qubit": z_error_qubit,
+            }
 
         # Evaluate Bell-pair fidelity once the relevant endpoint keys and logical supports are known.
         def fidelity_from_keys(left_keys: list[int], right_keys: list[int], px: str, py: str, pz: str) -> float:
@@ -475,18 +759,150 @@ class RequestLogicalPairApp:
             Returns:
                 float: Fidelity value.
             """
+            def build_single_block_observable(block_keys: list[int], pauli_string: str, key_to_local: dict[int, int]) -> stim.PauliString:
+                """Build one logical observable on a single encoded block.
+
+                Args:
+                    block_keys: Block keys in code order.
+                    pauli_string: Pauli support string to apply on the block.
+                    key_to_local: Map from quantum-manager keys to simulator-local indices.
+
+                Returns:
+                    stim.PauliString: Logical observable on one block.
+                """
+                observable = stim.PauliString(len(key_to_local))
+                for key, pauli in zip(block_keys, pauli_string):
+                    if pauli != "I":
+                        observable[key_to_local[key]] = pauli
+                return observable
+
+            def all_logical_pauli_expectations(sim: stim.TableauSimulator, left_keys: list[int], right_keys: list[int], px: str, py: str, pz: str, key_to_local: dict[int, int]) -> dict[str, float]:
+                """Return all 16 logical two-qubit Pauli expectations.
+
+                Args:
+                    sim: Temporary simulator copy used for fidelity evaluation.
+                    left_keys: Left-side keys.
+                    right_keys: Right-side keys.
+                    px: X-support string.
+                    py: Y-support string.
+                    pz: Z-support string.
+                    key_to_local: Map from quantum-manager keys to simulator-local indices.
+
+                Returns:
+                    dict[str, float]: Expectations for II, IX, ..., ZZ.
+                """
+                support_by_label = {
+                    "I": "I" * len(px),
+                    "X": px,
+                    "Y": py,
+                    "Z": pz,
+                }
+
+                values: dict[str, float] = {}
+                labels = ["I", "X", "Y", "Z"]
+                for left_label in labels:
+                    for right_label in labels:
+                        name = f"{left_label}{right_label}"
+                        if name == "II":
+                            values[name] = 1.0
+                            continue
+
+                        observable = stim.PauliString(len(key_to_local))
+                        left_obs = build_single_block_observable(left_keys, support_by_label[left_label], key_to_local)
+                        right_obs = build_single_block_observable(right_keys, support_by_label[right_label], key_to_local)
+                        observable *= left_obs
+                        observable *= right_obs
+                        values[name] = float(sim.peek_observable_expectation(observable))
+                return values
+
+            def bell_fidelities_from_correlators(cx: float, cy: float, cz: float) -> dict[str, float]:
+                """Return fidelities for the four logical Bell states.
+
+                Args:
+                    cx: Logical XX correlator expectation.
+                    cy: Logical YY correlator expectation.
+                    cz: Logical ZZ correlator expectation.
+
+                Returns:
+                    dict[str, float]: Bell-state fidelities keyed by label.
+                """
+                return {
+                    "phi_plus": (1.0 + cx - cy + cz) / 4.0,
+                    "phi_minus": (1.0 - cx + cy + cz) / 4.0,
+                    "psi_plus": (1.0 + cx + cy - cz) / 4.0,
+                    "psi_minus": (1.0 - cx - cy - cz) / 4.0,
+                }
+
+            def log_correlator_snapshot(stage: str, sim: stim.TableauSimulator, left_keys: list[int], right_keys: list[int], px: str, py: str, pz: str, key_to_local: dict[int, int]) -> None:
+                """Log one Bell-correlator snapshot for the copied endpoint state.
+
+                Args:
+                    stage: Short stage label for the snapshot.
+                    sim: Temporary simulator copy used for fidelity evaluation.
+                    left_keys: Left-side keys.
+                    right_keys: Right-side keys.
+                    px: X-support string.
+                    py: Y-support string.
+                    pz: Z-support string.
+                    key_to_local: Map from quantum-manager keys to simulator-local indices.
+
+                Returns:
+                    None
+                """
+                xx_obs = build_joint_observable(left_keys, right_keys, px, key_to_local)
+                cx = float(sim.peek_observable_expectation(xx_obs))
+
+                yy_obs = build_joint_observable(left_keys, right_keys, py, key_to_local)
+                cy = float(sim.peek_observable_expectation(yy_obs))
+
+                zz_obs = build_joint_observable(left_keys, right_keys, pz, key_to_local)
+                cz = float(sim.peek_observable_expectation(zz_obs))
+
+                pauli_values = all_logical_pauli_expectations(sim, left_keys, right_keys, px, py, pz, key_to_local)
+                fidelities = bell_fidelities_from_correlators(cx, cy, cz)
+                best_label = max(fidelities, key=fidelities.get)
+                value = fidelities[best_label]
+                log.logger.warning(
+                    f"{self.name}: recovery_correlators stage={stage} pair_type={pair_type} "
+                    f"left={left_node} right={right_node} "
+                    f"cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} "
+                    f"paulis={pauli_values} "
+                    f"phi_plus={fidelities['phi_plus']:.6f} phi_minus={fidelities['phi_minus']:.6f} "
+                    f"psi_plus={fidelities['psi_plus']:.6f} psi_minus={fidelities['psi_minus']:.6f} "
+                    f"best={best_label} value={value:.6f}"
+                )
+
             all_keys = left_keys + right_keys
             sim, key_to_local = build_simulator_from_keys(all_keys)
-            left_recovery = {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None,}
-            right_recovery = {"x_syndrome": [],"z_syndrome": [],"x_error_qubit": None,"z_error_qubit": None,}
-            if pair_type == "logical_end" and recover_endpoints:
+            left_recovery = {
+                "x_syndrome_before": [],
+                "z_syndrome_before": [],
+                "x_syndrome_after": [],
+                "z_syndrome_after": [],
+                "x_error_qubit": None,
+                "z_error_qubit": None,
+            }
+            right_recovery = {
+                "x_syndrome_before": [],
+                "z_syndrome_before": [],
+                "x_syndrome_after": [],
+                "z_syndrome_after": [],
+                "x_error_qubit": None,
+                "z_error_qubit": None,
+            }
+            if pair_type in {"logical_end", "logical_link"} and recover_endpoints:
+                log_correlator_snapshot("before_recovery", sim, left_keys, right_keys, px, py, pz, key_to_local)
+
                 # Corrected fidelity: recover each endpoint block on the copied tableau before scoring it.
-                left_recovery = recover_block(sim, left_keys, key_to_local)
-                right_recovery = recover_block(sim, right_keys, key_to_local)
-                self.current_run["last_corrected_recovery"] = {
-                    "left_recovery": dict(left_recovery),
-                    "right_recovery": dict(right_recovery),
-                }
+                left_recovery = recover_block(sim, left_keys, key_to_local, "left")
+                log_correlator_snapshot("after_left_recovery", sim, left_keys, right_keys, px, py, pz, key_to_local)
+                right_recovery = recover_block(sim, right_keys, key_to_local, "right")
+                log_correlator_snapshot("after_right_recovery", sim, left_keys, right_keys, px, py, pz, key_to_local)
+                if pair_type == "logical_end":
+                    self.current_run["last_corrected_recovery"] = {
+                        "left_recovery": dict(left_recovery),
+                        "right_recovery": dict(right_recovery),
+                    }
 
             # Score the final copied state with logical XX, YY, and ZZ Bell correlators.
             xx_obs = build_joint_observable(left_keys, right_keys, px, key_to_local)
@@ -498,13 +914,26 @@ class RequestLogicalPairApp:
             zz_obs = build_joint_observable(left_keys, right_keys, pz, key_to_local)
             cz = float(sim.peek_observable_expectation(zz_obs))
 
-            # Bell-state fidelity for |Phi+> from the three logical correlators.
-            value = (1.0 + cx - cy + cz) / 4.0
-            log.logger.info(
+            pauli_values = all_logical_pauli_expectations(sim, left_keys, right_keys, px, py, pz, key_to_local)
+            fidelities = bell_fidelities_from_correlators(cx, cy, cz)
+            if pair_type == "logical_end" and recover_endpoints:
+                best_label = max(fidelities, key=fidelities.get)
+                value = fidelities["phi_plus"]
+                self.current_run["final_end_to_end_corrected_bell_state"] = best_label
+            else:
+                best_label = "phi_plus"
+                value = fidelities["phi_plus"]
+            log.logger.warning(
                 f"{self.name}: fidelity_components pair_type={pair_type} recover_endpoints={recover_endpoints} left={left_node} right={right_node} "
-                f"left_x_s={left_recovery['x_syndrome']} left_z_s={left_recovery['z_syndrome']} "
-                f"right_x_s={right_recovery['x_syndrome']} right_z_s={right_recovery['z_syndrome']} "
-                f"cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} value={value:.6f}"
+                f"left_x_before={left_recovery['x_syndrome_before']} left_z_before={left_recovery['z_syndrome_before']} "
+                f"left_x_after={left_recovery['x_syndrome_after']} left_z_after={left_recovery['z_syndrome_after']} "
+                f"right_x_before={right_recovery['x_syndrome_before']} right_z_before={right_recovery['z_syndrome_before']} "
+                f"right_x_after={right_recovery['x_syndrome_after']} right_z_after={right_recovery['z_syndrome_after']} "
+                f"cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} "
+                f"paulis={pauli_values} "
+                f"phi_plus={fidelities['phi_plus']:.6f} phi_minus={fidelities['phi_minus']:.6f} "
+                f"psi_plus={fidelities['psi_plus']:.6f} psi_minus={fidelities['psi_minus']:.6f} "
+                f"best={best_label} value={value:.6f}"
             )
             return value
 
@@ -763,7 +1192,7 @@ class RequestLogicalPairApp:
 
         # Encode only after both adjacent links are finalized as ready.
         log.logger.info(f"{self.name}: triggering encode path_role={self._path_role} expected_ready={sorted(expected_ready)}")
-        self.encode_data_qubits(data_blocks=data_blocks, ft_prep_mode=self.ft_prep_mode, max_ft_prep_shots=8)
+        self.encode_data_qubits(data_blocks=data_blocks, ft_prep_mode=self.ft_prep_mode, max_ft_prep_shots=15)
 
     def get_physical_reservation_results(self, reservation: "Reservation", result: bool) -> None:
         """Handle initiator-side physical reservation result and index mapping.
@@ -888,8 +1317,14 @@ class RequestLogicalPairApp:
                     raise RuntimeError(f"{self.name}: {ft_prep_mode} FT mode requires >={need} ancillas")
                 ancilla_keys = [ancilla_memories[i].qstate_key for i in range(need)]
 
-            accepted, prep_duration_ps = self.code.run_encode_ft_prep(qm=qm, data_keys=block_keys, ancilla_keys=ancilla_keys, ft_prep_mode=ft_prep_mode, max_ft_prep_shots=max_ft_prep_shots, meas_samp=self.node.get_generator().random(), logical_state=logical_state)
+            accepted, prep_duration_ps, ft_prep_shots_used = self.code.run_encode_ft_prep(qm=qm, data_keys=block_keys, ancilla_keys=ancilla_keys, ft_prep_mode=ft_prep_mode, max_ft_prep_shots=max_ft_prep_shots, meas_samp=self.node.get_generator().random(), logical_state=logical_state)
             total_prep_duration_ps += prep_duration_ps
+            ft_prep_retries = ft_prep_shots_used - 1
+            log.logger.warning(
+                f"{self.name}: ft_prep_result neighbor={block_neighbor} logical_state={logical_state} "
+                f"mode={ft_prep_mode} accepted={accepted} shots_used={ft_prep_shots_used} "
+                f"retries={ft_prep_retries}"
+            )
             log.logger.info(f"{self.name}: block encode accepted={accepted} ft_prep_mode={ft_prep_mode}")
             
             if not accepted:
@@ -991,8 +1426,13 @@ class RequestLogicalPairApp:
         neighbor_pos = self._path_node_names.index(neighbor)
         if self._path_position < neighbor_pos:
             measured_fidelity = self.calculate_pair_fidelity(self.node.name, neighbor, "logical_link")
+            corrected_fidelity = self.calculate_pair_fidelity_corrected(self.node.name, neighbor, "logical_link")
             self.current_run["link_logical_fidelities"][neighbor] = measured_fidelity
-            log.logger.info(f"{self.name}: logical_link_fidelity run_id={self.current_run['run_id']} neighbor={neighbor} value={measured_fidelity:.6f}")
+            self.current_run["link_logical_fidelities_corrected"][neighbor] = corrected_fidelity
+            log.logger.info(
+                f"{self.name}: logical_link_fidelity run_id={self.current_run['run_id']} "
+                f"neighbor={neighbor} raw={measured_fidelity:.6f} corrected={corrected_fidelity:.6f}"
+            )
 
         # QRE barrier: this node launches QRE only after all its adjacent TCNOT links complete.
         self.current_run["tcnot_done"].add(neighbor)
@@ -1111,42 +1551,17 @@ class RequestLogicalPairApp:
 
         self.run_stats[run_id] = {
             "run_id": int(self.current_run["run_id"]),
-            "start_time": self.current_run["start_time"],
-            "end_time": self.current_run["end_time"],
-            "completion_time": self.current_run["completion_time"],
             "latency_ps": latency_ps,
-            "status": self.current_run["status"],
-            "success": self.current_run["success"],
             "final_end_to_end_fidelity": final_fidelity,
             "final_end_to_end_fidelity_raw": self.current_run["final_end_to_end_fidelity_raw"],
             "final_end_to_end_fidelity_corrected": self.current_run["final_end_to_end_fidelity_corrected"],
+            "final_end_to_end_corrected_bell_state": self.current_run["final_end_to_end_corrected_bell_state"],
             "initial_link_fidelities": dict(self.current_run["initial_link_fidelities"]),
             "link_logical_fidelities": dict(self.current_run["link_logical_fidelities"]),
-            "physical_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["physical_pair_fidelity_rows"].items()},
-            "post_idle_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["post_idle_pair_fidelity_rows"].items()},
         }
 
-        if self.node.name == 'router_0':
-            recovery = self.current_run["last_corrected_recovery"]
-            if isinstance(recovery, dict):
-                left_recovery = dict(recovery["left_recovery"])
-                right_recovery = dict(recovery["right_recovery"])
-            else:
-                left_recovery = {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
-                right_recovery = {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
-            left_has_nd = any(bit is None for bit in left_recovery["x_syndrome"]) or any(bit is None for bit in left_recovery["z_syndrome"])
-            right_has_nd = any(bit is None for bit in right_recovery["x_syndrome"]) or any(bit is None for bit in right_recovery["z_syndrome"])
-            log.logger.critical(
-                f"run_id={run_id}, time to serve={latency_ps / MILLISECOND}, "
-                f"fidelity_raw={self.current_run['final_end_to_end_fidelity_raw']:.6f}, "
-                f"fidelity_corrected={self.current_run['final_end_to_end_fidelity_corrected']:.6f}, "
-                f"fidelity={final_fidelity:.6f}, "
-                f"left_x_s={left_recovery['x_syndrome']}, left_z_s={left_recovery['z_syndrome']}, "
-                f"right_x_s={right_recovery['x_syndrome']}, right_z_s={right_recovery['z_syndrome']}, "
-                f"left_x_q={left_recovery['x_error_qubit']}, left_z_q={left_recovery['z_error_qubit']}, "
-                f"right_x_q={right_recovery['x_error_qubit']}, right_z_q={right_recovery['z_error_qubit']}, "
-                f"left_has_nd={left_has_nd}, right_has_nd={right_has_nd}"
-            )
+        if False and self._path_position == 0:
+            self._log_critical_run_summary(run_id, latency_ps)
 
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1
         current_end_t = int(self.current_run["end_time"]) if self.current_run["end_time"] is not None else int(self.node.timeline.now())

@@ -102,6 +102,7 @@ class TeleportedCNOTProtocol(Protocol):
         self.idle_pauli_weights: dict[str, float] = dict(self.app.idle_pauli_weights)
         self.idle_t1_sec = float(self.app.idle_t1_sec)
         self.idle_t2_sec = float(self.app.idle_t2_sec)
+        self.idle_decoherence_enabled = bool(self.app.idle_decoherence_enabled)
 
     def start(self) -> None:
         """Start teleported-CNOT execution once local resources are ready.
@@ -215,10 +216,12 @@ class TeleportedCNOTProtocol(Protocol):
 
         # Apply time-based idle decoherence before Phase A consumes data/comm qubits.
         now_ps = int(self.owner.timeline.now())
-        qm.apply_idling_decoherence(keys=keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
+        if self.idle_decoherence_enabled:
+            qm.apply_idling_decoherence(keys=keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
+        self.app.record_post_idle_link_fidelity(self.remote_node_name)
 
         rnd = self.owner.get_generator().random()
-        results = qm.run_circuit(circ, keys, rnd)
+        results = qm.run_circuit(circ, keys, rnd, inject_gate_error=False)
         finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(circ)
         log.logger.info(f"[{self.name}] phase_a_timing now={int(self.owner.timeline.now())} duration_ps={qm.get_circuit_duration(circ)} finish_t={finish_t}")
         for key in keys:
@@ -264,16 +267,17 @@ class TeleportedCNOTProtocol(Protocol):
                 circ.x(n + i)  # feed-forward X on data_i
 
         for i in range(n):
-            circ.h(i)          # H(comm_i)
-            circ.measure(i)    # M(comm_i) in X basis
+            circ.measure_x(i)  # MX(comm_i)
 
         keys = self.communication_qubit_keys + self.data_qubit_keys
         # Apply time-based idle decoherence before Phase B consumes comm/data qubits.
         now_ps = int(self.owner.timeline.now())
-        qm.apply_idling_decoherence(keys=keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
+        if self.idle_decoherence_enabled:
+            qm.apply_idling_decoherence(keys=keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
+        self.app.record_post_idle_link_fidelity(self.remote_node_name)
 
         rnd = self.owner.get_generator().random()
-        results = qm.run_circuit(circ, keys, rnd)
+        results = qm.run_circuit(circ, keys, rnd, inject_gate_error=False)
         # Delay Bob's reply by the estimated local circuit processing time.
         finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(circ)
         # Mark the comm/data keys busy until the local circuit is considered complete.
@@ -317,10 +321,11 @@ class TeleportedCNOTProtocol(Protocol):
 
         # Apply time-based idle decoherence before Phase C consumes data qubits.
         now_ps = int(self.owner.timeline.now())
-        qm.apply_idling_decoherence(keys=self.data_qubit_keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
+        if self.idle_decoherence_enabled:
+            qm.apply_idling_decoherence(keys=self.data_qubit_keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
 
         rnd = self.owner.get_generator().random()
-        qm.run_circuit(correction_circuit, self.data_qubit_keys, rnd)
+        qm.run_circuit(correction_circuit, self.data_qubit_keys, rnd, inject_gate_error=False)
         # Delay local completion by the estimated correction-circuit processing time.
         finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(correction_circuit)
         # Mark the data block busy until the local correction is considered complete.

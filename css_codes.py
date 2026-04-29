@@ -210,7 +210,7 @@ class CSSCode(ABC):
             return supports
         raise RuntimeError(f"{self.name}: unknown ft_prep_mode {mode}")
 
-    def run_encode_ft_prep(self, qm: "QuantumManagerTableau", data_keys: List[int], ancilla_keys: List[int], ft_prep_mode: str, max_ft_prep_shots: int, meas_samp: float, logical_state: str = "0") -> tuple[bool, int]:
+    def run_encode_ft_prep(self, qm: "QuantumManagerTableau", data_keys: List[int], ancilla_keys: List[int], ft_prep_mode: str, max_ft_prep_shots: int, meas_samp: float, logical_state: str = "0") -> tuple[bool, int, int]:
         """Run encode plus optional FT prep shots on a tableau-backed block.
 
         Args:
@@ -223,7 +223,8 @@ class CSSCode(ABC):
             logical_state: Target encoded logical state ("0" or "+").
 
         Returns:
-            tuple[bool, int]: Acceptance flag and estimated duration in picoseconds.
+            tuple[bool, int, int]: Acceptance flag, estimated duration in picoseconds,
+                and number of FT prep shots used.
         """
 
         if max_ft_prep_shots < 1:
@@ -255,14 +256,14 @@ class CSSCode(ABC):
                 qm.set_to_zero(ancilla_key)
             total_duration_ps += qm.get_reset_duration(len(data_keys) + len(ancilla_keys[:len(supports)]))
 
-            qm.run_circuit(encode_circuit, data_keys, shot_meas_samp)
+            qm.run_circuit(encode_circuit, data_keys, shot_meas_samp, inject_gate_error=True)
             total_duration_ps += qm.get_circuit_duration(encode_circuit)
 
             if ft_prep_mode == "none":
                 if logical_state == "+":
-                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0)
+                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0, inject_gate_error=False)
                     total_duration_ps += qm.get_circuit_duration(plus_circuit)
-                return True, total_duration_ps
+                return True, total_duration_ps, 1
 
             accepted = True
             # Run the selected FT parity checks and reject the shot on the first nonzero ancilla result.
@@ -281,7 +282,7 @@ class CSSCode(ABC):
 
                 # Offset each FT check within the shot so repeated ancilla measurements do not reuse the same sample.
                 check_meas_samp = (shot_meas_samp + (check_idx + 1) / 100.0) % 1.0
-                results = qm.run_circuit(check_circuit, check_keys, check_meas_samp)
+                results = qm.run_circuit(check_circuit, check_keys, check_meas_samp, inject_gate_error=False)
                 total_duration_ps += qm.get_circuit_duration(check_circuit)
                 if int(results[ancilla_key]) != 0:
                     accepted = False
@@ -289,11 +290,11 @@ class CSSCode(ABC):
 
             if accepted:
                 if logical_state == "+":
-                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0)
+                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0, inject_gate_error=False)
                     total_duration_ps += qm.get_circuit_duration(plus_circuit)
-                return True, total_duration_ps
+                return True, total_duration_ps, shot_idx + 1
 
-        return False, total_duration_ps
+        return False, total_duration_ps, max_ft_prep_shots
 
 
     def get_decode_table(self) -> Dict[tuple[int, int, int], int | None]:
@@ -571,7 +572,7 @@ class Steane713(CSSCode):
             return value - 1
 
         merge_circuit = Circuit(len(merge_keys))
-        qm.run_circuit(merge_circuit, merge_keys, round1_meas_samp)
+        qm.run_circuit(merge_circuit, merge_keys, round1_meas_samp, inject_gate_error=False)
 
         green = self.n
         blue = self.n + 1
@@ -596,7 +597,7 @@ class Steane713(CSSCode):
         round1_circuit.measure(green)
         round1_circuit.measure(blue)
         round1_circuit.measure(red)
-        round1_results = qm.run_circuit(round1_circuit, merge_keys, round1_meas_samp)
+        round1_results = qm.run_circuit(round1_circuit, merge_keys, round1_meas_samp, inject_gate_error=False)
         total_duration_ps += qm.get_circuit_duration(round1_circuit)
 
         x_green = int(round1_results[used_ancilla_keys[0]])
@@ -609,7 +610,7 @@ class Steane713(CSSCode):
         total_duration_ps += qm.get_reset_duration(len(used_ancilla_keys))
 
         merge_circuit = Circuit(len(merge_keys))
-        qm.run_circuit(merge_circuit, merge_keys, round2a_meas_samp)
+        qm.run_circuit(merge_circuit, merge_keys, round2a_meas_samp, inject_gate_error=False)
 
         # Round 2a rotates the ancillas into the basis needed for the complementary syndrome extraction.
         round2a_circuit = Circuit(len(merge_keys))
@@ -628,7 +629,7 @@ class Steane713(CSSCode):
         round2a_circuit.cx(blue, 3)
         round2a_circuit.cx(red, 1)
         round2a_circuit.measure(green)
-        round2a_results = qm.run_circuit(round2a_circuit, merge_keys, round2a_meas_samp)
+        round2a_results = qm.run_circuit(round2a_circuit, merge_keys, round2a_meas_samp, inject_gate_error=False)
         total_duration_ps += qm.get_circuit_duration(round2a_circuit)
 
         z_green = int(round2a_results[used_ancilla_keys[0]])
@@ -640,7 +641,7 @@ class Steane713(CSSCode):
         round2b_circuit.h(self.n + 1)
         round2b_circuit.measure(self.n)
         round2b_circuit.measure(self.n + 1)
-        round2b_results = qm.run_circuit(round2b_circuit, round2b_keys, round2b_meas_samp)
+        round2b_results = qm.run_circuit(round2b_circuit, round2b_keys, round2b_meas_samp, inject_gate_error=False)
         total_duration_ps += qm.get_circuit_duration(round2b_circuit)
 
         x_blue = int(round2b_results[used_ancilla_keys[1]])
@@ -665,7 +666,7 @@ class Steane713(CSSCode):
                 correction_circuit.z(int(z_error_qubit))
                 applied_z = int(z_error_qubit)
             if applied_x is not None or applied_z is not None:
-                qm.run_circuit(correction_circuit, data_keys, correction_meas_samp)
+                qm.run_circuit(correction_circuit, data_keys, correction_meas_samp, inject_gate_error=False)
                 total_duration_ps += qm.get_circuit_duration(correction_circuit)
 
         return {

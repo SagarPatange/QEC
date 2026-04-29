@@ -1,7 +1,10 @@
 import sys
 import time
+import secrets
 from pathlib import Path
 from subprocess import PIPE, Popen
+
+LOG_ROOT = "log/runner_test_april29th"
 
 
 # ideal parameters
@@ -9,12 +12,13 @@ BASE_ARGS = [
         "--config_file", "config/standard_configs/line_2_2G.json",
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "0.8",
-        "--num_logical_pairs", "10000",
+        "--num_logical_pairs", "1000",
         "--link_distance_km", "1",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
-        "--state_preparation_fidelity", "1",
+        "--initialization_fidelity", "1",
         "--gate_error_channel", "pauli",
+        "--pauli_1q_weights", "0.05", "0.05", "0.9",
         "--idle_t1_sec", "1e12",
         "--idle_t2_sec", "1e12",
         "--ft_prep_mode", "minimal",
@@ -77,7 +81,7 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
 
 
 def test_graph_two_qubit_gate_sweep() -> None:
-    """Run a minimal Graph 3 sweep over two-qubit gate fidelity.
+    """Run the two-qubit-only fidelity sweep.
 
     Args:
         None.
@@ -88,14 +92,76 @@ def test_graph_two_qubit_gate_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
+    log_directory = f"{LOG_ROOT}/graph_two_qubit_gate_sweep_only_2q_noise_stateprep_Inspection"
 
-    two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
+    two_qubit_gate_fidelities = ["0.99", "0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
+    # two_qubit_gate_fidelities = ["0.99"]
 
     for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
-        args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity, "--log_directory", "log/runner-test/graph_two_qubit_gate_sweep"]
+        args = [
+            "--two_qubit_gate_fidelity", two_qubit_gate_fidelity,
+            "--log_directory", log_directory,
+            "--seed_offset", str(secrets.randbelow(2**31 - 1)),
+        ]
         tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=28)
+    run_tasks(tasks, parallel=8)
+
+
+def test_graph_one_qubit_gate_sweep() -> None:
+    """Run the one-qubit-only fidelity sweep.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    log_directory = f"{LOG_ROOT}/graph_one_qubit_gate_sweep_only_1q_noise"
+
+    # one_qubit_gate_fidelities = ["0.99"]
+    one_qubit_gate_fidelities = ["0.99", "0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
+
+
+    for one_qubit_gate_fidelity in one_qubit_gate_fidelities:
+        args = [
+            "--gate_fidelity", one_qubit_gate_fidelity,
+            "--log_directory", log_directory,
+            "--seed_offset", str(secrets.randbelow(2**31 - 1)),
+        ]
+        tasks.append(command + BASE_ARGS + args)
+
+    run_tasks(tasks, parallel=8)
+
+
+def test_graph_measurement_fidelity_sweep() -> None:
+    """Run the measurement-only fidelity sweep.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    log_directory = f"{LOG_ROOT}/graph_measurement_fidelity_sweep_only_meas_noise"
+
+    measurement_fidelities = ["0.99", "0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
+
+    for measurement_fidelity in measurement_fidelities:
+        args = [
+            "--measurement_fidelity", measurement_fidelity,
+            "--log_directory", log_directory,
+            "--seed_offset", str(secrets.randbelow(2**31 - 1)),
+        ]
+        tasks.append(command + BASE_ARGS + args)
+
+    run_tasks(tasks, parallel=8)
 
 
 def test_graph_distance_sweep_two_qubit_gate_997() -> None:
@@ -117,8 +183,9 @@ def test_graph_distance_sweep_two_qubit_gate_997() -> None:
     correction_mode = "cec"
 
     for config_file in config_duration_pairs:
-        args = ["--config_file", config_file, "--log_directory", f"log/runner-test/graph_distance_sweep_2q_gate_{two_qubit_gate_fidelity}", 
-                "--two_qubit_gate_fidelity", two_qubit_gate_fidelity, "--correction_mode", correction_mode]
+        args = ["--config_file", config_file, "--log_directory", f"{LOG_ROOT}/graph_distance_sweep_2q_gate_{two_qubit_gate_fidelity}",
+                "--two_qubit_gate_fidelity", two_qubit_gate_fidelity, "--correction_mode", correction_mode,
+                "--seed_offset", str(secrets.randbelow(2**31 - 1))]
         tasks.append(command + BASE_ARGS + args)
 
     run_tasks(tasks, parallel=18)
@@ -137,11 +204,12 @@ def test_graph_physical_bell_pair_fidelity_sweep() -> None:
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
 
-    log_directory = "log/runner-test/graph_physical_bell_pair_fidelity_sweep"
+    log_directory = f"{LOG_ROOT}/graph_physical_bell_pair_fidelity_sweep"
     physical_bell_pair_fidelities = ["0.96", "0.97", "0.98", "0.99", "0.995", "0.999", "1.0"]
 
     for physical_bell_pair_fidelity in physical_bell_pair_fidelities:
-            args = ["--physical_bell_pair_fidelity", physical_bell_pair_fidelity, "--log_directory", log_directory]
+            args = ["--physical_bell_pair_fidelity", physical_bell_pair_fidelity, "--log_directory", log_directory,
+                    "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
 
     run_tasks(tasks, parallel=21)
@@ -166,8 +234,9 @@ def test_graph_distance_sweep_physical_bellpair_99() -> None:
     physical_bell_pair_fidelity = "0.99"
 
     for config_file in config_duration_pairs:
-        args = ["--config_file", config_file, "--log_directory", f"log/runner-test/graph_distance_sweep_physical_bellpair_{physical_bell_pair_fidelity}", 
-                "--physical_bell_pair_fidelity", physical_bell_pair_fidelity]
+        args = ["--config_file", config_file, "--log_directory", f"{LOG_ROOT}/graph_distance_sweep_physical_bellpair_{physical_bell_pair_fidelity}",
+                "--physical_bell_pair_fidelity", physical_bell_pair_fidelity,
+                "--seed_offset", str(secrets.randbelow(2**31 - 1))]
         tasks.append(command + BASE_ARGS + args)
 
     run_tasks(tasks, parallel=18)
@@ -178,11 +247,12 @@ if __name__ == "__main__":
 
     # Test sweeps
 
-    # test_graph_two_qubit_gate_sweep()
+    # test_graph_measurement_fidelity_sweep()
 
-    test_graph_distance_sweep_two_qubit_gate_997()
+    # test_graph_one_qubit_gate_sweep()
+
+    test_graph_two_qubit_gate_sweep()
 
     # test_graph_physical_bell_pair_fidelity_sweep()
 
     # test_graph_distance_sweep_physical_bellpair_99()
-
