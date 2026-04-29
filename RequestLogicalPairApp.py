@@ -1140,12 +1140,12 @@ class RequestLogicalPairApp:
                 f"run_id={run_id}, time to serve={latency_ps / MILLISECOND}, "
                 f"fidelity_raw={self.current_run['final_end_to_end_fidelity_raw']:.6f}, "
                 f"fidelity_corrected={self.current_run['final_end_to_end_fidelity_corrected']:.6f}, "
-                f"fidelity={final_fidelity:.6f}, "
-                f"left_x_s={left_recovery['x_syndrome']}, left_z_s={left_recovery['z_syndrome']}, "
-                f"right_x_s={right_recovery['x_syndrome']}, right_z_s={right_recovery['z_syndrome']}, "
-                f"left_x_q={left_recovery['x_error_qubit']}, left_z_q={left_recovery['z_error_qubit']}, "
-                f"right_x_q={right_recovery['x_error_qubit']}, right_z_q={right_recovery['z_error_qubit']}, "
-                f"left_has_nd={left_has_nd}, right_has_nd={right_has_nd}"
+                # f"fidelity={final_fidelity:.6f}, "
+                # f"left_x_s={left_recovery['x_syndrome']}, left_z_s={left_recovery['z_syndrome']}, "
+                # f"right_x_s={right_recovery['x_syndrome']}, right_z_s={right_recovery['z_syndrome']}, "
+                # f"left_x_q={left_recovery['x_error_qubit']}, left_z_q={left_recovery['z_error_qubit']}, "
+                # f"right_x_q={right_recovery['x_error_qubit']}, right_z_q={right_recovery['z_error_qubit']}, "
+                # f"left_has_nd={left_has_nd}, right_has_nd={right_has_nd}"
             )
 
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1
