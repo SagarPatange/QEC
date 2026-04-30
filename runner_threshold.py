@@ -65,17 +65,12 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
         None.
     """
     base_dir = Path(__file__).resolve().parent
-    env = os.environ.copy()
-    env["MPLCONFIGDIR"] = str(base_dir / ".mplconfig")
-    env["TMPDIR"] = str(base_dir / ".tmp")
-    Path(env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
-    Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     ps = []
     while len(tasks) > 0 or len(ps) > 0:
         if len(ps) < parallel and len(tasks) > 0:
             task = tasks.pop(0)
             print(task, f"{len(tasks)} still in queue")
-            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir, env=env))
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
         else:
             time.sleep(0.05)
             new_ps = []
@@ -87,13 +82,14 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
             ps = new_ps
 
 
+
 def t2_sweep():
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
     # 13 data points between 0.01 and 100, spaced logarithmically
     idle_t2_sec_list = ["0.01", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "2", "5", "10", "20", "50", "100"]
-    log_directory = "log/runner-threshold22/t2_sweep"
+    log_directory = "log/runner-threshold2/t2_sweep"
     for idle_t2_sec in idle_t2_sec_list:
         for config_file in CONFIG_FILES:
             args = ["--idle_t2_sec", idle_t2_sec,
