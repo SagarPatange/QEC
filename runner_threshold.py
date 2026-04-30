@@ -1,6 +1,7 @@
 import sys
 import time
 import secrets
+import os
 from pathlib import Path
 from subprocess import PIPE, Popen
 
@@ -64,12 +65,17 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
         None.
     """
     base_dir = Path(__file__).resolve().parent
+    env = os.environ.copy()
+    env["MPLCONFIGDIR"] = str(base_dir / ".mplconfig")
+    env["TMPDIR"] = str(base_dir / ".tmp")
+    Path(env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
+    Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     ps = []
     while len(tasks) > 0 or len(ps) > 0:
         if len(ps) < parallel and len(tasks) > 0:
             task = tasks.pop(0)
             print(task, f"{len(tasks)} still in queue")
-            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir, env=env))
         else:
             time.sleep(0.05)
             new_ps = []
@@ -83,7 +89,8 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
 
 def t2_sweep():
     tasks = []
-    command = ["python", "main.py"]
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
     # 13 data points between 0.01 and 100, spaced logarithmically
     idle_t2_sec_list = ["0.01", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "2", "5", "10", "20", "50", "100"]
     log_directory = "log/runner-threshold22/t2_sweep"
@@ -100,7 +107,8 @@ def t2_sweep():
 
 def one_qubit_gate_sweep():
     tasks = []
-    command = ["python", "main.py"]
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
     # 17 data points between 0.996 and 1, spaced more closely near 1
     one_qubit_gate_fidelities = ["0.996", "0.9965", "0.997", "0.9975", "0.998", "0.9985", "0.999", 
                                  "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
@@ -117,7 +125,8 @@ def one_qubit_gate_sweep():
 
 def two_qubit_gate_sweep():
     tasks = []
-    command = ["python", "main.py"]
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
     # 17 data points between 0.996 and 1, spaced more closely near 1
     two_qubit_gate_fidelities = ["0.996", "0.9965", "0.997", "0.9975", "0.998", "0.9985", "0.999", 
                                  "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
@@ -134,7 +143,8 @@ def two_qubit_gate_sweep():
 
 def physical_bell_pair_sweep():
     tasks = []
-    command = ["python", "main.py"]
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
     # 13 data points between 0.9 and 1
     physical_bell_pair_fidelities = ["0.9", "0.91", "0.92", "0.93", "0.94", "0.95", "0.96", "0.97", "0.98", "0.99", "0.995", "0.999", "1.0"]
     log_directory = "log/runner-threshold2/graph_physical_bell_pair_fidelity_sweep"
@@ -150,7 +160,8 @@ def physical_bell_pair_sweep():
 
 def measurement_sweep():
     tasks = []
-    command = ["python", "main.py"]
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
     # 17 data points between 0.996 and 1, spaced more closely near 1
     measurement_fidelities = ["0.996", "0.9965", "0.997", "0.9975", "0.998", "0.9985", "0.999", 
                               "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1.0"]
@@ -167,7 +178,8 @@ def measurement_sweep():
 
 def initialization_fidelity_sweep():
     tasks = []
-    command = ["python", "main.py"]
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
     # 17 data points between 0.996 and 1, spaced more closely near 1
     initialization_fidelities = ["0.996", "0.9965", "0.997", "0.9975", "0.998", "0.9985", "0.999", 
                                   "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1.0"]
