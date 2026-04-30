@@ -1,5 +1,6 @@
 import sys
 import time
+import secrets
 from pathlib import Path
 from subprocess import PIPE, Popen
 
@@ -91,7 +92,8 @@ def t2_sweep():
             args = ["--idle_t2_sec", idle_t2_sec,
                     "--config_file", config_file,
                     "--log_directory", log_directory,
-                    "--link_distance_km", "20"]
+                    "--link_distance_km", "20",
+                    "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
     run_tasks(tasks, parallel=15)
 
@@ -107,7 +109,8 @@ def one_qubit_gate_sweep():
         for config_file in CONFIG_FILES:
             args = ["--gate_fidelity", one_qubit_gate_fidelity,
                     "--config_file", config_file,
-                    "--log_directory", log_directory]
+                    "--log_directory", log_directory,
+                    "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
     run_tasks(tasks, parallel=15)
 
@@ -123,7 +126,8 @@ def two_qubit_gate_sweep():
         for config_file in CONFIG_FILES:
             args = ["--two_qubit_gate_fidelity", two_qubit_gate_fidelity,
                     "--config_file", config_file,
-                    "--log_directory", log_directory]
+                    "--log_directory", log_directory,
+                    "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
     run_tasks(tasks, parallel=15)
 
@@ -138,7 +142,8 @@ def physical_bell_pair_sweep():
         for config_file in CONFIG_FILES:
             args = ["--physical_bell_pair_fidelity", physical_bell_pair_fidelity,
                     "--config_file", config_file,
-                    "--log_directory", log_directory]
+                    "--log_directory", log_directory,
+                    "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
     run_tasks(tasks, parallel=15)
 
@@ -154,7 +159,8 @@ def measurement_sweep():
         for config_file in CONFIG_FILES:
             args = ["--measurement_fidelity", measurement_fidelity,
                     "--config_file", config_file,
-                    "--log_directory", log_directory]
+                    "--log_directory", log_directory,
+                    "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
     run_tasks(tasks, parallel=15)
 
@@ -170,7 +176,8 @@ def initialization_fidelity_sweep():
         for config_file in CONFIG_FILES:
             args = ["--initialization_fidelity", initialization_fidelity,
                     "--config_file", config_file,
-                    "--log_directory", log_directory]
+                    "--log_directory", log_directory,
+                    "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
     run_tasks(tasks, parallel=15)
 
