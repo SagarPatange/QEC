@@ -55,6 +55,7 @@ def main() -> None:
     parser.add_argument("--measurement_fidelity", type=float)
     parser.add_argument("--initialization_fidelity", type=float, default=0.9999)
     parser.add_argument("--gate_error_channel", type=str, choices=["depolarize", "pauli"])
+    parser.add_argument("--idle_error_channel", type=str, choices=["depolarize", "pauli"])
     parser.add_argument("--pauli_1q_weights", type=float, nargs=3)
     parser.add_argument("--pauli_2q_weights", type=float, nargs=15)
     parser.add_argument("--idle_t1_sec", type=float)
@@ -178,6 +179,8 @@ def main() -> None:
     tl.quantum_manager.branch_rng = np.random.default_rng(quantum_router_seed)
     if args.gate_error_channel is not None:
         tl.quantum_manager.gate_error_channel = args.gate_error_channel
+    if args.idle_error_channel is not None:
+        tl.quantum_manager.idle_error_channel = args.idle_error_channel
     if args.pauli_1q_weights is not None:
         tl.quantum_manager.pauli_1q_weights = tuple(float(w) for w in args.pauli_1q_weights)
     if args.pauli_2q_weights is not None:
@@ -187,6 +190,7 @@ def main() -> None:
         f"quantum_manager_class={type(tl.quantum_manager).__name__} "
         f"quantum_manager_module={type(tl.quantum_manager).__module__} "
         f"gate_error_channel={tl.quantum_manager.gate_error_channel} "
+        f"idle_error_channel={tl.quantum_manager.idle_error_channel} "
         f"gate_fid={tl.quantum_manager.gate_fid} "
         f"two_qubit_gate_fid={tl.quantum_manager.two_qubit_gate_fid} "
         f"measurement_fid={tl.quantum_manager.measurement_fid} "

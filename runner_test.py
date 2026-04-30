@@ -17,13 +17,13 @@ CONFIG_FILES = [
 BASE_ARGS = [
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "0.8",
-        "--num_logical_pairs", "400",
+        "--num_logical_pairs", "50",
         "--link_distance_km", "0.001",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
         "--initialization_fidelity", "1",
-        "--gate_error_channel", "pauli",
-        "--pauli_1q_weights", "0.05", "0.05", "0.9",
+        "--gate_error_channel", "depolarize",
+        "--idle_error_channel", "depolarize",
         "--idle_t1_sec", "1e12",
         "--idle_t2_sec", "1e12",
         "--ft_prep_mode", "minimal",
@@ -104,8 +104,10 @@ def test_graph_two_qubit_gate_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     log_directory = f"{LOG_ROOT}/two_qubit_gate_sweep"
 
-    two_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
-                                 "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
+    # two_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
+    #                              "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
+
+    two_qubit_gate_fidelities = ["0.99", "0.995", "0.9993", "1"]
 
     for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
         for config_file in CONFIG_FILES:
@@ -135,10 +137,12 @@ def test_graph_one_qubit_gate_sweep() -> None:
     log_directory = f"{LOG_ROOT}/one_qubit_gate_sweep"
 
     # one_qubit_gate_fidelities = ["0.99"]
-    one_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
-                                 "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
+    # one_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
+    #                              "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
     # one_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999","1"]
 
+    one_qubit_gate_fidelities = ["0.99", "0.995", "0.9993", "1"]
+   
 
     for one_qubit_gate_fidelity in one_qubit_gate_fidelities:
         for config_file in CONFIG_FILES:
@@ -167,8 +171,9 @@ def test_graph_measurement_fidelity_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     log_directory = f"{LOG_ROOT}/graph_measurement_fidelity_sweep"
 
-    measurement_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
-                              "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1.0"]
+    # measurement_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
+    #                           "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1.0"]
+    measurement_fidelities = ["0.99", "0.991", "0.992", "0.993", ]
 
     for measurement_fidelity in measurement_fidelities:
         for config_file in CONFIG_FILES:
@@ -327,11 +332,11 @@ if __name__ == "__main__":
 
     # test_graph_measurement_fidelity_sweep()
 
-    test_graph_one_qubit_gate_sweep()
+    # test_graph_one_qubit_gate_sweep()
 
     # test_graph_initialization_fidelity_sweep()
 
-    # test_graph_two_qubit_gate_sweep()
+    test_graph_two_qubit_gate_sweep()
 
     # test_graph_physical_bell_pair_fidelity_sweep()
 
