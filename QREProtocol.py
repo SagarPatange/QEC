@@ -253,9 +253,10 @@ class QREProtocol(Protocol):
         for i in range(self.n):
             circ.append("CX", [i, self.n + i])
 
-        # Left block measured in X basis (H+M); right block measured in Z basis (M).
+        # Left block measured in X basis (all H first, then terminal M); right block measured in Z basis (M).
         for i in range(self.n):
             circ.append("H", [i])
+        for i in range(self.n):
             circ.append("M", [i])
         for i in range(self.n):
             circ.append("M", [self.n + i])
