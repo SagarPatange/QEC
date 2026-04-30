@@ -221,7 +221,7 @@ class TeleportedCNOTProtocol(Protocol):
         self.app.record_post_idle_link_fidelity(self.remote_node_name)
 
         rnd = self.owner.get_generator().random()
-        results = qm.run_circuit(circ, keys, rnd, inject_gate_error=False)
+        results = qm.run_circuit(circ, keys, rnd, inject_gate_error=True)
         finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(circ)
         log.logger.info(f"[{self.name}] phase_a_timing now={int(self.owner.timeline.now())} duration_ps={qm.get_circuit_duration(circ)} finish_t={finish_t}")
         for key in keys:
@@ -277,7 +277,7 @@ class TeleportedCNOTProtocol(Protocol):
         self.app.record_post_idle_link_fidelity(self.remote_node_name)
 
         rnd = self.owner.get_generator().random()
-        results = qm.run_circuit(circ, keys, rnd, inject_gate_error=False)
+        results = qm.run_circuit(circ, keys, rnd, inject_gate_error=True)
         # Delay Bob's reply by the estimated local circuit processing time.
         finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(circ)
         # Mark the comm/data keys busy until the local circuit is considered complete.

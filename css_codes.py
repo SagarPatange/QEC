@@ -256,7 +256,7 @@ class CSSCode(ABC):
                 qm.set_to_zero(ancilla_key)
             total_duration_ps += qm.get_reset_duration(len(data_keys) + len(ancilla_keys[:len(supports)]))
 
-            qm.run_circuit(encode_circuit, data_keys, shot_meas_samp, inject_gate_error=True)
+            qm.run_circuit(encode_circuit, data_keys, shot_meas_samp, inject_gate_error=False)
             total_duration_ps += qm.get_circuit_duration(encode_circuit)
 
             if ft_prep_mode == "none":

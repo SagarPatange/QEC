@@ -1559,31 +1559,10 @@ class RequestLogicalPairApp:
             "final_end_to_end_corrected_bell_state": self.current_run["final_end_to_end_corrected_bell_state"],
             "initial_link_fidelities": dict(self.current_run["initial_link_fidelities"]),
             "link_logical_fidelities": dict(self.current_run["link_logical_fidelities"]),
-            "physical_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["physical_pair_fidelity_rows"].items()},
-            "post_idle_pair_fidelity_rows": {peer: list(rows) for peer, rows in self.current_run["post_idle_pair_fidelity_rows"].items()},
         }
 
-        if self.node.name == 'router_0':
-            recovery = self.current_run["last_corrected_recovery"]
-            if isinstance(recovery, dict):
-                left_recovery = dict(recovery["left_recovery"])
-                right_recovery = dict(recovery["right_recovery"])
-            else:
-                left_recovery = {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
-                right_recovery = {"x_syndrome": [], "z_syndrome": [], "x_error_qubit": None, "z_error_qubit": None}
-            left_has_nd = any(bit is None for bit in left_recovery["x_syndrome"]) or any(bit is None for bit in left_recovery["z_syndrome"])
-            right_has_nd = any(bit is None for bit in right_recovery["x_syndrome"]) or any(bit is None for bit in right_recovery["z_syndrome"])
-            log.logger.critical(
-                f"run_id={run_id}, time to serve={latency_ps / MILLISECOND}, "
-                f"fidelity_raw={self.current_run['final_end_to_end_fidelity_raw']:.6f}, "
-                f"fidelity_corrected={self.current_run['final_end_to_end_fidelity_corrected']:.6f}, "
-                f"fidelity={final_fidelity:.6f}, "
-                f"left_x_s={left_recovery['x_syndrome']}, left_z_s={left_recovery['z_syndrome']}, "
-                f"right_x_s={right_recovery['x_syndrome']}, right_z_s={right_recovery['z_syndrome']}, "
-                f"left_x_q={left_recovery['x_error_qubit']}, left_z_q={left_recovery['z_error_qubit']}, "
-                f"right_x_q={right_recovery['x_error_qubit']}, right_z_q={right_recovery['z_error_qubit']}, "
-                f"left_has_nd={left_has_nd}, right_has_nd={right_has_nd}"
-            )
+        if False and self._path_position == 0:
+            self._log_critical_run_summary(run_id, latency_ps)
 
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1
         current_end_t = int(self.current_run["end_time"]) if self.current_run["end_time"] is not None else int(self.node.timeline.now())

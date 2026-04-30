@@ -92,7 +92,7 @@ def test_graph_two_qubit_gate_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    log_directory = f"{LOG_ROOT}/graph_two_qubit_gate_sweep_only_2q_noise_stateprep_Inspection"
+    log_directory = f"{LOG_ROOT}/graph_two_qubit_gate_sweep_only_2q_noise_tcnot_Inspection"
 
     two_qubit_gate_fidelities = ["0.99", "0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1"]
     # two_qubit_gate_fidelities = ["0.99"]
