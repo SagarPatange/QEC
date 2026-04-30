@@ -49,23 +49,23 @@ BASE_ARGS = [
 
 
 
-def get_output(process: Popen) -> None:
-    """Print subprocess stdout and stderr.
+def read_process_lines(process: Popen) -> list[str]:
+    """Read buffered stdout and stderr lines from one completed subprocess.
 
     Args:
         process: Completed subprocess.
 
     Returns:
-        None.
+        list[str]: Non-empty decoded output lines.
     """
-    stderr = process.stderr.readlines()
-    if stderr:
-        for line in stderr:
-            print(line.decode().rstrip())
-    stdout = process.stdout.readlines()
-    if stdout:
-        for line in stdout:
-            print(line.decode().rstrip())
+    lines: list[str] = []
+    if process.stdout is not None:
+        stdout_text = process.stdout.read().decode()
+        lines.extend(line for line in stdout_text.splitlines() if line)
+    if process.stderr is not None:
+        stderr_text = process.stderr.read().decode()
+        lines.extend(line for line in stderr_text.splitlines() if line)
+    return lines
 
 
 def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
@@ -79,21 +79,26 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
         None.
     """
     base_dir = Path(__file__).resolve().parent
-    ps = []
+    ps: list[tuple[Popen, list[str], float]] = []
+    completed: list[tuple[list[str], list[str]]] = []
     while len(tasks) > 0 or len(ps) > 0:
         if len(ps) < parallel and len(tasks) > 0:
             task = tasks.pop(0)
             print(task, f"{len(tasks)} still in queue")
-            ps.append(Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir))
+            process = Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir)
+            ps.append((process, task, time.time()))
         else:
             time.sleep(0.05)
-            new_ps = []
-            for process in ps:
+            new_ps: list[tuple[Popen, list[str], float]] = []
+            for process, task, start_time in ps:
                 if process.poll() is None:
-                    new_ps.append(process)
+                    new_ps.append((process, task, start_time))
                 else:
-                    get_output(process)
+                    completed.append((read_process_lines(process), task))
             ps = new_ps
+    for output_lines, _task in completed:
+        for line in output_lines:
+            print(line)
 
 # Graph 1
 def main_graph1_twoqubit_gate_sweep() -> None:
@@ -422,7 +427,3 @@ if __name__ == "__main__":
 
     # Graph 8 (slow)
     main_graph8_ideal_params_distance_sweep()
-
-
-
-

@@ -12,13 +12,13 @@ Flow:
 4. Completion: local app callback plus explicit TCNOT_COMPLETE to Bob.
 """
 
+import stim
 from enum import Enum, auto
 from sequence.protocol import Protocol
 from sequence.message import Message
 from sequence.utils import log
 from sequence.kernel.process import Process
 from sequence.kernel.event import Event
-from sequence.components.circuit import Circuit
 
 
 class TeleportedCNOTMsgType(Enum):
@@ -87,6 +87,8 @@ class TeleportedCNOTProtocol(Protocol):
         self.remote_node_name = remote_node_name
         self.data_qubit_keys = list(data_qubit_keys)
         self.communication_qubit_keys = list(communication_qubit_keys)
+        self.phase_a_keys = self.data_qubit_keys + self.communication_qubit_keys
+        self.phase_b_keys = self.communication_qubit_keys + self.data_qubit_keys
         self.n = len(self.data_qubit_keys)
 
         if len(self.communication_qubit_keys) != self.n:
@@ -154,7 +156,7 @@ class TeleportedCNOTProtocol(Protocol):
             self.alice_measurement_results = list(msg.alice_measurement_results)
             log.logger.info(f"[{self.name}] got ALICE_MEASUREMENT bits={len(self.alice_measurement_results)}")
             process = Process(self, "bob_phase_b", [])
-            event = Event(self.owner.timeline.now(), process)
+            event = Event(self.owner.timeline.now(), process, self.owner.timeline.schedule_counter)
             self.owner.timeline.schedule(event)
             return
 
@@ -166,7 +168,7 @@ class TeleportedCNOTProtocol(Protocol):
             self.bob_measurement_results = list(msg.bob_measurement_results)
             log.logger.info(f"[{self.name}] got BOB_MEASUREMENT bits={len(self.bob_measurement_results)}")
             process = Process(self, "alice_phase_c", [])
-            event = Event(self.owner.timeline.now(), process)
+            event = Event(self.owner.timeline.now(), process, self.owner.timeline.schedule_counter)
             self.owner.timeline.schedule(event)
             return
 
@@ -181,7 +183,7 @@ class TeleportedCNOTProtocol(Protocol):
             log.logger.info(f"[{self.name}] TCNOT_COMPLETE received from {src}")
 
             process = Process(self.app, "on_teleported_cnot_complete", [src])
-            event = Event(self.owner.timeline.now(), process)
+            event = Event(self.owner.timeline.now(), process, self.owner.timeline.schedule_counter)
             self.owner.timeline.schedule(event)
             return
 
@@ -205,25 +207,25 @@ class TeleportedCNOTProtocol(Protocol):
         qm = self.owner.timeline.quantum_manager
 
         # Phase A circuit: transversal CX(data_i -> comm_i), then measure comm in Z.
-        circ = Circuit(2 * n)
+        circ = stim.Circuit()
         for i in range(n):
-            circ.cx(i, n + i)      # CX(data_i, comm_i)
+            circ.append("CX", [i, n + i])  # CX(data_i, comm_i)
         for i in range(n):
-            circ.measure(n + i)    # M(comm_i) — Z basis
+            circ.append("M", [n + i])  # M(comm_i) — Z basis
 
         # Key order must match circuit indices: [data_0..data_n-1, comm_0..comm_n-1].
-        keys = self.data_qubit_keys + self.communication_qubit_keys
+        keys = self.phase_a_keys
 
         # Apply time-based idle decoherence before Phase A consumes data/comm qubits.
         now_ps = int(self.owner.timeline.now())
         if self.idle_decoherence_enabled:
             qm.apply_idling_decoherence(keys=keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
-        self.app.record_post_idle_link_fidelity(self.remote_node_name)
 
         rnd = self.owner.get_generator().random()
         results = qm.run_circuit(circ, keys, rnd, inject_gate_error=True)
-        finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(circ)
-        log.logger.info(f"[{self.name}] phase_a_timing now={int(self.owner.timeline.now())} duration_ps={qm.get_circuit_duration(circ)} finish_t={finish_t}")
+        duration_ps = qm.get_circuit_duration(circ)
+        finish_t = int(self.owner.timeline.now()) + duration_ps
+        log.logger.info(f"[{self.name}] phase_a_timing now={int(self.owner.timeline.now())} duration_ps={duration_ps} finish_t={finish_t}")
         for key in keys:
             qm.last_idle_time_ps_by_key[key] = finish_t
 
@@ -258,28 +260,28 @@ class TeleportedCNOTProtocol(Protocol):
             raise RuntimeError(f"{self.name}: expected {n} Alice bits, got {len(self.alice_measurement_results)}")
 
         # Single circuit for entire Bob phase.
-        circ = Circuit(2 * n)
+        circ = stim.Circuit()
         for i in range(n):
-            circ.cx(i, n + i)  # CX(comm_i, data_i)
+            circ.append("CX", [i, n + i])  # CX(comm_i, data_i)
 
         for i in range(n):
             if int(self.alice_measurement_results[i]) == 1:
-                circ.x(n + i)  # feed-forward X on data_i
+                circ.append("X", [n + i])  # feed-forward X on data_i
 
         for i in range(n):
-            circ.measure_x(i)  # MX(comm_i)
+            circ.append("MX", [i])  # MX(comm_i)
 
-        keys = self.communication_qubit_keys + self.data_qubit_keys
+        keys = self.phase_b_keys
         # Apply time-based idle decoherence before Phase B consumes comm/data qubits.
         now_ps = int(self.owner.timeline.now())
         if self.idle_decoherence_enabled:
             qm.apply_idling_decoherence(keys=keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
-        self.app.record_post_idle_link_fidelity(self.remote_node_name)
 
         rnd = self.owner.get_generator().random()
         results = qm.run_circuit(circ, keys, rnd, inject_gate_error=True)
         # Delay Bob's reply by the estimated local circuit processing time.
-        finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(circ)
+        duration_ps = qm.get_circuit_duration(circ)
+        finish_t = int(self.owner.timeline.now()) + duration_ps
         # Mark the comm/data keys busy until the local circuit is considered complete.
         for key in keys:
             qm.last_idle_time_ps_by_key[key] = finish_t
@@ -314,10 +316,10 @@ class TeleportedCNOTProtocol(Protocol):
             raise RuntimeError(f"{self.name}: expected {n} Bob bits, got {len(self.bob_measurement_results)}")
 
         # Single circuit for entire Alice correction phase.
-        correction_circuit = Circuit(n)
+        correction_circuit = stim.Circuit()
         for i in range(n):
             if int(self.bob_measurement_results[i]) == 1:
-                correction_circuit.z(i)
+                correction_circuit.append("Z", [i])
 
         # Apply time-based idle decoherence before Phase C consumes data qubits.
         now_ps = int(self.owner.timeline.now())
@@ -325,9 +327,10 @@ class TeleportedCNOTProtocol(Protocol):
             qm.apply_idling_decoherence(keys=self.data_qubit_keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
 
         rnd = self.owner.get_generator().random()
-        qm.run_circuit(correction_circuit, self.data_qubit_keys, rnd, inject_gate_error=False)
+        qm.run_circuit(correction_circuit, self.data_qubit_keys, rnd, inject_gate_error=True)
         # Delay local completion by the estimated correction-circuit processing time.
-        finish_t = int(self.owner.timeline.now()) + qm.get_circuit_duration(correction_circuit)
+        duration_ps = qm.get_circuit_duration(correction_circuit)
+        finish_t = int(self.owner.timeline.now()) + duration_ps
         # Mark the data block busy until the local correction is considered complete.
         for key in self.data_qubit_keys:
             qm.last_idle_time_ps_by_key[key] = finish_t
@@ -353,7 +356,7 @@ class TeleportedCNOTProtocol(Protocol):
 
         # Local app callback for this node's link bookkeeping.
         process = Process(self.app, "on_teleported_cnot_complete", [self.remote_node_name])
-        event = Event(self.owner.timeline.now() + 1000, process)
+        event = Event(self.owner.timeline.now() + 1000, process, self.owner.timeline.schedule_counter)
         self.owner.timeline.schedule(event)
 
         # Alice also notifies Bob so Bob can mark completion on its side.

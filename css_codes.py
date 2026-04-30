@@ -160,6 +160,33 @@ class CSSCode(ABC):
             chars[qubit] = "Z"
         return "".join(chars)
 
+    def get_encode_circuit(self) -> stim.Circuit:
+        """Return the encoding circuit for this code.
+
+        Args:
+            None.
+
+        Returns:
+            stim.Circuit: Encoding circuit for one logical block.
+        """
+        circuit = stim.Circuit()
+        self.encode(circuit)
+        return circuit
+
+    def get_plus_circuit(self) -> stim.Circuit:
+        """Return the logical-plus post-preparation circuit for this code.
+
+        Args:
+            None.
+
+        Returns:
+            stim.Circuit: Circuit applying transversal H to the data block.
+        """
+        circuit = stim.Circuit()
+        for qubit_index in range(self.n):
+            circuit.append("H", [qubit_index])
+        return circuit
+
     def get_ft_prep_circuit(self, mode: str, ancilla_offset: int = 0) -> stim.Circuit:
         """Return a fault-tolerant preparation check circuit for this code.
 
@@ -235,14 +262,24 @@ class CSSCode(ABC):
         if len(ancilla_keys) < len(supports):
             raise RuntimeError(f"{self.name}: insufficient ancillas for {ft_prep_mode} FT prep")
 
-        # Build the encoded logical-state preparation circuit once and reuse it across retry shots.
-        encode_circuit = stim.Circuit()
-        self.encode(encode_circuit)
+        encode_circuit = self.get_encode_circuit()
+        encode_circuit_duration_ps = qm.get_circuit_duration(encode_circuit)
 
         # A logical |+> target is obtained by applying transversal H after acceptance.
-        plus_circuit = Circuit(self.n)
-        for i in range(self.n):
-            plus_circuit.h(i)
+        plus_circuit = self.get_plus_circuit()
+        plus_circuit_duration_ps = qm.get_circuit_duration(plus_circuit)
+
+        # Build each FT parity-check circuit once and reuse it across retry shots.
+        check_circuits: list[stim.Circuit] = []
+        check_circuit_durations_ps: list[int] = []
+        ancilla_local = len(data_keys)
+        for support in supports:
+            check_circuit = stim.Circuit()
+            for data_local in support:
+                check_circuit.append("CX", [data_local, ancilla_local])
+            check_circuit.append("M", [ancilla_local])
+            check_circuits.append(check_circuit)
+            check_circuit_durations_ps.append(qm.get_circuit_duration(check_circuit))
 
         total_duration_ps = 0
         for shot_idx in range(max_ft_prep_shots):
@@ -250,48 +287,39 @@ class CSSCode(ABC):
             shot_meas_samp = (float(meas_samp) + (shot_idx + 1) / 10.0) % 1.0
 
             # Reinitialize the data block and the ancillas used by this FT-prep shot.
-            for data_key in data_keys:
-                qm.set_to_zero(data_key)
-            for ancilla_key in ancilla_keys[:len(supports)]:
-                qm.set_to_zero(ancilla_key)
+            qm.set_to_zero(list(data_keys) + list(ancilla_keys[:len(supports)]))
             total_duration_ps += qm.get_reset_duration(len(data_keys) + len(ancilla_keys[:len(supports)]))
 
-            qm.run_circuit(encode_circuit, data_keys, shot_meas_samp, inject_gate_error=False)
-            total_duration_ps += qm.get_circuit_duration(encode_circuit)
+            qm.run_circuit(encode_circuit, data_keys, shot_meas_samp, inject_gate_error=True)
+            total_duration_ps += encode_circuit_duration_ps
 
             if ft_prep_mode == "none":
                 if logical_state == "+":
-                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0, inject_gate_error=False)
-                    total_duration_ps += qm.get_circuit_duration(plus_circuit)
+                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0, inject_gate_error=True)
+                    total_duration_ps += plus_circuit_duration_ps
                 return True, total_duration_ps, 1
 
             accepted = True
             # Run the selected FT parity checks and reject the shot on the first nonzero ancilla result.
-            for check_idx, support in enumerate(supports):
+            for check_idx, check_circuit in enumerate(check_circuits):
                 ancilla_key = ancilla_keys[check_idx]
                 qm.set_to_zero(ancilla_key)
                 total_duration_ps += qm.get_reset_duration(1)
 
-                # Append one ancilla to the local register and measure the requested data-qubit support onto it.
                 check_keys = list(data_keys) + [ancilla_key]
-                check_circuit = Circuit(len(check_keys))
-                ancilla_local = len(data_keys)
-                for data_local in support:
-                    check_circuit.cx(data_local, ancilla_local)
-                check_circuit.measure(ancilla_local)
 
                 # Offset each FT check within the shot so repeated ancilla measurements do not reuse the same sample.
                 check_meas_samp = (shot_meas_samp + (check_idx + 1) / 100.0) % 1.0
-                results = qm.run_circuit(check_circuit, check_keys, check_meas_samp, inject_gate_error=False)
-                total_duration_ps += qm.get_circuit_duration(check_circuit)
+                results = qm.run_circuit(check_circuit, check_keys, check_meas_samp, inject_gate_error=True)
+                total_duration_ps += check_circuit_durations_ps[check_idx]
                 if int(results[ancilla_key]) != 0:
                     accepted = False
                     break
 
             if accepted:
                 if logical_state == "+":
-                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0, inject_gate_error=False)
-                    total_duration_ps += qm.get_circuit_duration(plus_circuit)
+                    qm.run_circuit(plus_circuit, data_keys, (shot_meas_samp + 0.5) % 1.0, inject_gate_error=True)
+                    total_duration_ps += plus_circuit_duration_ps
                 return True, total_duration_ps, shot_idx + 1
 
         return False, total_duration_ps, max_ft_prep_shots
@@ -380,6 +408,57 @@ class Steane713(CSSCode):
         [1, 4, 6],
         [2, 4, 5],
     ]
+    ENCODE_CIRCUIT = stim.Circuit()
+    ENCODE_CIRCUIT.append("H", [1, 2, 3])
+    ENCODE_CIRCUIT.append("CX", [1, 0])
+    ENCODE_CIRCUIT.append("CX", [3, 5])
+    ENCODE_CIRCUIT.append("CX", [2, 6])
+    ENCODE_CIRCUIT.append("CX", [1, 4])
+    ENCODE_CIRCUIT.append("CX", [2, 0])
+    ENCODE_CIRCUIT.append("CX", [3, 6])
+    ENCODE_CIRCUIT.append("CX", [1, 5])
+    ENCODE_CIRCUIT.append("CX", [6, 4])
+    PLUS_CIRCUIT = stim.Circuit()
+    PLUS_CIRCUIT.append("H", [0, 1, 2, 3, 4, 5, 6])
+    ROUND1_CIRCUIT = stim.Circuit()
+    ROUND1_CIRCUIT.append("H", [7])
+    ROUND1_CIRCUIT.append("CX", [6, 8])
+    ROUND1_CIRCUIT.append("CX", [6, 9])
+    ROUND1_CIRCUIT.append("CX", [7, 6])
+    ROUND1_CIRCUIT.append("CX", [4, 8])
+    ROUND1_CIRCUIT.append("CX", [7, 4])
+    ROUND1_CIRCUIT.append("CX", [2, 9])
+    ROUND1_CIRCUIT.append("CX", [7, 2])
+    ROUND1_CIRCUIT.append("CX", [5, 8])
+    ROUND1_CIRCUIT.append("CX", [5, 9])
+    ROUND1_CIRCUIT.append("CX", [7, 0])
+    ROUND1_CIRCUIT.append("CX", [3, 8])
+    ROUND1_CIRCUIT.append("CX", [1, 9])
+    ROUND1_CIRCUIT.append("H", [7])
+    ROUND1_CIRCUIT.append("M", [7])
+    ROUND1_CIRCUIT.append("M", [8])
+    ROUND1_CIRCUIT.append("M", [9])
+    ROUND2A_CIRCUIT = stim.Circuit()
+    ROUND2A_CIRCUIT.append("H", [8])
+    ROUND2A_CIRCUIT.append("H", [9])
+    ROUND2A_CIRCUIT.append("CX", [8, 6])
+    ROUND2A_CIRCUIT.append("CX", [9, 6])
+    ROUND2A_CIRCUIT.append("CX", [6, 7])
+    ROUND2A_CIRCUIT.append("CX", [8, 4])
+    ROUND2A_CIRCUIT.append("CX", [4, 7])
+    ROUND2A_CIRCUIT.append("CX", [9, 2])
+    ROUND2A_CIRCUIT.append("CX", [2, 7])
+    ROUND2A_CIRCUIT.append("CX", [8, 5])
+    ROUND2A_CIRCUIT.append("CX", [9, 5])
+    ROUND2A_CIRCUIT.append("CX", [0, 7])
+    ROUND2A_CIRCUIT.append("CX", [8, 3])
+    ROUND2A_CIRCUIT.append("CX", [9, 1])
+    ROUND2A_CIRCUIT.append("M", [7])
+    ROUND2B_CIRCUIT = stim.Circuit()
+    ROUND2B_CIRCUIT.append("H", [7])
+    ROUND2B_CIRCUIT.append("H", [8])
+    ROUND2B_CIRCUIT.append("M", [7])
+    ROUND2B_CIRCUIT.append("M", [8])
 
     def __init__(self) -> None:
         """Initialize Steane [[7,1,3]] metadata.
@@ -418,6 +497,28 @@ class Steane713(CSSCode):
         circuit.append("CX", [q3, q6])
         circuit.append("CX", [q1, q5])
         circuit.append("CX", [q6, q4])
+
+    def get_encode_circuit(self) -> stim.Circuit:
+        """Return the cached Steane encoding circuit.
+
+        Args:
+            None.
+
+        Returns:
+            stim.Circuit: Cached Steane encoding circuit.
+        """
+        return self.ENCODE_CIRCUIT
+
+    def get_plus_circuit(self) -> stim.Circuit:
+        """Return the cached Steane logical-plus circuit.
+
+        Args:
+            None.
+
+        Returns:
+            stim.Circuit: Cached Steane logical-plus circuit.
+        """
+        return self.PLUS_CIRCUIT
 
     def get_x_stabilizer_strings(self) -> List[str]:
         """Return Steane X stabilizers.
@@ -571,7 +672,7 @@ class Steane713(CSSCode):
                 return None
             return value - 1
 
-        merge_circuit = Circuit(len(merge_keys))
+        merge_circuit = stim.Circuit()
         qm.run_circuit(merge_circuit, merge_keys, round1_meas_samp, inject_gate_error=False)
 
         green = self.n
@@ -579,25 +680,8 @@ class Steane713(CSSCode):
         red = self.n + 2
 
         # Round 1 extracts the first half of the Steane syndrome into the three ancillas.
-        round1_circuit = Circuit(len(merge_keys))
-        round1_circuit.h(green)
-        round1_circuit.cx(6, blue)
-        round1_circuit.cx(6, red)
-        round1_circuit.cx(green, 6)
-        round1_circuit.cx(4, blue)
-        round1_circuit.cx(green, 4)
-        round1_circuit.cx(2, red)
-        round1_circuit.cx(green, 2)
-        round1_circuit.cx(5, blue)
-        round1_circuit.cx(5, red)
-        round1_circuit.cx(green, 0)
-        round1_circuit.cx(3, blue)
-        round1_circuit.cx(1, red)
-        round1_circuit.h(green)
-        round1_circuit.measure(green)
-        round1_circuit.measure(blue)
-        round1_circuit.measure(red)
-        round1_results = qm.run_circuit(round1_circuit, merge_keys, round1_meas_samp, inject_gate_error=False)
+        round1_circuit = self.ROUND1_CIRCUIT
+        round1_results = qm.run_circuit(round1_circuit, merge_keys, round1_meas_samp, inject_gate_error=True)
         total_duration_ps += qm.get_circuit_duration(round1_circuit)
 
         x_green = int(round1_results[used_ancilla_keys[0]])
@@ -605,43 +689,22 @@ class Steane713(CSSCode):
         z_red = int(round1_results[used_ancilla_keys[2]])
 
         # Reset ancillas before extracting the complementary syndrome.
-        for ancilla_key in used_ancilla_keys:
-            qm.set_to_zero(ancilla_key)
+        qm.set_to_zero(list(used_ancilla_keys))
         total_duration_ps += qm.get_reset_duration(len(used_ancilla_keys))
 
-        merge_circuit = Circuit(len(merge_keys))
+        merge_circuit = stim.Circuit()
         qm.run_circuit(merge_circuit, merge_keys, round2a_meas_samp, inject_gate_error=False)
 
         # Round 2a rotates the ancillas into the basis needed for the complementary syndrome extraction.
-        round2a_circuit = Circuit(len(merge_keys))
-        round2a_circuit.h(blue)
-        round2a_circuit.h(red)
-        round2a_circuit.cx(blue, 6)
-        round2a_circuit.cx(red, 6)
-        round2a_circuit.cx(6, green)
-        round2a_circuit.cx(blue, 4)
-        round2a_circuit.cx(4, green)
-        round2a_circuit.cx(red, 2)
-        round2a_circuit.cx(2, green)
-        round2a_circuit.cx(blue, 5)
-        round2a_circuit.cx(red, 5)
-        round2a_circuit.cx(0, green)
-        round2a_circuit.cx(blue, 3)
-        round2a_circuit.cx(red, 1)
-        round2a_circuit.measure(green)
-        round2a_results = qm.run_circuit(round2a_circuit, merge_keys, round2a_meas_samp, inject_gate_error=False)
+        round2a_circuit = self.ROUND2A_CIRCUIT
+        round2a_results = qm.run_circuit(round2a_circuit, merge_keys, round2a_meas_samp, inject_gate_error=True)
         total_duration_ps += qm.get_circuit_duration(round2a_circuit)
 
         z_green = int(round2a_results[used_ancilla_keys[0]])
 
-        # Round 2b finishes the complementary syndrome readout on the remaining ancillas.
         round2b_keys = list(data_keys) + used_ancilla_keys[1:]
-        round2b_circuit = Circuit(len(round2b_keys))
-        round2b_circuit.h(self.n)
-        round2b_circuit.h(self.n + 1)
-        round2b_circuit.measure(self.n)
-        round2b_circuit.measure(self.n + 1)
-        round2b_results = qm.run_circuit(round2b_circuit, round2b_keys, round2b_meas_samp, inject_gate_error=False)
+        round2b_circuit = self.ROUND2B_CIRCUIT
+        round2b_results = qm.run_circuit(round2b_circuit, round2b_keys, round2b_meas_samp, inject_gate_error=True)
         total_duration_ps += qm.get_circuit_duration(round2b_circuit)
 
         x_blue = int(round2b_results[used_ancilla_keys[1]])
@@ -658,15 +721,15 @@ class Steane713(CSSCode):
         applied_z = None
         # Apply the decoded Pauli correction directly on the data block when requested.
         if apply_physical_correction:
-            correction_circuit = Circuit(len(data_keys))
+            correction_circuit = stim.Circuit()
             if x_error_qubit is not None:
-                correction_circuit.x(int(x_error_qubit))
+                correction_circuit.append("X", [int(x_error_qubit)])
                 applied_x = int(x_error_qubit)
             if z_error_qubit is not None:
-                correction_circuit.z(int(z_error_qubit))
+                correction_circuit.append("Z", [int(z_error_qubit)])
                 applied_z = int(z_error_qubit)
             if applied_x is not None or applied_z is not None:
-                qm.run_circuit(correction_circuit, data_keys, correction_meas_samp, inject_gate_error=False)
+                qm.run_circuit(correction_circuit, data_keys, correction_meas_samp, inject_gate_error=True)
                 total_duration_ps += qm.get_circuit_duration(correction_circuit)
 
         return {

@@ -84,17 +84,11 @@ class RequestLogicalPairApp:
             "link_ready": set(),
             "tcnot_done": set(),
             "frame_updates_by_src": {},
-            "initial_link_fidelities": {},
-            "post_idle_link_fidelities": {},
             "link_logical_fidelities": {},
             "link_logical_fidelities_corrected": {},
-            "physical_pair_fidelity_rows": {},
-            "post_idle_pair_fidelity_rows": {},
             "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
-            "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
-            "pre_frame_end_to_end_fidelity_raw": None,
             "pre_frame_end_to_end_fidelity_corrected": None,
             "final_end_to_end_corrected_bell_state": None,
             "success": None,
@@ -104,6 +98,9 @@ class RequestLogicalPairApp:
         }
 
         self.run_stats: dict[int, dict[str, object]] = {}
+        self.completed_run_count = 0
+        self.sum_final_fidelity_corrected = 0.0
+        self.sum_latency_ps = 0
         self.scheduled_run_starts: list[int] = []
         self.next_run_id = 1
 
@@ -141,24 +138,28 @@ class RequestLogicalPairApp:
             None
         """
         self.time_begin_of_run = time.time()
-        log.logger.info(f"{self.name}: reset_run_execute run_id={self.current_run['run_id']} start={self.current_run['start_time']} end={self.current_run['end_time']} now={int(self.node.timeline.now())} data_neighbors={list(self.data_qubits.keys())} comm_neighbors={list(self.current_run['comm_qubits'].keys())}")
+        # log.logger.info(f"{self.name}: reset_run_execute run_id={self.current_run['run_id']} start={self.current_run['start_time']} end={self.current_run['end_time']} now={int(self.node.timeline.now())} data_neighbors={list(self.data_qubits.keys())} comm_neighbors={list(self.current_run['comm_qubits'].keys())}")
         resource_manager = self.node.resource_manager
         quantum_manager = self.node.timeline.quantum_manager
+        reset_time_ps = int(self.node.timeline.now())
 
         # Return communication memories to the resource pool for the next run window.
         for memories in self.current_run["comm_qubits"].values():
             for memory in memories:
                 quantum_manager.set_to_zero(memory.qstate_key)
+                quantum_manager.last_idle_time_ps_by_key[memory.qstate_key] = reset_time_ps
                 resource_manager.update(None, memory, "RAW")
 
         # Reset local data and ancilla state carried by this run.
         for memories in self.data_qubits.values():
             for memory in memories:
                 quantum_manager.set_to_zero(memory.qstate_key)
+                quantum_manager.last_idle_time_ps_by_key[memory.qstate_key] = reset_time_ps
 
         for memories in self.ancilla_qubits.values():
             for memory in memories:
                 quantum_manager.set_to_zero(memory.qstate_key)
+                quantum_manager.last_idle_time_ps_by_key[memory.qstate_key] = reset_time_ps
 
         self.data_qubits.clear()
         self.ancilla_qubits.clear()
@@ -175,17 +176,11 @@ class RequestLogicalPairApp:
             "link_ready": set(),
             "tcnot_done": set(),
             "frame_updates_by_src": {},
-            "initial_link_fidelities": {},
-            "post_idle_link_fidelities": {},
             "link_logical_fidelities": {},
             "link_logical_fidelities_corrected": {},
-            "physical_pair_fidelity_rows": {},
-            "post_idle_pair_fidelity_rows": {},
             "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
-            "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
-            "pre_frame_end_to_end_fidelity_raw": None,
             "pre_frame_end_to_end_fidelity_corrected": None,
             "final_end_to_end_corrected_bell_state": None,
             "success": None,
@@ -205,7 +200,7 @@ class RequestLogicalPairApp:
             None
         """
         self.time_begin_of_run = time.time()
-        log.logger.warning(f'{self.name} begin run, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+        # log.logger.warning(f'{self.name} begin run, runtime = {time.time() - self.time_begin_of_run:.2f}s')
 
         # Prevents overlapping runs   
         if self.current_run["start_time"] == int(start_t) and self.current_run["status"] != "idle":
@@ -223,17 +218,11 @@ class RequestLogicalPairApp:
             "link_ready": set(),
             "tcnot_done": set(),
             "frame_updates_by_src": {},
-            "initial_link_fidelities": {},
-            "post_idle_link_fidelities": {},
             "link_logical_fidelities": {},
             "link_logical_fidelities_corrected": {},
-            "physical_pair_fidelity_rows": {},
-            "post_idle_pair_fidelity_rows": {},
             "last_corrected_recovery": None,
             "final_end_to_end_fidelity": None,
-            "final_end_to_end_fidelity_raw": None,
             "final_end_to_end_fidelity_corrected": None,
-            "pre_frame_end_to_end_fidelity_raw": None,
             "pre_frame_end_to_end_fidelity_corrected": None,
             "final_end_to_end_corrected_bell_state": None,
             "success": None,
@@ -251,28 +240,6 @@ class RequestLogicalPairApp:
             if neighbor not in self.current_run["qre_protocols"]:
                 self.current_run["qre_protocols"][neighbor] = QREProtocol(owner=self.node, app=self, remote_node_name=neighbor)
 
-    def record_post_idle_link_fidelity(self, neighbor: str) -> None:
-        """Store one post-idle physical-link fidelity checkpoint.
-
-        Args:
-            neighbor: Adjacent node name for the physical link.
-
-        Returns:
-            None.
-        """
-        neighbor_pos = self._path_node_names.index(neighbor)
-        if self._path_position > neighbor_pos:
-            return
-        if neighbor in self.current_run["post_idle_link_fidelities"]:
-            return
-
-        measured_fidelity = self.calculate_pair_fidelity(self.node.name, neighbor, "physical")
-        self.current_run["post_idle_link_fidelities"][neighbor] = measured_fidelity
-        log.logger.info(
-            f"{self.name}: post_idle_link_fidelity run_id={self.current_run['run_id']} "
-            f"neighbor={neighbor} value={measured_fidelity:.6f}"
-        )
-
     def record_pre_final_frame_fidelity(self) -> None:
         """Store the end-to-end fidelity right before final frame correction.
 
@@ -282,17 +249,7 @@ class RequestLogicalPairApp:
         Returns:
             None.
         """
-        if self._path_position != 0:
-            return
-
-        raw_value = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
-        corrected_value = self.calculate_pair_fidelity_corrected(self._path_node_names[0], self._path_node_names[-1], "logical_end")
-        self.current_run["pre_frame_end_to_end_fidelity_raw"] = raw_value
-        self.current_run["pre_frame_end_to_end_fidelity_corrected"] = corrected_value
-        log.logger.info(
-            f"{self.name}: pre_final_frame_fidelity run_id={self.current_run['run_id']} "
-            f"raw={raw_value:.6f} corrected={corrected_value:.6f}"
-        )
+        return
 
     def _build_key_label_maps(self) -> tuple[dict[int, str], dict[int, str]]:
         """Build per-key block and qubit labels for critical summaries.
@@ -330,7 +287,7 @@ class RequestLogicalPairApp:
         return block_labels, qubit_labels
 
     def _log_critical_run_summary(self, run_id: int, latency_ps: int | None) -> None:
-        """Emit critical run summaries for fidelity, syndromes, and noise counts.
+        """Emit the final corrected end-to-end fidelity summary.
 
         Args:
             run_id: Logical-pair run identifier.
@@ -339,156 +296,11 @@ class RequestLogicalPairApp:
         Returns:
             None.
         """
-        qm = self.node.timeline.quantum_manager
-        block_labels, qubit_labels = self._build_key_label_maps()
-
-        idle_by_block: dict[str, int] = {}
-        idle_by_qubit: dict[str, int] = {}
-        for key, count in qm.idle_error_counts_by_key.items():
-            qubit_label = qubit_labels.get(int(key), f"key:{int(key)}")
-            block_label = block_labels.get(int(key), qubit_label)
-            idle_by_qubit[qubit_label] = int(count)
-            idle_by_block[block_label] = idle_by_block.get(block_label, 0) + int(count)
-
-        gate_1q_by_block: dict[str, int] = {}
-        for stat_key, count in qm.gate_1q_error_counts.items():
-            gate_name, key, branch = stat_key
-            block_label = block_labels.get(int(key), f"key:{int(key)}")
-            summary_key = f"{gate_name}|{block_label}|{branch}"
-            gate_1q_by_block[summary_key] = gate_1q_by_block.get(summary_key, 0) + int(count)
-
-        gate_1q_attempts_by_block: dict[str, int] = {}
-        for stat_key, count in qm.gate_1q_attempt_counts.items():
-            gate_name, key = stat_key
-            block_label = block_labels.get(int(key), f"key:{int(key)}")
-            summary_key = f"{gate_name}|{block_label}"
-            gate_1q_attempts_by_block[summary_key] = gate_1q_attempts_by_block.get(summary_key, 0) + int(count)
-
-        gate_2q_by_block_pair: dict[str, int] = {}
-        for stat_key, count in qm.gate_2q_error_counts.items():
-            gate_name, left_key, right_key, branch = stat_key
-            left_label = block_labels.get(int(left_key), f"key:{int(left_key)}")
-            right_label = block_labels.get(int(right_key), f"key:{int(right_key)}")
-            summary_key = f"{gate_name}|{left_label}->{right_label}|{branch}"
-            gate_2q_by_block_pair[summary_key] = gate_2q_by_block_pair.get(summary_key, 0) + int(count)
-
-        gate_2q_attempts_by_block_pair: dict[str, int] = {}
-        gate_2q_errors_total_by_block_pair: dict[str, int] = {}
-        gate_2q_observed_rate_by_block_pair: dict[str, float] = {}
-        for stat_key, count in qm.gate_2q_attempt_counts.items():
-            gate_name, left_key, right_key = stat_key
-            left_label = block_labels.get(int(left_key), f"key:{int(left_key)}")
-            right_label = block_labels.get(int(right_key), f"key:{int(right_key)}")
-            summary_key = f"{gate_name}|{left_label}->{right_label}"
-            gate_2q_attempts_by_block_pair[summary_key] = gate_2q_attempts_by_block_pair.get(summary_key, 0) + int(count)
-
-        for stat_key, count in qm.gate_2q_error_counts.items():
-            gate_name, left_key, right_key, _branch = stat_key
-            left_label = block_labels.get(int(left_key), f"key:{int(left_key)}")
-            right_label = block_labels.get(int(right_key), f"key:{int(right_key)}")
-            summary_key = f"{gate_name}|{left_label}->{right_label}"
-            gate_2q_errors_total_by_block_pair[summary_key] = gate_2q_errors_total_by_block_pair.get(summary_key, 0) + int(count)
-
-        for summary_key, attempts in gate_2q_attempts_by_block_pair.items():
-            errors = gate_2q_errors_total_by_block_pair.get(summary_key, 0)
-            gate_2q_observed_rate_by_block_pair[summary_key] = 0.0 if attempts == 0 else float(errors) / float(attempts)
-
-        measurement_by_block: dict[str, int] = {}
-        measurement_by_qubit: dict[str, int] = {}
-        for key, count in qm.measurement_flip_counts_by_key.items():
-            qubit_label = qubit_labels.get(int(key), f"key:{int(key)}")
-            block_label = block_labels.get(int(key), qubit_label)
-            measurement_by_qubit[qubit_label] = int(count)
-            measurement_by_block[block_label] = measurement_by_block.get(block_label, 0) + int(count)
-
-        measurement_attempts_by_block: dict[str, int] = {}
-        measurement_attempts_by_qubit: dict[str, int] = {}
-        for key, count in qm.measurement_attempt_counts_by_key.items():
-            qubit_label = qubit_labels.get(int(key), f"key:{int(key)}")
-            block_label = block_labels.get(int(key), qubit_label)
-            measurement_attempts_by_qubit[qubit_label] = int(count)
-            measurement_attempts_by_block[block_label] = measurement_attempts_by_block.get(block_label, 0) + int(count)
-
-        measurement_observed_rate_by_block: dict[str, float] = {}
-        for block_label, attempts in measurement_attempts_by_block.items():
-            flips = measurement_by_block.get(block_label, 0)
-            measurement_observed_rate_by_block[block_label] = 0.0 if attempts == 0 else float(flips) / float(attempts)
-
-        measurement_observed_rate_by_qubit: dict[str, float] = {}
-        for qubit_label, attempts in measurement_attempts_by_qubit.items():
-            flips = measurement_by_qubit.get(qubit_label, 0)
-            measurement_observed_rate_by_qubit[qubit_label] = 0.0 if attempts == 0 else float(flips) / float(attempts)
-
-        initialization_by_block: dict[str, int] = {}
-        initialization_by_qubit: dict[str, int] = {}
-        for key, count in qm.initialization_flip_counts_by_key.items():
-            qubit_label = qubit_labels.get(int(key), f"key:{int(key)}")
-            block_label = block_labels.get(int(key), qubit_label)
-            initialization_by_qubit[qubit_label] = int(count)
-            initialization_by_block[block_label] = initialization_by_block.get(block_label, 0) + int(count)
-
-        recovery = self.current_run["last_corrected_recovery"]
-        if isinstance(recovery, dict):
-            left_recovery = dict(recovery["left_recovery"])
-            right_recovery = dict(recovery["right_recovery"])
-        else:
-            left_recovery = {
-                "x_syndrome_before": [],
-                "z_syndrome_before": [],
-                "x_syndrome_after": [],
-                "z_syndrome_after": [],
-                "x_error_qubit": None,
-                "z_error_qubit": None,
-            }
-            right_recovery = {
-                "x_syndrome_before": [],
-                "z_syndrome_before": [],
-                "x_syndrome_after": [],
-                "z_syndrome_after": [],
-                "x_error_qubit": None,
-                "z_error_qubit": None,
-            }
-
-        final_raw = self.current_run["final_end_to_end_fidelity_raw"]
         final_corrected = self.current_run["final_end_to_end_fidelity_corrected"]
-        raw_corrected_delta = None
-        if isinstance(final_raw, float) and isinstance(final_corrected, float):
-            raw_corrected_delta = final_corrected - final_raw
 
         log.logger.critical(
             f"critical_e2e run_id={run_id} latency_ps={latency_ps} "
-            f"fidelity_raw={final_raw} fidelity_corrected={final_corrected} "
-            f"fidelity_delta={raw_corrected_delta}"
-        )
-        log.logger.critical(
-            f"critical_recovery run_id={run_id} "
-            f"left_x_before={left_recovery['x_syndrome_before']} left_z_before={left_recovery['z_syndrome_before']} "
-            f"left_x_after={left_recovery['x_syndrome_after']} left_z_after={left_recovery['z_syndrome_after']} "
-            f"right_x_before={right_recovery['x_syndrome_before']} right_z_before={right_recovery['z_syndrome_before']} "
-            f"right_x_after={right_recovery['x_syndrome_after']} right_z_after={right_recovery['z_syndrome_after']}"
-        )
-        log.logger.critical(
-            f"critical_ladder run_id={run_id} "
-            f"physical_pre_idle={dict(self.current_run['initial_link_fidelities'])} "
-            f"physical_post_idle={dict(self.current_run['post_idle_link_fidelities'])} "
-            f"logical_post_tcnot_raw={dict(self.current_run['link_logical_fidelities'])} "
-            f"logical_post_tcnot_corrected={dict(self.current_run['link_logical_fidelities_corrected'])} "
-            f"pre_final_frame_raw={self.current_run['pre_frame_end_to_end_fidelity_raw']} "
-            f"pre_final_frame_corrected={self.current_run['pre_frame_end_to_end_fidelity_corrected']} "
-            f"final_corrected={final_corrected}"
-        )
-        log.logger.critical(
-            f"critical_noise run_id={run_id} idle_by_block={idle_by_block} idle_by_qubit={idle_by_qubit} "
-            f"gate_1q_by_block={gate_1q_by_block} gate_1q_attempts_by_block={gate_1q_attempts_by_block} "
-            f"gate_2q_by_block_pair={gate_2q_by_block_pair} "
-            f"gate_2q_attempts_by_block_pair={gate_2q_attempts_by_block_pair} "
-            f"gate_2q_observed_rate_by_block_pair={gate_2q_observed_rate_by_block_pair} "
-            f"measurement_by_block={measurement_by_block} measurement_by_qubit={measurement_by_qubit} "
-            f"measurement_attempts_by_block={measurement_attempts_by_block} "
-            f"measurement_attempts_by_qubit={measurement_attempts_by_qubit} "
-            f"measurement_observed_rate_by_block={measurement_observed_rate_by_block} "
-            f"measurement_observed_rate_by_qubit={measurement_observed_rate_by_qubit} "
-            f"initialization_by_block={initialization_by_block} initialization_by_qubit={initialization_by_qubit}"
+            f"fidelity_corrected={final_corrected}"
         )
 
     def start(self, responder: str, start_t: int, end_t: int, fidelity: float, num_logical_pairs: int) -> None:
@@ -506,7 +318,6 @@ class RequestLogicalPairApp:
         """
         round_spacing_ps = int(getattr(self.node, "round_spacing_ps", int(1e9)))  # Gap between successive logical-pair run windows.
         
-        log.logger.info(f"{self.name}: start responder={responder} first_window=({int(start_t)},{int(end_t)}) fidelity={fidelity:.4f} num_logical_pairs={num_logical_pairs} round_spacing_ps={round_spacing_ps}")
         if int(end_t) <= int(start_t):
             raise RuntimeError(f"{self.name}: end_t must be > start_t")
         if num_logical_pairs < 1:
@@ -521,9 +332,10 @@ class RequestLogicalPairApp:
             self.scheduled_run_starts.append(run_start_t)
 
             if self._path_position == 0:
-                reset_process = Process(self.node.timeline.quantum_manager, "reset_error_statistics", [])
-                reset_event = Event(run_start_t, reset_process, self.node.timeline.schedule_counter)
-                self.node.timeline.schedule(reset_event)
+                # reset_process = Process(self.node.timeline.quantum_manager, "reset_error_statistics", [])
+                # reset_event = Event(run_start_t, reset_process, self.node.timeline.schedule_counter)
+                # self.node.timeline.schedule(reset_event)
+                pass
 
             process = Process(self, "begin_run", [run_start_t, run_end_t])
             event = Event(run_start_t, process, self.node.timeline.schedule_counter)
@@ -543,7 +355,7 @@ class RequestLogicalPairApp:
             bool: True if any protocol was called.
         """
         msg_type = getattr(msg, "msg_type", type(msg).__name__)
-        log.logger.debug(f"{self.name}: received_message src={src} type={msg_type}")
+        # log.logger.debug(f"{self.name}: received_message src={src} type={msg_type}")
 
         # TCNOT routing is link-local: source node identifies the protocol.
         if isinstance(msg, TeleportedCNOTMessage):
@@ -551,7 +363,7 @@ class RequestLogicalPairApp:
             if protocol is None:
                 pending_tcnot_messages = self.current_run["pending_tcnot_messages"].setdefault(src, [])
                 pending_tcnot_messages.append(msg)  # Preserve early TCNOT payload messages until the local protocol exists.
-                log.logger.info(f"{self.name}: buffered TCNOT message src={src} type={msg.msg_type} pending={len(pending_tcnot_messages)}")
+                # log.logger.info(f"{self.name}: buffered TCNOT message src={src} type={msg.msg_type} pending={len(pending_tcnot_messages)}")
                 return True
             protocol.received_message(src, msg)
             return True
@@ -564,7 +376,7 @@ class RequestLogicalPairApp:
                     return True
             pending_qre_messages = self.current_run["pending_qre_messages"].setdefault(src, [])
             pending_qre_messages.append(msg)  # Preserve early frame updates until the local QRE protocol is running.
-            log.logger.info(f"{self.name}: buffered QRE message src={src} type={msg.msg_type} pending={len(pending_qre_messages)}")
+            # log.logger.info(f"{self.name}: buffered QRE message src={src} type={msg.msg_type} pending={len(pending_qre_messages)}")
             return True
 
         return False
@@ -697,10 +509,10 @@ class RequestLogicalPairApp:
                 if expectation < -0.5:
                     return 1
                 if abs(expectation) <= 0.5:
-                    log.logger.warning(
-                        f"{self.name}: nondeterministic_stabilizer block_keys={block_keys} "
-                        f"stabilizer={stabilizer} expectation={expectation:.6f}"
-                    )
+                    # log.logger.warning(
+                        # f"{self.name}: nondeterministic_stabilizer block_keys={block_keys} "
+                        # f"stabilizer={stabilizer} expectation={expectation:.6f}"
+                    # )
                     return None  # Non-deterministic stabilizer; treat as decode failure and skip correction.
                 raise RuntimeError(f"{self.name}: unexpected stabilizer expectation {expectation}")
 
@@ -730,12 +542,12 @@ class RequestLogicalPairApp:
 
             x_syndrome_after = [syndrome_bit(stabilizer) for stabilizer in self.code.get_x_stabilizer_strings()]
             z_syndrome_after = [syndrome_bit(stabilizer) for stabilizer in self.code.get_z_stabilizer_strings()]
-            log.logger.warning(
-                f"{self.name}: ideal_recovery block={block_label} block_keys={block_keys} "
-                f"x_before={x_syndrome_before} z_before={z_syndrome_before} "
-                f"x_q={x_error_qubit} z_q={z_error_qubit} "
-                f"x_after={x_syndrome_after} z_after={z_syndrome_after}"
-            )
+            # log.logger.warning(
+                # f"{self.name}: ideal_recovery block={block_label} block_keys={block_keys} "
+                # f"x_before={x_syndrome_before} z_before={z_syndrome_before} "
+                # f"x_q={x_error_qubit} z_q={z_error_qubit} "
+                # f"x_after={x_syndrome_after} z_after={z_syndrome_after}"
+            # )
 
             return {
                 "x_syndrome_before": x_syndrome_before,
@@ -863,15 +675,15 @@ class RequestLogicalPairApp:
                 fidelities = bell_fidelities_from_correlators(cx, cy, cz)
                 best_label = max(fidelities, key=fidelities.get)
                 value = fidelities[best_label]
-                log.logger.warning(
-                    f"{self.name}: recovery_correlators stage={stage} pair_type={pair_type} "
-                    f"left={left_node} right={right_node} "
-                    f"cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} "
-                    f"paulis={pauli_values} "
-                    f"phi_plus={fidelities['phi_plus']:.6f} phi_minus={fidelities['phi_minus']:.6f} "
-                    f"psi_plus={fidelities['psi_plus']:.6f} psi_minus={fidelities['psi_minus']:.6f} "
-                    f"best={best_label} value={value:.6f}"
-                )
+                # log.logger.warning(
+                    # f"{self.name}: recovery_correlators stage={stage} pair_type={pair_type} "
+                    # f"left={left_node} right={right_node} "
+                    # f"cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} "
+                    # f"paulis={pauli_values} "
+                    # f"phi_plus={fidelities['phi_plus']:.6f} phi_minus={fidelities['phi_minus']:.6f} "
+                    # f"psi_plus={fidelities['psi_plus']:.6f} psi_minus={fidelities['psi_minus']:.6f} "
+                    # f"best={best_label} value={value:.6f}"
+                # )
 
             all_keys = left_keys + right_keys
             sim, key_to_local = build_simulator_from_keys(all_keys)
@@ -924,53 +736,22 @@ class RequestLogicalPairApp:
             else:
                 best_label = "phi_plus"
                 value = fidelities["phi_plus"]
-            log.logger.warning(
-                f"{self.name}: fidelity_components pair_type={pair_type} recover_endpoints={recover_endpoints} left={left_node} right={right_node} "
-                f"left_x_before={left_recovery['x_syndrome_before']} left_z_before={left_recovery['z_syndrome_before']} "
-                f"left_x_after={left_recovery['x_syndrome_after']} left_z_after={left_recovery['z_syndrome_after']} "
-                f"right_x_before={right_recovery['x_syndrome_before']} right_z_before={right_recovery['z_syndrome_before']} "
-                f"right_x_after={right_recovery['x_syndrome_after']} right_z_after={right_recovery['z_syndrome_after']} "
-                f"cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} "
-                f"paulis={pauli_values} "
-                f"phi_plus={fidelities['phi_plus']:.6f} phi_minus={fidelities['phi_minus']:.6f} "
-                f"psi_plus={fidelities['psi_plus']:.6f} psi_minus={fidelities['psi_minus']:.6f} "
-                f"best={best_label} value={value:.6f}"
-            )
+            # log.logger.warning(
+                # f"{self.name}: fidelity_components pair_type={pair_type} recover_endpoints={recover_endpoints} left={left_node} right={right_node} "
+                # f"left_x_before={left_recovery['x_syndrome_before']} left_z_before={left_recovery['z_syndrome_before']} "
+                # f"left_x_after={left_recovery['x_syndrome_after']} left_z_after={left_recovery['z_syndrome_after']} "
+                # f"right_x_before={right_recovery['x_syndrome_before']} right_z_before={right_recovery['z_syndrome_before']} "
+                # f"right_x_after={right_recovery['x_syndrome_after']} right_z_after={right_recovery['z_syndrome_after']} "
+                # f"cx={cx:.6f} cy={cy:.6f} cz={cz:.6f} "
+                # f"paulis={pauli_values} "
+                # f"phi_plus={fidelities['phi_plus']:.6f} phi_minus={fidelities['phi_minus']:.6f} "
+                # f"psi_plus={fidelities['psi_plus']:.6f} psi_minus={fidelities['psi_minus']:.6f} "
+                # f"best={best_label} value={value:.6f}"
+            # )
             return value
 
         if pair_type == "physical":
-            # Physical pair fidelity is computed pair-by-pair, then averaged over n pairs.
-            left_memories = left_app.current_run["comm_qubits"][right_node]
-            if len(left_memories) == 0:
-                raise RuntimeError(f"{self.name}: no physical pairs for {left_node}<->{right_node}")
-
-            right_router = self.node.timeline.get_entity_by_name(right_node)
-            right_array = right_router.components[right_router.memo_arr_name]
-            right_by_name = {memory.name: memory for memory in right_array.memories}
-            pair_values: list[float] = []
-            pair_rows: list[dict[str, object]] = []
-            for pair_index, left_memory in enumerate(left_memories):
-                remote_name = str(left_memory.entangled_memory["memo_id"])
-                right_memory = right_by_name.get(remote_name)
-                if right_memory is None:
-                    raise RuntimeError(f"{self.name}: missing remote memory {remote_name}")
-                pair_f = fidelity_from_keys([left_memory.qstate_key], [right_memory.qstate_key], "X", "Y", "Z")
-                log.logger.info(f"{self.name}: physical_pair left={left_memory.name}:{left_memory.qstate_key} right={right_memory.name}:{right_memory.qstate_key} f={pair_f:.6f}")
-                pair_values.append(pair_f)
-                pair_rows.append(
-                    {
-                        "pair_index": pair_index,
-                        "left_memory": left_memory.name,
-                        "right_memory": right_memory.name,
-                        "left_key": int(left_memory.qstate_key),
-                        "right_key": int(right_memory.qstate_key),
-                        "pair_fidelity": float(pair_f),
-                    }
-                )
-            left_app.current_run["physical_pair_fidelity_rows"][right_node] = pair_rows
-            avg_f = float(sum(pair_values) / len(pair_values))
-            log.logger.info(f"{self.name}: physical_avg left={left_node} right={right_node} pairs={len(pair_values)} avg={avg_f:.6f}")
-            return avg_f
+            raise ValueError(f"{self.name}: unsupported pair_type {pair_type}")
 
         # Select the encoded data blocks to score.
         if pair_type == "logical_link":
@@ -1013,74 +794,6 @@ class RequestLogicalPairApp:
             float: Corrected pair fidelity.
         """
         return self._calculate_pair_fidelity(left_node, right_node, pair_type, recover_endpoints=True)
-
-    def _log_block_stabilizer_snapshot(self, stage: str, block_label: str, block_keys: list[int]) -> None:
-        """Log one stabilizer snapshot for a logical block.
-
-        Args:
-            stage: Short lifecycle stage label for the snapshot.
-            block_label: Human-readable block identifier.
-            block_keys: Quantum-manager keys in code order.
-
-        Returns:
-            None
-        """
-        if len(block_keys) == 0:
-            return
-
-        qm = self.node.timeline.quantum_manager
-        if any(key not in qm.states for key in block_keys):
-            log.logger.info(
-                f"{self.name}: stabilizer_snapshot stage={stage} block={block_label} "
-                f"block_keys={block_keys} status=missing_keys"
-            )
-            return
-
-        unique_states: list["TableauState"] = []
-        seen_state_ids: set[int] = set()
-        for key in block_keys:
-            qstate = qm.states[key]
-            state_id = id(qstate)
-            if state_id not in seen_state_ids:
-                seen_state_ids.add(state_id)
-                unique_states.append(qstate)
-
-        merged_keys: list[int] = []
-        merged_tableau = None
-        for qstate in unique_states:
-            merged_keys.extend(qstate.keys)
-            block_tableau = qstate.current_tableau()
-            merged_tableau = block_tableau if merged_tableau is None else merged_tableau + block_tableau
-
-        if merged_tableau is None:
-            return
-
-        simulator = stim.TableauSimulator()
-        simulator.set_inverse_tableau(merged_tableau.inverse())
-        key_to_local = {key: idx for idx, key in enumerate(merged_keys)}
-
-        def expectation_for(pauli_string: str) -> float:
-            """Return one Pauli expectation for the current block ordering.
-
-            Args:
-                pauli_string: Pauli support string over the logical block.
-
-            Returns:
-                float: Observable expectation value.
-            """
-            observable = stim.PauliString(len(merged_keys))
-            for key, pauli in zip(block_keys, pauli_string):
-                if pauli != "I":
-                    observable[key_to_local[key]] = pauli
-            return float(simulator.peek_observable_expectation(observable))
-
-        x_expectations = [expectation_for(stabilizer) for stabilizer in self.code.get_x_stabilizer_strings()]
-        z_expectations = [expectation_for(stabilizer) for stabilizer in self.code.get_z_stabilizer_strings()]
-        log.logger.info(
-            f"{self.name}: stabilizer_snapshot stage={stage} block={block_label} "
-            f"block_keys={block_keys} state_keys={merged_keys} "
-            f"x_exp={x_expectations} z_exp={z_expectations}"
-        )
 
     def allocate_data_and_ancilla(self, neighbor: str) -> None:
         """Allocate data and required ancilla qubits for one link from local arrays.
@@ -1148,8 +861,8 @@ class RequestLogicalPairApp:
         self.node.timeline.quantum_manager.last_idle_time_ps_by_key[info.memory.qstate_key] = now_ps
         local_names = [m.name for m in self.current_run["comm_qubits"][neighbor]]
         remote_names = [str(m.entangled_memory["memo_id"]) for m in self.current_run["comm_qubits"][neighbor]]
-        log.logger.info(f"{self.name}: physical_progress neighbor={neighbor} count={len(local_names)}/{self.n} unique_local={len(set(local_names))} unique_remote={len(set(remote_names))} last={info.memory.name}->{info.memory.entangled_memory['memo_id']}")
-        log.logger.debug(f"{self.name}: entangled comm memory neighbor={neighbor} count={len(self.current_run['comm_qubits'][neighbor])}/{self.n} index={info.index}")
+        # log.logger.info(f"{self.name}: physical_progress neighbor={neighbor} count={len(local_names)}/{self.n} unique_local={len(set(local_names))} unique_remote={len(set(remote_names))} last={info.memory.name}->{info.memory.entangled_memory['memo_id']}")
+        # log.logger.debug(f"{self.name}: entangled comm memory neighbor={neighbor} count={len(self.current_run['comm_qubits'][neighbor])}/{self.n} index={info.index}")
 
         if len(self.current_run["comm_qubits"][neighbor]) != self.n:
             return
@@ -1174,9 +887,8 @@ class RequestLogicalPairApp:
         if local_count != self.n:
             return
 
-        self.current_run["initial_link_fidelities"][neighbor] = self.calculate_pair_fidelity(self.node.name, neighbor, "physical")
         self.current_run["link_ready"].add(neighbor)
-        log.logger.info(f"{self.name}: link_ready neighbor={neighbor} ready_links={sorted(self.current_run['link_ready'])}")
+        # log.logger.info(f"{self.name}: link_ready neighbor={neighbor} ready_links={sorted(self.current_run['link_ready'])}")
 
         expected_ready = {n for n in (self._left_peer_name, self._right_peer_name) if n is not None}
         if not self.current_run["link_ready"].issuperset(expected_ready):
@@ -1189,10 +901,10 @@ class RequestLogicalPairApp:
         else:
             data_blocks = [[m.qstate_key for m in self.data_qubits[self._left_peer_name]], [m.qstate_key for m in self.data_qubits[self._right_peer_name]]]
 
-        log.logger.warning(f'{self.name}: physical link ready, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+        # log.logger.warning(f'{self.name}: physical link ready, runtime = {time.time() - self.time_begin_of_run:.2f}s')
 
         # Encode only after both adjacent links are finalized as ready.
-        log.logger.info(f"{self.name}: triggering encode path_role={self._path_role} expected_ready={sorted(expected_ready)}")
+        # log.logger.info(f"{self.name}: triggering encode path_role={self._path_role} expected_ready={sorted(expected_ready)}")
         self.encode_data_qubits(data_blocks=data_blocks, ft_prep_mode=self.ft_prep_mode, max_ft_prep_shots=15)
 
     def get_physical_reservation_results(self, reservation: "Reservation", result: bool) -> None:
@@ -1219,11 +931,11 @@ class RequestLogicalPairApp:
         for card in reservation_protocol.timecards:
             if reservation in card.reservations:
                 add_process = Process(self.memo_to_reservation, "__setitem__", [card.memory_index, reservation])
-                add_event = Event(reservation.start_time, add_process)
+                add_event = Event(reservation.start_time, add_process, self.node.timeline.schedule_counter)
                 self.node.timeline.schedule(add_event)
 
                 remove_process = Process(self.memo_to_reservation, "pop", [card.memory_index, None])
-                remove_event = Event(reservation.end_time, remove_process)
+                remove_event = Event(reservation.end_time, remove_process, self.node.timeline.schedule_counter)
                 self.node.timeline.schedule(remove_event)
 
     def get_other_physical_reservation(self, reservation: "Reservation") -> None:
@@ -1248,11 +960,11 @@ class RequestLogicalPairApp:
         for card in reservation_protocol.timecards:
             if reservation in card.reservations:
                 add_process = Process(self.memo_to_reservation, "__setitem__", [card.memory_index, reservation])
-                add_event = Event(reservation.start_time, add_process)
+                add_event = Event(reservation.start_time, add_process, self.node.timeline.schedule_counter)
                 self.node.timeline.schedule(add_event)
 
                 remove_process = Process(self.memo_to_reservation, "pop", [card.memory_index, None])
-                remove_event = Event(reservation.end_time, remove_process)
+                remove_event = Event(reservation.end_time, remove_process, self.node.timeline.schedule_counter)
                 self.node.timeline.schedule(remove_event)
 
 # ---------- Encoding and fault-tolerant preparation phase ----------
@@ -1271,7 +983,7 @@ class RequestLogicalPairApp:
             Edge-node usage: encode_data_qubits([edge_block_keys])
             Middle-node usage: encode_data_qubits([left_block_keys, right_block_keys])
         """
-        log.logger.info(f"{self.name}: encode_data_qubits blocks={len(data_blocks)} ft_prep_mode={ft_prep_mode} max_shots={max_ft_prep_shots}")
+        # log.logger.info(f"{self.name}: encode_data_qubits blocks={len(data_blocks)} ft_prep_mode={ft_prep_mode} max_shots={max_ft_prep_shots}")
         if self._path_role == "edge" and len(data_blocks) != 1:
             raise RuntimeError(f"{self.name}: edge node expects exactly 1 data block")
         if self._path_role == "middle" and len(data_blocks) != 2:
@@ -1321,12 +1033,12 @@ class RequestLogicalPairApp:
             accepted, prep_duration_ps, ft_prep_shots_used = self.code.run_encode_ft_prep(qm=qm, data_keys=block_keys, ancilla_keys=ancilla_keys, ft_prep_mode=ft_prep_mode, max_ft_prep_shots=max_ft_prep_shots, meas_samp=self.node.get_generator().random(), logical_state=logical_state)
             total_prep_duration_ps += prep_duration_ps
             ft_prep_retries = ft_prep_shots_used - 1
-            log.logger.warning(
-                f"{self.name}: ft_prep_result neighbor={block_neighbor} logical_state={logical_state} "
-                f"mode={ft_prep_mode} accepted={accepted} shots_used={ft_prep_shots_used} "
-                f"retries={ft_prep_retries}"
-            )
-            log.logger.info(f"{self.name}: block encode accepted={accepted} ft_prep_mode={ft_prep_mode}")
+            # log.logger.warning(
+                # f"{self.name}: ft_prep_result neighbor={block_neighbor} logical_state={logical_state} "
+                # f"mode={ft_prep_mode} accepted={accepted} shots_used={ft_prep_shots_used} "
+                # f"retries={ft_prep_retries}"
+            # )
+            # log.logger.info(f"{self.name}: block encode accepted={accepted} ft_prep_mode={ft_prep_mode}")
             
             if not accepted:
                 raise RuntimeError(f"{self.name}: FT prep failed after {max_ft_prep_shots} shots")
@@ -1337,11 +1049,9 @@ class RequestLogicalPairApp:
                 qm.last_idle_time_ps_by_key[key] = now_ps
             for key in ancilla_keys:
                 qm.last_idle_time_ps_by_key[key] = now_ps
-            self._log_block_stabilizer_snapshot("post_encode", block_neighbor, block_keys)
-
         # Delay TCNOT launch by the total local FT-prep processing time.
         tcnot_start_t = int(self.node.timeline.now()) + total_prep_duration_ps
-        log.logger.info(f"{self.name}: schedule_tcnot_start now={int(self.node.timeline.now())} prep_duration_ps={total_prep_duration_ps} tcnot_start_t={tcnot_start_t}")
+        # log.logger.info(f"{self.name}: schedule_tcnot_start now={int(self.node.timeline.now())} prep_duration_ps={total_prep_duration_ps} tcnot_start_t={tcnot_start_t}")
         for ready_neighbor in list(self.current_run["link_ready"]):
             reservation_for_neighbor = None
             for res in self.memo_to_reservation.values():
@@ -1357,8 +1067,8 @@ class RequestLogicalPairApp:
             event = Event(tcnot_start_t, process, self.node.timeline.schedule_counter)
             self.node.timeline.schedule(event)
 
-        log.logger.debug(f"{self.name}: encoded {len(data_blocks)} block(s) with ft_prep_mode={ft_prep_mode}")
-        log.logger.warning(f'{self.name}: encode data qubits done, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+        # log.logger.debug(f"{self.name}: encoded {len(data_blocks)} block(s) with ft_prep_mode={ft_prep_mode}")
+        # log.logger.warning(f'{self.name}: encode data qubits done, runtime = {time.time() - self.time_begin_of_run:.2f}s')
 
 # ---------- Teleported CNOT phase: reservation and memory callbacks for physical Bell pair generation ----------
     def initialize_teleported_cnot(self, neighbor: str, reservation: "Reservation") -> None:
@@ -1373,7 +1083,7 @@ class RequestLogicalPairApp:
         """
         is_initiator = reservation.initiator == self.node.name
         role = "alice" if is_initiator else "bob"
-        log.logger.info(f"{self.name}: initialize_tcnot neighbor={neighbor} role={role} comm={len(self.current_run['comm_qubits'][neighbor])} data={len(self.data_qubits[neighbor])}")
+        # log.logger.info(f"{self.name}: initialize_tcnot neighbor={neighbor} role={role} comm={len(self.current_run['comm_qubits'][neighbor])} data={len(self.data_qubits[neighbor])}")
 
         tcnot = self.current_run["tcnot_protocols"].get(neighbor)
         if tcnot is None:
@@ -1395,7 +1105,7 @@ class RequestLogicalPairApp:
 
         pending_tcnot_messages = self.current_run["pending_tcnot_messages"].pop(neighbor, [])
         if pending_tcnot_messages:
-            log.logger.info(f"{self.name}: replay buffered TCNOT messages neighbor={neighbor} count={len(pending_tcnot_messages)}")
+            # log.logger.info(f"{self.name}: replay buffered TCNOT messages neighbor={neighbor} count={len(pending_tcnot_messages)}")
             for pending_msg in pending_tcnot_messages:
                 tcnot.received_message(neighbor, pending_msg)  # Deliver queued TCNOT payload messages after local start().
 
@@ -1408,7 +1118,7 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        log.logger.warning(f'{self.name} TCNOT complete, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+        # log.logger.warning(f'{self.name} TCNOT complete, runtime = {time.time() - self.time_begin_of_run:.2f}s')
         
         # Support both callback shapes: reservation object or direct neighbor string.
         if isinstance(reservation_or_neighbor, str):
@@ -1420,33 +1130,27 @@ class RequestLogicalPairApp:
             else:
                 neighbor = reservation.initiator
             self.get_other_physical_reservation(reservation)
-        log.logger.info(f"{self.name}: tcnot_complete neighbor={neighbor}")
-        self._log_block_stabilizer_snapshot("post_tcnot", neighbor, [m.qstate_key for m in self.data_qubits[neighbor]])
-
+        # log.logger.info(f"{self.name}: tcnot_complete neighbor={neighbor}")
         # Record one-link logical fidelity only on one designated side.
         neighbor_pos = self._path_node_names.index(neighbor)
         if self._path_position < neighbor_pos:
-            measured_fidelity = self.calculate_pair_fidelity(self.node.name, neighbor, "logical_link")
-            corrected_fidelity = self.calculate_pair_fidelity_corrected(self.node.name, neighbor, "logical_link")
-            self.current_run["link_logical_fidelities"][neighbor] = measured_fidelity
-            self.current_run["link_logical_fidelities_corrected"][neighbor] = corrected_fidelity
-            log.logger.info(
-                f"{self.name}: logical_link_fidelity run_id={self.current_run['run_id']} "
-                f"neighbor={neighbor} raw={measured_fidelity:.6f} corrected={corrected_fidelity:.6f}"
-            )
+            # measured_fidelity = self.calculate_pair_fidelity(self.node.name, neighbor, "logical_link")
+            # self.current_run["link_logical_fidelities"][neighbor] = measured_fidelity
+            # self.current_run["link_logical_fidelities_corrected"][neighbor] = measured_fidelity
+            pass
 
         # QRE barrier: this node launches QRE only after all its adjacent TCNOT links complete.
         self.current_run["tcnot_done"].add(neighbor)
         required_tcnot = {n for n in (self._left_peer_name, self._right_peer_name) if n is not None}
-        log.logger.info(f"{self.name}: tcnot_barrier run_id={self.current_run['run_id']} done={self.current_run['tcnot_done']} required={required_tcnot} role={self._path_role}")
+        # log.logger.info(f"{self.name}: tcnot_barrier run_id={self.current_run['run_id']} done={self.current_run['tcnot_done']} required={required_tcnot} role={self._path_role}")
         if not self.current_run["tcnot_done"].issuperset(required_tcnot):
-            log.logger.info(f"{self.name}: waiting_for_tcnot_barrier done={self.current_run['tcnot_done']} required={required_tcnot}")
+            # log.logger.info(f"{self.name}: waiting_for_tcnot_barrier done={self.current_run['tcnot_done']} required={required_tcnot}")
             return
 
         for peer in required_tcnot:
             have = len(self.data_qubits.get(peer, []))
             if have != self.n:
-                log.logger.info(f"{self.name}: waiting_for_data_block peer={peer} have={have} need={self.n}")
+                # log.logger.info(f"{self.name}: waiting_for_data_block peer={peer} have={have} need={self.n}")
                 return
 
         # Barrier passed: middle nodes launch one local swap; edge nodes launch their single link QRE.
@@ -1470,7 +1174,7 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        log.logger.info(f"{self.name}: start_qre_for_link neighbor={neighbor}")
+        # log.logger.info(f"{self.name}: start_qre_for_link neighbor={neighbor}")
         protocol = self.current_run["qre_protocols"].get(neighbor)
         if protocol is None:
             raise RuntimeError(f"{self.name}: missing QREProtocol for {neighbor}")
@@ -1488,7 +1192,7 @@ class RequestLogicalPairApp:
         self.current_run["pending_qre_messages"].clear()
         if pending_qre_messages_by_src:
             total_pending = sum(len(messages) for messages in pending_qre_messages_by_src.values())
-            log.logger.info(f"{self.name}: replay buffered QRE messages neighbor={neighbor} count={total_pending}")
+            # log.logger.info(f"{self.name}: replay buffered QRE messages neighbor={neighbor} count={total_pending}")
             for src, pending_messages in pending_qre_messages_by_src.items():
                 for pending_msg in pending_messages:
                     protocol.received_message(src, pending_msg)  # Deliver queued frame updates once the local QRE protocol is active.
@@ -1505,12 +1209,8 @@ class RequestLogicalPairApp:
         Returns:
             None
         """
-        log.logger.warning(f'{self.name} logical pair complete, runtime = {time.time() - self.time_begin_of_run:.2f}s')
-
-        log.logger.info(f"{self.name}: logical_pair_complete neighbor={neighbor} result_keys={list(result.keys()) if result else []}")
-        # Cache per-link QRE output if provided.
         if result is not None:
-            self.current_run["post_idle_pair_fidelity_rows"][neighbor] = [result]
+            pass
 
         # Only protocols that actually started belong to the current attempt.
         # Middle nodes keep a second neighbor-scoped QRE object in IDLE, and
@@ -1527,16 +1227,7 @@ class RequestLogicalPairApp:
             right_router = self.node.timeline.get_entity_by_name(self._path_node_names[-1])
             right_app = right_router.request_logical_pair_app
             right_keys = [m.qstate_key for m in right_app.data_qubits[self._path_node_names[-2]]]
-            self._log_block_stabilizer_snapshot("pre_final_fidelity", self._path_node_names[0], left_keys)
-            self._log_block_stabilizer_snapshot("pre_final_fidelity", self._path_node_names[-1], right_keys)
-            final_fidelity_raw = self.calculate_pair_fidelity(self._path_node_names[0], self._path_node_names[-1], "logical_end")
             final_fidelity_corrected = self.calculate_pair_fidelity_corrected(self._path_node_names[0], self._path_node_names[-1], "logical_end")
-            log.logger.info(
-                f"{self.name}: final_e2e_measure run_id={self.current_run['run_id']} "
-                f"raw={final_fidelity_raw:.6f} corrected={final_fidelity_corrected:.6f} "
-                f"frame_updates={self.current_run['frame_updates_by_src']}"
-            )
-            self.current_run["final_end_to_end_fidelity_raw"] = final_fidelity_raw
             self.current_run["final_end_to_end_fidelity_corrected"] = final_fidelity_corrected
             self.current_run["final_end_to_end_fidelity"] = final_fidelity_corrected  # Persist the corrected run result as the default metric.
             self.current_run["completion_time"] = int(self.node.timeline.now())
@@ -1550,18 +1241,13 @@ class RequestLogicalPairApp:
         run_id = int(self.current_run["run_id"])
         latency_ps = (None if self.current_run["start_time"] is None or self.current_run["completion_time"] is None else int(self.current_run["completion_time"]) - int(self.current_run["start_time"]))
 
-        self.run_stats[run_id] = {
-            "run_id": int(self.current_run["run_id"]),
-            "latency_ps": latency_ps,
-            "final_end_to_end_fidelity": final_fidelity,
-            "final_end_to_end_fidelity_raw": self.current_run["final_end_to_end_fidelity_raw"],
-            "final_end_to_end_fidelity_corrected": self.current_run["final_end_to_end_fidelity_corrected"],
-            "final_end_to_end_corrected_bell_state": self.current_run["final_end_to_end_corrected_bell_state"],
-            "initial_link_fidelities": dict(self.current_run["initial_link_fidelities"]),
-            "link_logical_fidelities": dict(self.current_run["link_logical_fidelities"]),
-        }
+        self.completed_run_count += 1
+        if self.current_run["final_end_to_end_fidelity_corrected"] is not None:
+            self.sum_final_fidelity_corrected += float(self.current_run["final_end_to_end_fidelity_corrected"])
+        if latency_ps is not None:
+            self.sum_latency_ps += int(latency_ps)
 
-        if False and self._path_position == 0:
+        if self._path_position == 0:
             self._log_critical_run_summary(run_id, latency_ps)
 
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1
@@ -1572,8 +1258,6 @@ class RequestLogicalPairApp:
         else:
             cleanup_time = max(0, int(next_start_t) - 1)
 
-        log.logger.info(f"{self.name}: schedule_reset run_id={self.current_run['run_id']} start={self.current_run['start_time']} end={self.current_run['end_time']} now={int(self.node.timeline.now())} next_start={next_start_t} cleanup_time={cleanup_time} known_starts={sorted(self.scheduled_run_starts)}")
-
         process = Process(self, "reset_run", [])
         event = Event(cleanup_time, process, self.node.timeline.schedule_counter)
         self.node.timeline.schedule(event)
@@ -1582,8 +1266,6 @@ class RequestLogicalPairApp:
             return
 
         if meets_target:
-            log.logger.info(f"{self.name}: logical pair complete with end-to-end fidelity {final_fidelity:.4f} (target={self.required_end_to_end_logical_fidelity:.4f})")
+            pass
         else:
-            log.logger.warning(f"{self.name}: logical pair fidelity below target (final={final_fidelity:.4f}, target={self.required_end_to_end_logical_fidelity:.4f})")
-
-        log.logger.warning(f'{self.name} logical pair complete, runtime = {time.time() - self.time_begin_of_run:.2f}s')
+            pass
