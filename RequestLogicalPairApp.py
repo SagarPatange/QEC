@@ -206,6 +206,8 @@ class RequestLogicalPairApp:
         if self.current_run["start_time"] == int(start_t) and self.current_run["status"] != "idle":
             return # NOTE: delete the "begin_run" event scheduled in get_other_physical_reservation()?
 
+        self.node.timeline.quantum_manager.reset_error_statistics()
+
         # Initialize fresh per-run bookkeeping for the new scheduled execution window.
         self.current_run = {
             "run_id": self.next_run_id,
@@ -297,10 +299,14 @@ class RequestLogicalPairApp:
             None.
         """
         final_corrected = self.current_run["final_end_to_end_fidelity_corrected"]
+        qm_stats = self.node.timeline.quantum_manager.get_error_statistics()
 
         log.logger.critical(
             f"critical_e2e run_id={run_id} latency_ps={latency_ps} "
-            f"fidelity_corrected={final_corrected}"
+            f"fidelity_corrected={final_corrected} "
+            f"qm_gate_count=(1q:{qm_stats['gate_1q_count']},2q:{qm_stats['gate_2q_count']}) "
+            f"qm_gate_error_count=(1q:{qm_stats['gate_1q_error_count']},2q:{qm_stats['gate_2q_error_count']}) "
+            f"qm_measurement=(count:{qm_stats['measurement_count']},error_count:{qm_stats['measurement_error_count']})"
         )
 
     def start(self, responder: str, start_t: int, end_t: int, fidelity: float, num_logical_pairs: int) -> None:
