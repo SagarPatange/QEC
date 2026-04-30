@@ -39,5 +39,6 @@ drafts/
 .mplconfig/
 
 *log/*
+!log/runner_April30th/
+!log/runner_April30th/**
 *plot_pngs/*
-

@@ -1,23 +1,24 @@
 import sys
 import time
 import secrets
+import select
 from pathlib import Path
-from subprocess import PIPE, Popen
+from subprocess import PIPE, STDOUT, Popen
 
 LOG_ROOT = "log/runner_April30th"
 
 CONFIG_FILES = [
         "config/standard_configs/line_2_2G.json",
         "config/standard_configs/line_3_2G.json",
-        "config/standard_configs/line_6_2G.json",
+        # "config/standard_configs/line_6_2G.json",
 ]
 
 # ideal parameters
 BASE_ARGS = [
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "0.8",
-        "--num_logical_pairs", "4000",
-        "--link_distance_km", "1",
+        "--num_logical_pairs", "5000",
+        "--link_distance_km", "20",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
         "--initialization_fidelity", "1",
@@ -37,23 +38,26 @@ BASE_ARGS = [
 ]
 
 
-def read_process_lines(process: Popen) -> list[str]:
-    """Read buffered stdout and stderr lines from one completed subprocess.
+def drain_process_lines(process: Popen) -> None:
+    """Print all currently available subprocess output lines.
 
     Args:
-        process: Completed subprocess.
+        process: Running or completed subprocess.
 
     Returns:
-        list[str]: Non-empty decoded output lines.
+        None.
     """
-    lines: list[str] = []
     if process.stdout is not None:
-        stdout_text = process.stdout.read().decode()
-        lines.extend(line for line in stdout_text.splitlines() if line)
-    if process.stderr is not None:
-        stderr_text = process.stderr.read().decode()
-        lines.extend(line for line in stderr_text.splitlines() if line)
-    return lines
+        while True:
+            ready, _, _ = select.select([process.stdout], [], [], 0)
+            if not ready:
+                break
+            line = process.stdout.readline()
+            if line == "":
+                break
+            line = line.rstrip()
+            if line:
+                print(line, flush=True)
 
 
 def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
@@ -68,25 +72,22 @@ def run_tasks(tasks: list[list[str]], parallel: int = 10) -> None:
     """
     base_dir = Path(__file__).resolve().parent
     ps: list[tuple[Popen, list[str], float]] = []
-    completed: list[tuple[list[str], list[str]]] = []
     while len(tasks) > 0 or len(ps) > 0:
         if len(ps) < parallel and len(tasks) > 0:
             task = tasks.pop(0)
             print(task, f"{len(tasks)} still in queue")
-            process = Popen(task, stdout=PIPE, stderr=PIPE, cwd=base_dir)
+            process = Popen(task, stdout=PIPE, stderr=STDOUT, cwd=base_dir, text=True, bufsize=1)
             ps.append((process, task, time.time()))
         else:
             time.sleep(0.05)
             new_ps: list[tuple[Popen, list[str], float]] = []
             for process, task, start_time in ps:
+                drain_process_lines(process)
                 if process.poll() is None:
                     new_ps.append((process, task, start_time))
                 else:
-                    completed.append((read_process_lines(process), task))
+                    drain_process_lines(process)
             ps = new_ps
-    for output_lines, _task in completed:
-        for line in output_lines:
-            print(line)
 
 
 def test_graph_two_qubit_gate_sweep() -> None:
@@ -103,7 +104,7 @@ def test_graph_two_qubit_gate_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     log_directory = f"{LOG_ROOT}/graph_two_qubit_gate_sweep_only_2q_noise"
 
-    two_qubit_gate_fidelities = ["0.996", "0.9965", "0.997", "0.9975", "0.998", "0.9985", "0.999",
+    two_qubit_gate_fidelities = ["0.99","0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
                                  "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
     # two_qubit_gate_fidelities = ["0.99"]
 
@@ -117,7 +118,7 @@ def test_graph_two_qubit_gate_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=8)
+    run_tasks(tasks, parallel=9)
 
 
 def test_graph_one_qubit_gate_sweep() -> None:
