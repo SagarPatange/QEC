@@ -1,6 +1,0 @@
-1,002,175,241,010    CRITICAL RequestLogicalPairApp  critical_e2e run_id=1 latency_ps=2175241010 fidelity_corrected=1.0 qm_gate_count=(1q:18,2q:36) qm_gate_error_count=(1q:0,2q:0) qm_measurement=(count:82,error_count:0)
-2,002,775,296,010    CRITICAL RequestLogicalPairApp  critical_e2e run_id=2 latency_ps=1775296010 fidelity_corrected=1.0 qm_gate_count=(1q:22,2q:36) qm_gate_error_count=(1q:0,2q:0) qm_measurement=(count:92,error_count:0)
-3,003,575,241,010    CRITICAL RequestLogicalPairApp  critical_e2e run_id=3 latency_ps=1575241010 fidelity_corrected=1.0 qm_gate_count=(1q:23,2q:36) qm_gate_error_count=(1q:0,2q:0) qm_measurement=(count:76,error_count:1)
-4,006,075,486,010    CRITICAL RequestLogicalPairApp  critical_e2e run_id=4 latency_ps=3075486010 fidelity_corrected=1.0 qm_gate_count=(1q:19,2q:36) qm_gate_error_count=(1q:0,2q:0) qm_measurement=(count:146,error_count:3)
-5,008,725,768,510    CRITICAL RequestLogicalPairApp  critical_e2e run_id=5 latency_ps=4725768510 fidelity_corrected=1.0 qm_gate_count=(1q:20,2q:36) qm_gate_error_count=(1q:0,2q:0) qm_measurement=(count:136,error_count:0)
-6,010,025,778,510    CRITICAL RequestLogicalPairApp  critical_e2e run_id=6 latency_ps=5025778510 fidelity_corrected=1.0 qm_gate_count=(1q:18,2q:36) qm_gate_error_count=(1q:0,2q:0) qm_measurement=(count:156,error_count:0)
