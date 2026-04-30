@@ -16,6 +16,7 @@ from sequence.kernel.event import Event
 from sequence.kernel.process import Process
 from sequence.utils import log
 from TeleportedCNOT import TeleportedCNOTMessage, TeleportedCNOTProtocol
+from sequence.constants import MILLISECOND
 
 if TYPE_CHECKING:
     from sequence.kernel.quantum_state import TableauState
