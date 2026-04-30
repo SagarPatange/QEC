@@ -10,15 +10,15 @@ LOG_ROOT = "log/runner_April30th"
 CONFIG_FILES = [
         "config/standard_configs/line_2_2G.json",
         "config/standard_configs/line_3_2G.json",
-        # "config/standard_configs/line_6_2G.json",
+        "config/standard_configs/line_6_2G.json",
 ]
 
 # ideal parameters
 BASE_ARGS = [
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "0.8",
-        "--num_logical_pairs", "5000",
-        "--link_distance_km", "20",
+        "--num_logical_pairs", "10000",
+        "--link_distance_km", "0.001",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
         "--initialization_fidelity", "1",
@@ -102,11 +102,10 @@ def test_graph_two_qubit_gate_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    log_directory = f"{LOG_ROOT}/graph_two_qubit_gate_sweep_only_2q_noise"
+    log_directory = f"{LOG_ROOT}/two_qubit_gate_sweep"
 
-    two_qubit_gate_fidelities = ["0.99","0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
+    two_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
                                  "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
-    # two_qubit_gate_fidelities = ["0.99"]
 
     for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
         for config_file in CONFIG_FILES:
@@ -118,7 +117,7 @@ def test_graph_two_qubit_gate_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=9)
+    run_tasks(tasks, parallel=15)
 
 
 def test_graph_one_qubit_gate_sweep() -> None:
@@ -133,10 +132,10 @@ def test_graph_one_qubit_gate_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    log_directory = f"{LOG_ROOT}/graph_one_qubit_gate_sweep_only_1q_noise"
+    log_directory = f"{LOG_ROOT}/one_qubit_gate_sweep"
 
     # one_qubit_gate_fidelities = ["0.99"]
-    one_qubit_gate_fidelities = ["0.996", "0.9965", "0.997", "0.9975", "0.998", "0.9985", "0.999",
+    one_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
                                  "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
 
 
@@ -150,7 +149,7 @@ def test_graph_one_qubit_gate_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=8)
+    run_tasks(tasks, parallel=15)
 
 
 def test_graph_measurement_fidelity_sweep() -> None:
@@ -165,9 +164,9 @@ def test_graph_measurement_fidelity_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    log_directory = f"{LOG_ROOT}/graph_measurement_fidelity_sweep_only_meas_noise"
+    log_directory = f"{LOG_ROOT}/graph_measurement_fidelity_sweep"
 
-    measurement_fidelities = ["0.996", "0.9965", "0.997", "0.9975", "0.998", "0.9985", "0.999",
+    measurement_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
                               "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1.0"]
 
     for measurement_fidelity in measurement_fidelities:
@@ -180,7 +179,7 @@ def test_graph_measurement_fidelity_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=8)
+    run_tasks(tasks, parallel=15)
 
 
 def test_graph_initialization_fidelity_sweep() -> None:
@@ -210,7 +209,36 @@ def test_graph_initialization_fidelity_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=24)
+    run_tasks(tasks, parallel=15)
+
+
+def test_t2_sweep() -> None:
+    """Run the T2 sweep.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    idle_t2_sec_list = ["0.01", "0.02", "0.05", "0.1", "0.2", "0.5", "1", "2", "5", "10", "20", "50", "100"]
+    log_directory = f"{LOG_ROOT}/t2_sweep"
+
+    for idle_t2_sec in idle_t2_sec_list:
+        for config_file in CONFIG_FILES:
+            args = [
+                "--idle_t2_sec", idle_t2_sec,
+                "--config_file", config_file,
+                "--log_directory", log_directory,
+                "--link_distance_km", "20",
+                "--seed_offset", str(secrets.randbelow(2**31 - 1)),
+            ]
+            tasks.append(command + BASE_ARGS + args)
+
+    run_tasks(tasks, parallel=9)
 
 
 def test_graph_distance_sweep_two_qubit_gate_997() -> None:
