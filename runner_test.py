@@ -9,8 +9,8 @@ LOG_ROOT = "log/runner_April30th"
 
 CONFIG_FILES = [
         "config/standard_configs/line_2_2G.json",
-        # "config/standard_configs/line_3_2G.json",
-        # "config/standard_configs/line_6_2G.json",
+        "config/standard_configs/line_3_2G.json",
+        "config/standard_configs/line_6_2G.json",
 ]
 
 # ideal parameters
