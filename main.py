@@ -52,7 +52,7 @@ def main() -> None:
     parser.add_argument("--gate_fidelity", type=float)
     parser.add_argument("--two_qubit_gate_fidelity", type=float)
     parser.add_argument("--measurement_fidelity", type=float)
-    parser.add_argument("--state_preparation_fidelity", type=float, default=0.9999)
+    parser.add_argument("--initialization_fidelity", type=float, default=0.9999)
     parser.add_argument("--gate_error_channel", type=str, choices=["depolarize", "pauli"])
     parser.add_argument("--pauli_1q_weights", type=float, nargs=3)
     parser.add_argument("--pauli_2q_weights", type=float, nargs=15)
@@ -64,6 +64,7 @@ def main() -> None:
     parser.add_argument("--idle_pauli_z", type=float)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--physical_bell_pair_fidelity", type=float, default=0.99)
+    parser.add_argument("--seed_offset", type=int, default=0)
     args = parser.parse_args()
 
     config_file = args.config_file
@@ -83,6 +84,9 @@ def main() -> None:
     with open(config_file, "r", encoding="utf-8") as file:
         config = json.load(file)
 
+    for node in config["nodes"]:
+        if "seed" in node:
+            node["seed"] = int(node["seed"]) + int(args.seed_offset)
 
     config["templates"]["qec"]["memory"]["fidelity"] = float(args.physical_bell_pair_fidelity)
 
@@ -96,8 +100,8 @@ def main() -> None:
             node["two_qubit_gate_fidelity"] = float(args.two_qubit_gate_fidelity)
         if args.measurement_fidelity is not None:
             node["measurement_fidelity"] = float(args.measurement_fidelity)
-        if args.state_preparation_fidelity is not None:
-            node["state_preparation_fidelity"] = float(args.state_preparation_fidelity)
+        if args.initialization_fidelity is not None:
+            node["initialization_fidelity"] = float(args.initialization_fidelity)
         if args.idle_t1_sec is not None:
             node["idle_t1_sec"] = float(args.idle_t1_sec)
         if args.idle_t2_sec is not None:
@@ -135,7 +139,7 @@ def main() -> None:
     gate_tag = "cfg" if args.gate_fidelity is None else str(args.gate_fidelity)
     twoq_tag = "cfg" if args.two_qubit_gate_fidelity is None else str(args.two_qubit_gate_fidelity)
     meas_tag = "cfg" if args.measurement_fidelity is None else str(args.measurement_fidelity)
-    prep_tag = "cfg" if args.state_preparation_fidelity is None else str(args.state_preparation_fidelity)
+    prep_tag = "cfg" if args.initialization_fidelity is None else str(args.initialization_fidelity)
     t1_tag = "cfg" if args.idle_t1_sec is None else str(args.idle_t1_sec)
     t2_tag = "cfg" if args.idle_t2_sec is None else str(args.idle_t2_sec)
     ft_tag = "cfg" if args.ft_prep_mode is None else args.ft_prep_mode
@@ -168,13 +172,23 @@ def main() -> None:
     tl.quantum_manager.gate_fid = getattr(routers[0], "gate_fid", 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], "two_qubit_gate_fid", 1.0)
     tl.quantum_manager.measurement_fid = getattr(routers[0], "meas_fid", 1.0)
-    tl.quantum_manager.state_preparation_fid = getattr(routers[0], "state_preparation_fid", 1.0)
+    tl.quantum_manager.initialization_fid = getattr(routers[0], "initialization_fid", 1.0)
     if args.gate_error_channel is not None:
         tl.quantum_manager.gate_error_channel = args.gate_error_channel
     if args.pauli_1q_weights is not None:
         tl.quantum_manager.pauli_1q_weights = tuple(float(w) for w in args.pauli_1q_weights)
     if args.pauli_2q_weights is not None:
         tl.quantum_manager.pauli_2q_weights = tuple(float(w) for w in args.pauli_2q_weights)
+    log.logger.critical(
+        "critical_runtime "
+        f"quantum_manager_class={type(tl.quantum_manager).__name__} "
+        f"quantum_manager_module={type(tl.quantum_manager).__module__} "
+        f"gate_error_channel={tl.quantum_manager.gate_error_channel} "
+        f"gate_fid={tl.quantum_manager.gate_fid} "
+        f"two_qubit_gate_fid={tl.quantum_manager.two_qubit_gate_fid} "
+        f"measurement_fid={tl.quantum_manager.measurement_fid} "
+        f"initialization_fid={tl.quantum_manager.initialization_fid}"
+    )
 
     for router in routers:
         router.round_spacing_ps = round_spacing_ps

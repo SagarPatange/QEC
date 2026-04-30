@@ -13,7 +13,7 @@ from subprocess import PIPE, Popen
 #     "--gate_fidelity", "0.9996",
 #     "--two_qubit_gate_fidelity", "0.997",
 #     "--measurement_fidelity", "0.995",
-#     "--state_preparation_fidelity", "0.9999",
+#     "--initialization_fidelity", "0.9999",
 #     "--gate_error_channel", "pauli",
 #     "--idle_t1_sec", "100.0",
 #     "--idle_t2_sec", "10.0",
@@ -34,7 +34,7 @@ BASE_ARGS = [
     "--gate_fidelity", "0.9996",
     "--two_qubit_gate_fidelity", "0.997",
     "--measurement_fidelity", "0.995",
-    "--state_preparation_fidelity", "0.9999",
+    "--initialization_fidelity", "0.9999",
     "--gate_error_channel", "pauli",
     "--idle_t1_sec", "100.0",
     "--idle_t2_sec", "10.0",
@@ -108,17 +108,21 @@ def main_graph1_twoqubit_gate_sweep() -> None:
     tasks = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    base_args = BASE_ARGS + ["--log_directory", "log/runner-ideal/graph1_twoqubit_gate_sweep"]
+    base_args = BASE_ARGS + ["--log_directory", "log/runner-ideal-test/graph1_twoqubit_gate_sweep"]
 
     two_qubit_gate_fidelities = ["0.995", "0.996", "0.997", "0.998", "0.999", "0.9995", "1.0"]
+    # two_qubit_gate_fidelities = ["0.98", "0.985","0.99", "0.992"]
+    # two_qubit_gate_fidelities = ["0.9"]
 
-    correction_modes = ["none", "cec", "qec"]
-    for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
+    # correction_modes = ["none", "cec", "qec"]
+    correction_modes = ["cec"]
+    for task_index, two_qubit_gate_fidelity in enumerate(two_qubit_gate_fidelities):
         # gate_fidelity = min(1.0, (0.9996 / 0.997) * float(two_qubit_gate_fidelity))
         # measurement_fidelity = min(1.0, (0.995 / 0.997) * float(two_qubit_gate_fidelity))
         for correction_mode in correction_modes:
             args = [
                 "--two_qubit_gate_fidelity", two_qubit_gate_fidelity,
+                "--seed_offset", str(task_index * 1000),
                 # "--gate_fidelity", f"{gate_fidelity:.6f}",
                 # "--measurement_fidelity", f"{measurement_fidelity:.6f}",
                 "--correction_mode", correction_mode,
@@ -293,7 +297,7 @@ def main_graph7_twoqubit_gate_fidelity_sweep_nice_params() -> None:
     physical_bell_pair_fidelity = "0.9999"
     gate_fidelity = "0.9999"
     measurement_fidelity = "0.9999"
-    state_preparation_fidelity = "0.99999"
+    initialization_fidelity = "0.99999"
     idle_t1_sec = "100.0"
     idle_t2_sec = "100.0"
     base_args = [
@@ -304,7 +308,7 @@ def main_graph7_twoqubit_gate_fidelity_sweep_nice_params() -> None:
         "--link_distance_km", str(inter_node_distance_km),
         "--gate_fidelity", gate_fidelity,
         "--measurement_fidelity", measurement_fidelity,
-        "--state_preparation_fidelity", state_preparation_fidelity,
+        "--initialization_fidelity", initialization_fidelity,
         "--physical_bell_pair_fidelity", physical_bell_pair_fidelity,
         "--gate_error_channel", "pauli",
         "--idle_t1_sec", idle_t1_sec,
@@ -365,7 +369,7 @@ def main_graph8_ideal_params_distance_sweep() -> None:
         "--gate_fidelity", "0.9999",
         "--two_qubit_gate_fidelity", "0.9999",
         "--measurement_fidelity", "0.9999",
-        "--state_preparation_fidelity", "0.99999",
+        "--initialization_fidelity", "0.99999",
         "--physical_bell_pair_fidelity", "0.999",
         "--gate_error_channel", "pauli",
         "--idle_t1_sec", "100.0",
@@ -396,7 +400,7 @@ if __name__ == "__main__":
     # Graphs are plotted in plot.ipynb, which reads from the log directories specified in each graph's function. To generate new data, uncomment the desired graph function calls below and run this script.
 
     # Graph 1
-    # main_graph1_twoqubit_gate_sweep() 
+    main_graph1_twoqubit_gate_sweep() 
 
     # Graph 2
     # main_graph2_data_coherence_sweep()

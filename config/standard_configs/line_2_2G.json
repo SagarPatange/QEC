@@ -113,6 +113,6 @@
             "delay": -1
         }
     ],
-    "stop_time": 10000000000000,
+    "stop_time": 10000000000000000,
     "formalism": "tableau"
 }

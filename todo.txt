@@ -1,15 +1,16 @@
-1. start_time and end_time should govern the simulation and can be changed to represent case
-2. Make sure that the config file is cleaned up for the FT 
-3. QEC syndrome cycle needs to have error in it through run_circuit
-4. Add a time for QEC and CEC operations
-5. Rethink Sequence to Stim
+1. Finding the threshold
+2. Choosing the right value from the threshold
+3. 
 
 
+There are 4 thresholds - run for multiple links [1,5]
+1. Two qubit Fidelity
+2. Measurement Fidelity 
+3. Single qubit Fidelity
+4. Physical Bell pair Fidelity
 
-1. Check to see if Barret Kok stops generating 
-2. Instead of counting the number of events I need to do the actual wall clock timing
-3. Change detector efficiency to 0.95
 
-
-Things to keep in mind:
-1. Correctness of your program is the number 1 priority
+To Do for today:
+1. Remove the error injected during BarretKok
+2. Make the TCNOT fault tolerant
+3. 

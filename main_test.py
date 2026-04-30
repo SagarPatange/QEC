@@ -42,9 +42,9 @@ def build_n_node_params() -> dict[str, object]:
         "num_logical_pairs": 1000,
         "link_distance_km": 1,
         "gate_fidelity": 1,
-        "two_qubit_gate_fidelity": 0.995,
+        "two_qubit_gate_fidelity": 1,
         "measurement_fidelity": 1,
-        "state_preparation_fidelity": 1,
+        "initialization_fidelity": 1,
         "gate_error_channel": "depolarize",
         "pauli_1q_weights": None,
         "pauli_2q_weights": None,
@@ -186,7 +186,7 @@ def create_logical_bell_pair(verbose=True):
         print(f'Total entanglements generated: {len(latencies)}')
 
 
-def three_node_logical_pair_with_app(verbose=False, config_file='config/line_3_2G.json', css_code="[[7,1,3]]"):
+def three_node_logical_pair_with_app(verbose=False, config_file='config/line_2_2G.json', css_code="[[7,1,3]]"):
     """Create a logical Bell pair between router_0 and router_2 via router_1.
 
     3-node linear chain: router_0 -- router_1 -- router_2
@@ -486,8 +486,8 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
             node["two_qubit_gate_fidelity"] = float(params["two_qubit_gate_fidelity"])
         if params["measurement_fidelity"] is not None:
             node["measurement_fidelity"] = float(params["measurement_fidelity"])
-        if params["state_preparation_fidelity"] is not None:
-            node["state_preparation_fidelity"] = float(params["state_preparation_fidelity"])
+        if params["initialization_fidelity"] is not None:
+            node["initialization_fidelity"] = float(params["initialization_fidelity"])
         if params["gate_error_channel"] is not None:
             node["gate_error_channel"] = str(params["gate_error_channel"])
         if pauli_1q_weights is not None:
@@ -527,7 +527,7 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
     tl.quantum_manager.gate_fid = getattr(routers[0], 'gate_fid', 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], 'two_qubit_gate_fid', 1.0)
     tl.quantum_manager.measurement_fid = getattr(routers[0], 'meas_fid', 1.0)
-    tl.quantum_manager.state_preparation_fid = getattr(routers[0], 'state_preparation_fid', 1.0)
+    tl.quantum_manager.initialization_fid = getattr(routers[0], 'initialization_fid', 1.0)
     if params["gate_error_channel"] is not None:
         tl.quantum_manager.gate_error_channel = str(params["gate_error_channel"])
     if pauli_1q_weights is not None:
@@ -536,10 +536,10 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
         tl.quantum_manager.pauli_2q_weights = tuple(float(w) for w in pauli_2q_weights)
 
     log.set_logger(__name__, tl, log_filename)
-    log.set_logger_level("WARNING")
+    log.set_logger_level("CRITICAL")
     # modules = ['timeline', 'network_manager', 'resource_manager', 'rule_manager', 'generation', 'purification', 'swapping', 'bsm', 'barret_kok', 'RequestLogicalPairApp', 'TeleportedCNOT', 'QREProtocol']
     # modules = ['barret_kok']
-    modules = ['RequestLogicalPairApp']
+    modules = ['RequestLogicalPairApp', 'quantum_manager', 'QREProtocol', 'TeleportedCNOT']
 
     for module in modules:
         log.track_module(module)
@@ -619,6 +619,8 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
             "avg_end_to_end_logical": float("nan"),
             "avg_end_to_end_logical_raw": float("nan"),
             "avg_end_to_end_logical_corrected": float("nan"),
+            "corrected_phi_plus_count": 0,
+            "corrected_other_bell_count": 0,
             "avg_latency_ps": float("nan"),
             "avg_latency_s": float("nan"),
             "avg_throughput_pairs_per_s": float("nan"),
@@ -667,6 +669,7 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
                     "fidelity": float(run_stats["final_end_to_end_fidelity"]) if run_stats["final_end_to_end_fidelity"] is not None else float("nan"),
                     "fidelity_raw": float(run_stats["final_end_to_end_fidelity_raw"]) if run_stats["final_end_to_end_fidelity_raw"] is not None else float("nan"),
                     "fidelity_corrected": float(run_stats["final_end_to_end_fidelity_corrected"]) if run_stats["final_end_to_end_fidelity_corrected"] is not None else float("nan"),
+                    "corrected_bell_state": str(run_stats["final_end_to_end_corrected_bell_state"]) if run_stats["final_end_to_end_corrected_bell_state"] is not None else "",
                     "latency_ps": latency_ps if latency_ps is not None else float("nan"),
                     "latency_s": latency_s,
                     "throughput_pairs_per_s": throughput_pairs_per_s,
@@ -690,6 +693,9 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
             metrics["avg_end_to_end_logical_raw"] = float(np.mean(e2e_raw_values))
         if e2e_corrected_values:
             metrics["avg_end_to_end_logical_corrected"] = float(np.mean(e2e_corrected_values))
+        corrected_bell_states = [str(r["corrected_bell_state"]) for r in metrics["end_to_end_rows"] if str(r["corrected_bell_state"]) != ""]
+        metrics["corrected_phi_plus_count"] = sum(1 for bell_state in corrected_bell_states if bell_state == "phi_plus")
+        metrics["corrected_other_bell_count"] = sum(1 for bell_state in corrected_bell_states if bell_state != "phi_plus")
         if latency_values:
             metrics["avg_latency_ps"] = float(np.mean(latency_values))
             metrics["avg_latency_s"] = metrics["avg_latency_ps"] * 1e-12
@@ -733,6 +739,10 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
             print(f"{'Avg':>4} {metrics['avg_end_to_end_logical_raw']:>10.4f} {metrics['avg_end_to_end_logical_corrected']:>10.4f} {metrics['avg_latency_ps']:>14.0f} {metrics['avg_latency_ps'] * 1e-9:>14.6f} {metrics['avg_throughput_pairs_per_s']:>14.6e}")
         if not np.isnan(metrics["avg_end_to_end_logical"]):
             print(f"Avg end-to-end ({node_names[0]} <-> {node_names[-1]}): raw={metrics['avg_end_to_end_logical_raw']:.4f} | corrected={metrics['avg_end_to_end_logical_corrected']:.4f}")
+            print(
+                f"Corrected Bell states ({node_names[0]} <-> {node_names[-1]}): "
+                f"phi_plus={metrics['corrected_phi_plus_count']} | other={metrics['corrected_other_bell_count']}"
+            )
         if not np.isnan(metrics["avg_latency_ps"]):
             print(f"Avg latency: {metrics['avg_latency_ps']:.0f} ps ({metrics['avg_latency_s']:.6e} s, {metrics['avg_latency_ps'] * 1e-9:.6f} ms)")
             print(f"Avg throughput: {metrics['avg_throughput_pairs_per_s']:.6e} pairs/s")
@@ -758,19 +768,23 @@ def split_pair_counts(total_pairs: int, workers: int) -> list[int]:
     return [base + (1 if i < extra else 0) for i in range(workers)]
 
 
-def run_n_node_worker(worker_index: int, pair_count: int, base_log_filename: str) -> dict[str, object]:
+def run_n_node_worker(worker_index: int, pair_count: int, base_log_filename: str,
+                      param_overrides: dict[str, object] | None = None) -> dict[str, object]:
     """Run one independent N-node simulation worker.
 
     Args:
         worker_index: Worker index for unique log naming.
         pair_count: Number of logical pairs assigned to this worker.
         base_log_filename: Base log filename shared by all workers.
+        param_overrides: Optional run-parameter overrides applied on top of defaults.
 
     Returns:
         dict[str, object]: Metrics dictionary for the worker.
     """
     params = build_n_node_params()
     params["num_logical_pairs"] = pair_count
+    if param_overrides is not None:
+        params.update(param_overrides)
 
     result = n_node_logical_pair_with_app(
         verbose=False,
@@ -782,13 +796,15 @@ def run_n_node_worker(worker_index: int, pair_count: int, base_log_filename: str
     return result["metrics"]
 
 
-def run_parallel_n_node_trials(total_pairs: int, workers: int, log_filename: str) -> list[dict[str, object]]:
+def run_parallel_n_node_trials(total_pairs: int, workers: int, log_filename: str,
+                               param_overrides: dict[str, object] | None = None) -> list[dict[str, object]]:
     """Run multiple independent N-node simulations in parallel.
 
     Args:
         total_pairs: Total logical-pair budget across all workers.
         workers: Number of worker processes.
         log_filename: Base log filename shared by all workers.
+        param_overrides: Optional run-parameter overrides applied to every worker.
 
     Returns:
         list[dict[str, object]]: Per-worker metrics.
@@ -796,7 +812,7 @@ def run_parallel_n_node_trials(total_pairs: int, workers: int, log_filename: str
     pair_counts = split_pair_counts(total_pairs, workers)
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = [
-            executor.submit(run_n_node_worker, worker_index, pair_count, log_filename)
+            executor.submit(run_n_node_worker, worker_index, pair_count, log_filename, param_overrides)
             for worker_index, pair_count in enumerate(pair_counts)
             if pair_count > 0
         ]
@@ -866,6 +882,12 @@ def summarize_parallel_worker_metrics(worker_metrics: list[dict[str, object]]) -
         for row in metrics["end_to_end_rows"]
         if not np.isnan(row["throughput_pairs_per_s"])
     ]
+    corrected_bell_states = [
+        str(row["corrected_bell_state"])
+        for metrics in worker_metrics
+        for row in metrics["end_to_end_rows"]
+        if str(row["corrected_bell_state"]) != ""
+    ]
 
     return {
         "num_workers": len(worker_metrics),
@@ -873,6 +895,8 @@ def summarize_parallel_worker_metrics(worker_metrics: list[dict[str, object]]) -
         "num_logical_pairs_completed": completed_pairs,
         "avg_end_to_end_logical_raw": float(np.mean(raw_values)) if raw_values else float("nan"),
         "avg_end_to_end_logical_corrected": float(np.mean(corrected_values)) if corrected_values else float("nan"),
+        "corrected_phi_plus_count": sum(1 for bell_state in corrected_bell_states if bell_state == "phi_plus"),
+        "corrected_other_bell_count": sum(1 for bell_state in corrected_bell_states if bell_state != "phi_plus"),
         "avg_latency_ps": float(np.mean(latency_values)) if latency_values else float("nan"),
         "avg_latency_s": float(np.mean(latency_values)) * 1e-12 if latency_values else float("nan"),
         "avg_throughput_pairs_per_s": float(np.mean(throughput_values)) if throughput_values else float("nan"),
@@ -899,32 +923,44 @@ def print_parallel_run_summary(summary: dict[str, float | int]) -> None:
         f"corrected={summary['avg_end_to_end_logical_corrected']:.4f}"
     )
     print(
+        f"Corrected Bell states: phi_plus={summary['corrected_phi_plus_count']} | "
+        f"other={summary['corrected_other_bell_count']}"
+    )
+    print(
         f"Avg latency: {summary['avg_latency_ps']:.0f} ps "
         f"({summary['avg_latency_s']:.6e} s, {summary['avg_latency_ps'] * 1e-9:.6f} ms)"
     )
     print(f"Avg throughput: {summary['avg_throughput_pairs_per_s']:.6e} pairs/s")
 
 if __name__ == "__main__":
-
     start = time.time()
     print("main start ...")
-    # ----- N-node runs -----
-    total_pairs = 1080
-    workers = 12
-    base_log_filename = "log/n_node_logical_pair"
-    worker_metrics = run_parallel_n_node_trials(
-        total_pairs=total_pairs,
-        workers=workers,
-        log_filename=base_log_filename,
-    )
-    merged_log = merge_worker_logs(base_log_filename, workers)
-    combined_summary = summarize_parallel_worker_metrics(worker_metrics)
-    print_parallel_run_summary(combined_summary)
-    print(f"merged log: {merged_log}")
 
-    # Add more N-node runs as needed:
-    # n_node_logical_pair_with_app(verbose=True)
+    twoq_sweep = [0.4]
+    total_pairs = 1000
+    workers = 10
+    base_log_filename = "log/main_test_logs/n_node_logical_pair"
+    results: list[dict[str, float]] = []
 
+    for twoq in twoq_sweep:
+        print(f"\n=== Sweep point: two_qubit_gate_fidelity={twoq} ===")
+        worker_metrics = run_parallel_n_node_trials(
+            total_pairs=total_pairs,
+            workers=workers,
+            log_filename=f"{base_log_filename}_twoq_{twoq}",
+            param_overrides={"two_qubit_gate_fidelity": float(twoq)},
+        )
+        combined = summarize_parallel_worker_metrics(worker_metrics)
+        print_parallel_run_summary(combined)
+        results.append({
+            "twoq": float(twoq),
+            "raw": float(combined["avg_end_to_end_logical_raw"]),
+            "corrected": float(combined["avg_end_to_end_logical_corrected"]),
+        })
+
+    print("\ntwoq_fid   raw       corrected")
+    for r in results:
+        print(f"{r['twoq']:.4f}    {r['raw']:.4f}    {r['corrected']:.4f}")
 
     end = time.time()
     print(f"\nMain execution time: {end - start:.2f} seconds")
