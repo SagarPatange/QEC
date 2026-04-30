@@ -419,12 +419,10 @@ def five_node_logical_pair_with_app(verbose=False, config_file='config/line_5_2G
     final_app = apps[node_names[0]]
     if final_app.current_run["final_end_to_end_fidelity"] is not None:
         metrics["end_to_end_logical"] = float(final_app.current_run["final_end_to_end_fidelity"])
-        metrics["end_to_end_logical_raw"] = float(final_app.current_run["final_end_to_end_fidelity_raw"])
         metrics["end_to_end_logical_corrected"] = float(final_app.current_run["final_end_to_end_fidelity_corrected"])
         print("\nEnd-to-End")
         print(
             f"{node_names[0]} <-> {node_names[-1]} | "
-            f"raw={final_app.current_run['final_end_to_end_fidelity_raw']:.6f} | "
             f"corrected={final_app.current_run['final_end_to_end_fidelity_corrected']:.6f}"
         )
 
@@ -667,7 +665,6 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
                 metrics["end_to_end_rows"].append({
                     "run_id": int(run_id),
                     "fidelity": float(run_stats["final_end_to_end_fidelity"]) if run_stats["final_end_to_end_fidelity"] is not None else float("nan"),
-                    "fidelity_raw": float(run_stats["final_end_to_end_fidelity_raw"]) if run_stats["final_end_to_end_fidelity_raw"] is not None else float("nan"),
                     "fidelity_corrected": float(run_stats["final_end_to_end_fidelity_corrected"]) if run_stats["final_end_to_end_fidelity_corrected"] is not None else float("nan"),
                     "corrected_bell_state": str(run_stats["final_end_to_end_corrected_bell_state"]) if run_stats["final_end_to_end_corrected_bell_state"] is not None else "",
                     "latency_ps": latency_ps if latency_ps is not None else float("nan"),
@@ -683,14 +680,11 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
         if logical_values:
             metrics["avg_link_logical"] = float(np.mean(logical_values))
         e2e_values = [r["fidelity"] for r in metrics["end_to_end_rows"] if not np.isnan(r["fidelity"])]
-        e2e_raw_values = [r["fidelity_raw"] for r in metrics["end_to_end_rows"] if not np.isnan(r["fidelity_raw"])]
         e2e_corrected_values = [r["fidelity_corrected"] for r in metrics["end_to_end_rows"] if not np.isnan(r["fidelity_corrected"])]
         latency_values = [r["latency_ps"] for r in metrics["end_to_end_rows"] if not np.isnan(r["latency_ps"])]
         throughput_values = [r["throughput_pairs_per_s"] for r in metrics["end_to_end_rows"] if not np.isnan(r["throughput_pairs_per_s"])]
         if e2e_values:
             metrics["avg_end_to_end_logical"] = float(np.mean(e2e_values))
-        if e2e_raw_values:
-            metrics["avg_end_to_end_logical_raw"] = float(np.mean(e2e_raw_values))
         if e2e_corrected_values:
             metrics["avg_end_to_end_logical_corrected"] = float(np.mean(e2e_corrected_values))
         corrected_bell_states = [str(r["corrected_bell_state"]) for r in metrics["end_to_end_rows"] if str(r["corrected_bell_state"]) != ""]
@@ -730,15 +724,15 @@ def n_node_logical_pair_with_app(verbose: bool = False, config_file: str = "conf
             print(f"\nAverages: phys={metrics['avg_initial_phys']:.4f} | logical={metrics['avg_link_logical']:.4f}")
         if verbose and metrics["end_to_end_rows"]:
             print(f"\nLogical Pair Runs ({node_names[0]} <-> {node_names[-1]})")
-            header = f"{'Run':>4} {'Raw Fid':>10} {'Corr Fid':>10} {'Latency (ps)':>14} {'Latency (ms)':>14} {'Throughput':>14}"
+            header = f"{'Run':>4} {'Corr Fid':>10} {'Latency (ps)':>14} {'Latency (ms)':>14} {'Throughput':>14}"
             print(header)
             print("-" * len(header))
             for row in metrics["end_to_end_rows"]:
-                print(f"{row['run_id']:>4d} {row['fidelity_raw']:>10.4f} {row['fidelity_corrected']:>10.4f} {row['latency_ps']:>14.0f} {row['latency_ps'] * 1e-9:>14.6f} {row['throughput_pairs_per_s']:>14.6e}")
+                print(f"{row['run_id']:>4d} {row['fidelity_corrected']:>10.4f} {row['latency_ps']:>14.0f} {row['latency_ps'] * 1e-9:>14.6f} {row['throughput_pairs_per_s']:>14.6e}")
 
-            print(f"{'Avg':>4} {metrics['avg_end_to_end_logical_raw']:>10.4f} {metrics['avg_end_to_end_logical_corrected']:>10.4f} {metrics['avg_latency_ps']:>14.0f} {metrics['avg_latency_ps'] * 1e-9:>14.6f} {metrics['avg_throughput_pairs_per_s']:>14.6e}")
+            print(f"{'Avg':>4} {metrics['avg_end_to_end_logical_corrected']:>10.4f} {metrics['avg_latency_ps']:>14.0f} {metrics['avg_latency_ps'] * 1e-9:>14.6f} {metrics['avg_throughput_pairs_per_s']:>14.6e}")
         if not np.isnan(metrics["avg_end_to_end_logical"]):
-            print(f"Avg end-to-end ({node_names[0]} <-> {node_names[-1]}): raw={metrics['avg_end_to_end_logical_raw']:.4f} | corrected={metrics['avg_end_to_end_logical_corrected']:.4f}")
+            print(f"Avg end-to-end ({node_names[0]} <-> {node_names[-1]}): corrected={metrics['avg_end_to_end_logical_corrected']:.4f}")
             print(
                 f"Corrected Bell states ({node_names[0]} <-> {node_names[-1]}): "
                 f"phi_plus={metrics['corrected_phi_plus_count']} | other={metrics['corrected_other_bell_count']}"
@@ -858,12 +852,6 @@ def summarize_parallel_worker_metrics(worker_metrics: list[dict[str, object]]) -
     completed_pairs = sum(int(m["num_logical_pairs_completed"]) for m in worker_metrics)
     requested_pairs = sum(int(m["num_logical_pairs_requested"]) for m in worker_metrics)
 
-    raw_values = [
-        float(row["fidelity_raw"])
-        for metrics in worker_metrics
-        for row in metrics["end_to_end_rows"]
-        if not np.isnan(row["fidelity_raw"])
-    ]
     corrected_values = [
         float(row["fidelity_corrected"])
         for metrics in worker_metrics
@@ -893,7 +881,6 @@ def summarize_parallel_worker_metrics(worker_metrics: list[dict[str, object]]) -
         "num_workers": len(worker_metrics),
         "num_logical_pairs_requested": requested_pairs,
         "num_logical_pairs_completed": completed_pairs,
-        "avg_end_to_end_logical_raw": float(np.mean(raw_values)) if raw_values else float("nan"),
         "avg_end_to_end_logical_corrected": float(np.mean(corrected_values)) if corrected_values else float("nan"),
         "corrected_phi_plus_count": sum(1 for bell_state in corrected_bell_states if bell_state == "phi_plus"),
         "corrected_other_bell_count": sum(1 for bell_state in corrected_bell_states if bell_state != "phi_plus"),
@@ -919,8 +906,7 @@ def print_parallel_run_summary(summary: dict[str, float | int]) -> None:
         f"completed={summary['num_logical_pairs_completed']}"
     )
     print(
-        f"Avg end-to-end: raw={summary['avg_end_to_end_logical_raw']:.4f} | "
-        f"corrected={summary['avg_end_to_end_logical_corrected']:.4f}"
+        f"Avg end-to-end: corrected={summary['avg_end_to_end_logical_corrected']:.4f}"
     )
     print(
         f"Corrected Bell states: phi_plus={summary['corrected_phi_plus_count']} | "

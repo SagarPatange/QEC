@@ -6,6 +6,7 @@ quantum repeater with encoding (QRE) workflow.
 
 from __future__ import annotations
 
+import stim
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 from sequence.message import Message
@@ -14,7 +15,6 @@ from sequence.utils import log
 from sequence.kernel.event import Event
 from sequence.kernel.process import Process
 from sequence.topology.node import QuantumRouter2ndGeneration
-from sequence.components.circuit import Circuit
 
 if TYPE_CHECKING:
     from RequestLogicalPairApp import RequestLogicalPairApp
@@ -125,7 +125,7 @@ class QREProtocol(Protocol):
         # Starting phase
         self.is_running = True
         self.current_phase = "START"
-        log.logger.info(f"{self.name}: start role middle={self.is_middle} initiator={self.is_initiator} phase={self.current_phase}")
+        # log.logger.info(f"{self.name}: start role middle={self.is_middle} initiator={self.is_initiator} phase={self.current_phase}")
 
         # Record the local data/ancilla assignments at start to avoid later allocation changes affecting this run.
         left_peer = self.app._left_peer_name
@@ -146,7 +146,7 @@ class QREProtocol(Protocol):
             self.local_data_keys = list(self.left_data_keys)
         else:
             self.local_data_keys = []
-        log.logger.info(f"{self.name}: qre_start run_id={self.app.current_run['run_id']} initiator={self.is_initiator} middle={self.is_middle} expected_updates={self.expected_frame_updates} local_data_keys={self.local_data_keys}")
+        # log.logger.info(f"{self.name}: qre_start run_id={self.app.current_run['run_id']} initiator={self.is_initiator} middle={self.is_middle} expected_updates={self.expected_frame_updates} local_data_keys={self.local_data_keys}")
 
         # Initiator owns the frame accumulator, so reset it per attempt.
         if self.is_initiator:
@@ -160,7 +160,7 @@ class QREProtocol(Protocol):
             priority = self.owner.timeline.schedule_counter
             event = Event(time_now, process, priority)
             self.owner.timeline.schedule(event)
-            log.logger.info(f"{self.name}: scheduling run_encoded_swapping")
+            # log.logger.info(f"{self.name}: scheduling run_encoded_swapping")
             return
 
         # Initiator endpoint waits for frame updates from middle nodes.
@@ -176,13 +176,13 @@ class QREProtocol(Protocol):
                 return
 
             self.current_phase = "WAIT_FRAME_BITS"
-            log.logger.info(f"{self.name}: waiting for frame bits expected={self.expected_frame_updates}")
+            # log.logger.info(f"{self.name}: waiting for frame bits expected={self.expected_frame_updates}")
             return
 
         # End responder completes immediately in this message flow.
         self.result = { "final_bx": 0, "final_bz": 0, "frame_updates_received": 0,}
         self.current_phase = "ENDPOINT_COMPLETE"
-        log.logger.info(f"{self.name}: endpoint completes immediately")
+        # log.logger.info(f"{self.name}: endpoint completes immediately")
         time_now = self.owner.timeline.now()
         process = Process(self, "complete_qre", [])
         priority = self.owner.timeline.schedule_counter
@@ -245,27 +245,28 @@ class QREProtocol(Protocol):
             left_qec = self.run_qec_cycle(self.left_data_keys, self.left_ancilla_keys)
             right_qec = self.run_qec_cycle(self.right_data_keys, self.right_ancilla_keys)
             pre_swap_duration_ps = int(left_qec.get("duration_ps", 0)) + int(right_qec.get("duration_ps", 0))
-            log.logger.info(f"{self.name}: pre_swap_qec left_x={left_qec['x_syndrome']} left_z={left_qec['z_syndrome']} right_x={right_qec['x_syndrome']} right_z={right_qec['z_syndrome']}")
+            # log.logger.info(f"{self.name}: pre_swap_qec left_x={left_qec['x_syndrome']} left_z={left_qec['z_syndrome']} right_x={right_qec['x_syndrome']} right_z={right_qec['z_syndrome']}")
 
-        circ = Circuit(2 * self.n)
+        circ = stim.Circuit()
 
         # 1) Build encoded Bell-measurement circuit: transversal CX plus block measurements.
         for i in range(self.n):
-            circ.cx(i, self.n + i)
+            circ.append("CX", [i, self.n + i])
 
         # Left block measured in X basis (H+M); right block measured in Z basis (M).
         for i in range(self.n):
-            circ.h(i)
-            circ.measure(i)
+            circ.append("H", [i])
+            circ.append("M", [i])
         for i in range(self.n):
-            circ.measure(self.n + i)
+            circ.append("M", [self.n + i])
 
         meas_samp = self.owner.get_generator().random()
         # Execute the encoded Bell-basis measurement across both blocks.
-        results = qm.run_circuit(circ, run_keys, meas_samp, inject_gate_error=False)
+        results = qm.run_circuit(circ, run_keys, meas_samp, inject_gate_error=True)
+        swap_duration_ps = qm.get_circuit_duration(circ)
         # Delay swap outputs by the full local pre-swap processing time.
-        finish_t = int(self.owner.timeline.now()) + pre_swap_duration_ps + qm.get_circuit_duration(circ)
-        log.logger.info(f"{self.name}: swap_timing now={int(self.owner.timeline.now())} pre_swap_duration_ps={pre_swap_duration_ps} swap_duration_ps={qm.get_circuit_duration(circ)} finish_t={finish_t}")
+        finish_t = int(self.owner.timeline.now()) + pre_swap_duration_ps + swap_duration_ps
+        # log.logger.info(f"{self.name}: swap_timing now={int(self.owner.timeline.now())} pre_swap_duration_ps={pre_swap_duration_ps} swap_duration_ps={qm.get_circuit_duration(circ)} finish_t={finish_t}")
         # Mark both local data blocks busy until the swap circuit is considered complete.
         for key in run_keys:
             qm.last_idle_time_ps_by_key[key] = finish_t
@@ -276,16 +277,16 @@ class QREProtocol(Protocol):
 
         # Decode raw swap outcomes into corrected frame contributions.
         decoded = self.app.code.decode_middle_bsm(left_x_bits, right_z_bits, self.correction_mode)
-        log.logger.info(f"{self.name}: swap_decode raw_left_x={left_x_bits} raw_right_z={right_z_bits} s_x={decoded['s_x']} s_z={decoded['s_z']} x_flip={decoded['x_flip_qubit']} z_flip={decoded['z_flip_qubit']} x_corrected={decoded['x_corrected']} z_corrected={decoded['z_corrected']} b_x_corrected={decoded['b_x_corrected']} b_z_corrected={decoded['b_z_corrected']}")
+        # log.logger.info(f"{self.name}: swap_decode raw_left_x={left_x_bits} raw_right_z={right_z_bits} s_x={decoded['s_x']} s_z={decoded['s_z']} x_flip={decoded['x_flip_qubit']} z_flip={decoded['z_flip_qubit']} x_corrected={decoded['x_corrected']} z_corrected={decoded['z_corrected']} b_x_corrected={decoded['b_x_corrected']} b_z_corrected={decoded['b_z_corrected']}")
 
         # 2) Decode Steane syndromes and map corrected parities to frame contributions.
         # Frame convention: frame_bx <- corrected Z parity, frame_bz <- corrected X parity.
         self.bx = int(decoded["b_z_corrected"])
         self.bz = int(decoded["b_x_corrected"])
-        log.logger.info(f"{self.name}: frame_mapping b_x_corrected={decoded['b_x_corrected']} b_z_corrected={decoded['b_z_corrected']} mapped_bx={self.bx} mapped_bz={self.bz}")
+        # log.logger.info(f"{self.name}: frame_mapping b_x_corrected={decoded['b_x_corrected']} b_z_corrected={decoded['b_z_corrected']} mapped_bx={self.bx} mapped_bz={self.bz}")
         self.s_x = list(decoded["s_x"])
         self.s_z = list(decoded["s_z"])
-        log.logger.info(f"{self.name}: swap decoded frame_contrib_bx={self.bx} frame_contrib_bz={self.bz}")
+        # log.logger.info(f"{self.name}: swap decoded frame_contrib_bx={self.bx} frame_contrib_bz={self.bz}")
 
         self.current_phase = "SWAP_COMPLETE"
 
@@ -302,7 +303,7 @@ class QREProtocol(Protocol):
             process = Process(self.owner, "send_message", [initiator_name, msg])
             event = Event(finish_t, process, self.owner.timeline.schedule_counter)
             self.owner.timeline.schedule(event)
-            log.logger.info(f"{self.name}: emit_frame_update run_id={self.app.current_run['run_id']} initiator={initiator_name} bx={self.bx} bz={self.bz}")
+            # log.logger.info(f"{self.name}: emit_frame_update run_id={self.app.current_run['run_id']} initiator={initiator_name} bx={self.bx} bz={self.bz}")
 
         # Middle-node QRE completes after sending its frame contribution.
         self.result = {"frame_contrib_bx": int(self.bx), "frame_contrib_bz": int(self.bz)}
@@ -354,7 +355,7 @@ class QREProtocol(Protocol):
         self.bx = int(bx)
         self.bz = int(bz)
         self.app.current_run["frame_updates_by_src"][src] = (self.bx, self.bz)
-        log.logger.info(f"{self.name}: frame_accumulate run_id={self.app.current_run['run_id']} src={src} stored={self.app.current_run['frame_updates_by_src']} count={len(self.app.current_run['frame_updates_by_src'])}/{self.expected_frame_updates}")
+        # log.logger.info(f"{self.name}: frame_accumulate run_id={self.app.current_run['run_id']} src={src} stored={self.app.current_run['frame_updates_by_src']} count={len(self.app.current_run['frame_updates_by_src'])}/{self.expected_frame_updates}")
 
         # Wait until all middle-node contributions for this attempt are available.
         if len(self.app.current_run["frame_updates_by_src"]) != self.expected_frame_updates:
@@ -362,7 +363,7 @@ class QREProtocol(Protocol):
 
         final_bx = sum(bx for bx, _ in self.app.current_run["frame_updates_by_src"].values()) % 2
         final_bz = sum(bz for _, bz in self.app.current_run["frame_updates_by_src"].values()) % 2
-        log.logger.info(f"{self.name}: frame_final run_id={self.app.current_run['run_id']} final_bx={final_bx} final_bz={final_bz} local_data_keys={self.local_data_keys}")
+        # log.logger.info(f"{self.name}: frame_final run_id={self.app.current_run['run_id']} final_bx={final_bx} final_bz={final_bz} local_data_keys={self.local_data_keys}")
         self.app.record_pre_final_frame_fidelity()
         finish_t = int(self.owner.timeline.now())
         # Apply final logical frame on the local endpoint block when non-trivial.
@@ -371,17 +372,18 @@ class QREProtocol(Protocol):
             now_ps = int(self.owner.timeline.now())
             if self.idle_decoherence_enabled:
                 self.owner.timeline.quantum_manager.apply_idling_decoherence(keys=self.local_data_keys, now_ps=now_ps, t1_sec=self.idle_t1_sec, t2_sec=self.idle_t2_sec)
-            correction_circuit = Circuit(len(self.local_data_keys))
+            correction_circuit = stim.Circuit()
             for i in range(len(self.local_data_keys)):
                 if final_bx:
-                    correction_circuit.x(i)
+                    correction_circuit.append("X", [i])
                 if final_bz:
-                    correction_circuit.z(i)
-            log.logger.info(f"{self.name}: apply_final_frame final_bx={final_bx} final_bz={final_bz} local_data_keys={self.local_data_keys}")
-            self.owner.timeline.quantum_manager.run_circuit(correction_circuit, self.local_data_keys, inject_gate_error=False)
+                    correction_circuit.append("Z", [i])
+            # log.logger.info(f"{self.name}: apply_final_frame final_bx={final_bx} final_bz={final_bz} local_data_keys={self.local_data_keys}")
+            self.owner.timeline.quantum_manager.run_circuit(correction_circuit, self.local_data_keys, inject_gate_error=True)
+            correction_duration_ps = self.owner.timeline.quantum_manager.get_circuit_duration(correction_circuit)
             # Delay endpoint completion by the estimated local frame-correction time.
-            finish_t = int(self.owner.timeline.now()) + self.owner.timeline.quantum_manager.get_circuit_duration(correction_circuit)
-            log.logger.info(f"{self.name}: final_frame_timing now={int(self.owner.timeline.now())} duration_ps={self.owner.timeline.quantum_manager.get_circuit_duration(correction_circuit)} finish_t={finish_t}")
+            finish_t = int(self.owner.timeline.now()) + correction_duration_ps
+            # log.logger.info(f"{self.name}: final_frame_timing now={int(self.owner.timeline.now())} duration_ps={self.owner.timeline.quantum_manager.get_circuit_duration(correction_circuit)} finish_t={finish_t}")
             # Mark the endpoint block busy until the frame correction is considered complete.
             for key in self.local_data_keys:
                 self.owner.timeline.quantum_manager.last_idle_time_ps_by_key[key] = finish_t
@@ -406,7 +408,7 @@ class QREProtocol(Protocol):
         # Mark the QRE attempt as successful.
         self.is_success = True
         self.current_phase = "COMPLETE"
-        log.logger.info(f"{self.name}: COMPLETE result={self.result}")
+        # log.logger.info(f"{self.name}: COMPLETE result={self.result}")
 
         # Schedule the completion event.
         time_now = self.owner.timeline.now()

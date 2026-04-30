@@ -1,5 +1,6 @@
 import argparse
 import json
+import numpy as np
 import os
 import sys
 import tempfile
@@ -156,10 +157,8 @@ def main() -> None:
         f"gate={gate_tag},twoq={twoq_tag},meas={meas_tag},prep={prep_tag},T1={t1_tag},T2={t2_tag},"
         f"ft={ft_tag},pauli={pauli_tag},ccorr={correction_tag},physbell={phys_bell_tag},ts={timestamp_tag}"
     )
-
     log.set_logger(__name__, tl, log_filename)
     log.set_logger_level(args.log_level)
-    # modules = ["main"]
     modules = ["RequestLogicalPairApp"]
     for module in modules:
         log.track_module(module)
@@ -168,11 +167,15 @@ def main() -> None:
     routers = network_topo.get_nodes_by_type(RouterNetTopo2G.QUANTUM_ROUTER)
     routers.sort(key=lambda router: int(router.name.split("_")[-1]))
     node_names = [router.name for router in routers]
+    quantum_router_seed = next((int(node["seed"]) for node in config["nodes"] if node.get("type") == "QuantumRouter" and "seed" in node), int(args.seed_offset))
     # Mirror router-level hardware parameters onto the shared tableau quantum manager.
     tl.quantum_manager.gate_fid = getattr(routers[0], "gate_fid", 1.0)
     tl.quantum_manager.two_qubit_gate_fid = getattr(routers[0], "two_qubit_gate_fid", 1.0)
     tl.quantum_manager.measurement_fid = getattr(routers[0], "meas_fid", 1.0)
     tl.quantum_manager.initialization_fid = getattr(routers[0], "initialization_fid", 1.0)
+    tl.quantum_manager.base_seed = quantum_router_seed
+    tl.quantum_manager._seed_counter = 0
+    tl.quantum_manager.branch_rng = np.random.default_rng(quantum_router_seed)
     if args.gate_error_channel is not None:
         tl.quantum_manager.gate_error_channel = args.gate_error_channel
     if args.pauli_1q_weights is not None:
@@ -215,7 +218,7 @@ def main() -> None:
         f"executed_events={tl.run_counter} remaining_events={len(tl.events)}"
     )
     print(timing_line, flush=True)
-    completed_line = f"completed_runs={len(name_to_apps[node_names[0]].run_stats)}"
+    completed_line = f"completed_runs={name_to_apps[node_names[0]].completed_run_count}"
     print(completed_line)
 
     # fidelity_dict = defaultdict(float)
