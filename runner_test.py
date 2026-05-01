@@ -17,7 +17,7 @@ CONFIG_FILES = [
 BASE_ARGS = [
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "0.8",
-        "--num_logical_pairs", "50000",
+        "--num_logical_pairs", "2000",
         "--link_distance_km", "0.001",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
@@ -119,7 +119,7 @@ def test_graph_two_qubit_gate_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    run_tasks(tasks, parallel=10)
 
 
 def test_graph_one_qubit_gate_sweep() -> None:
@@ -151,7 +151,7 @@ def test_graph_one_qubit_gate_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    run_tasks(tasks, parallel=10)
 
 
 def test_graph_measurement_fidelity_sweep() -> None:
@@ -183,7 +183,7 @@ def test_graph_measurement_fidelity_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    run_tasks(tasks, parallel=10)
 
 
 def test_graph_initialization_fidelity_sweep() -> None:
@@ -214,7 +214,7 @@ def test_graph_initialization_fidelity_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    run_tasks(tasks, parallel=10)
 
 
 def test_t2_sweep() -> None:
@@ -245,7 +245,7 @@ def test_t2_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    run_tasks(tasks, parallel=20)
 
 
 def test_graph_physical_bell_pair_fidelity_sweep() -> None:
@@ -274,7 +274,7 @@ def test_graph_physical_bell_pair_fidelity_sweep() -> None:
                     "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    run_tasks(tasks, parallel=10)
 
 
 
@@ -282,10 +282,10 @@ if __name__ == "__main__":
 
     # Test sweeps
 
-    # test_t2_sweep()
+    test_t2_sweep()
     # test_graph_physical_bell_pair_fidelity_sweep()
     # test_graph_two_qubit_gate_sweep()
     # test_graph_one_qubit_gate_sweep()
     # test_graph_measurement_fidelity_sweep()
-    test_graph_initialization_fidelity_sweep()
+    # test_graph_initialization_fidelity_sweep()
 
