@@ -103,6 +103,12 @@ class RequestLogicalPairApp:
         self.sum_latency_ps = 0
         self.scheduled_run_starts: list[int] = []
         self.next_run_id = 1
+        self._initiator_responder: str | None = None
+        self._initiator_fidelity = 0.0
+        self._initiator_run_duration_ps = 0
+        self._initiator_round_spacing_ps = 0
+        self._initiator_runs_remaining = 0
+        self._initiator_next_start_t: int | None = None
 
         # FT preparation setting used by encode_data_qubits.
         self.ft_prep_mode = getattr(node, "ft_prep_mode", "none")
@@ -330,25 +336,46 @@ class RequestLogicalPairApp:
             raise RuntimeError(f"{self.name}: num_logical_pairs must be >= 1")
 
         run_duration_ps = int(end_t) - int(start_t)
+        self._initiator_responder = responder
+        self._initiator_fidelity = float(fidelity)
+        self._initiator_run_duration_ps = run_duration_ps
+        self._initiator_round_spacing_ps = round_spacing_ps
+        self._initiator_runs_remaining = int(num_logical_pairs)
+        self._initiator_next_start_t = int(start_t)
+        self._schedule_next_initiator_run()
 
-        # Schedule each logical-pair attempt as its own non-overlapping run window.
-        for run_index in range(num_logical_pairs):
-            run_start_t = int(start_t) + run_index * (run_duration_ps + round_spacing_ps)
-            run_end_t = run_start_t + run_duration_ps
-            self.scheduled_run_starts.append(run_start_t)
+    def _schedule_next_initiator_run(self) -> bool:
+        """Schedule the next initiator-side run window if one remains.
 
-            if self._path_position == 0:
-                # reset_process = Process(self.node.timeline.quantum_manager, "reset_error_statistics", [])
-                # reset_event = Event(run_start_t, reset_process, self.node.timeline.schedule_counter)
-                # self.node.timeline.schedule(reset_event)
-                pass
+        Args:
+            None.
 
-            process = Process(self, "begin_run", [run_start_t, run_end_t])
-            event = Event(run_start_t, process, self.node.timeline.schedule_counter)
-            self.node.timeline.schedule(event)
+        Returns:
+            bool: ``True`` if a new run window was scheduled.
+        """
+        if self._initiator_responder is None or self._initiator_next_start_t is None:
+            return False
+        if self._initiator_runs_remaining < 1:
+            return False
 
-            # Reserve the matching network resources for the same run window.
-            self.node.reserve_net_resource(responder, run_start_t, run_end_t, self.n, fidelity)
+        run_start_t = int(self._initiator_next_start_t)
+        run_end_t = run_start_t + int(self._initiator_run_duration_ps)
+        self.scheduled_run_starts.append(run_start_t)
+
+        process = Process(self, "begin_run", [run_start_t, run_end_t])
+        event = Event(run_start_t, process, self.node.timeline.schedule_counter)
+        self.node.timeline.schedule(event)
+        self.node.reserve_net_resource(
+            self._initiator_responder,
+            run_start_t,
+            run_end_t,
+            self.n,
+            float(self._initiator_fidelity),
+        )
+
+        self._initiator_runs_remaining -= 1
+        self._initiator_next_start_t = run_start_t + int(self._initiator_run_duration_ps) + int(self._initiator_round_spacing_ps)
+        return True
 
     def received_message(self, src: str, msg: object) -> bool:
         """Route incoming messages to active protocols.
@@ -1256,13 +1283,17 @@ class RequestLogicalPairApp:
         if self._path_position == 0:
             self._log_critical_run_summary(run_id, latency_ps)
 
+        if self._initiator_responder is not None:
+            self._schedule_next_initiator_run()
+
         current_start_t = int(self.current_run["start_time"]) if self.current_run["start_time"] is not None else -1
         current_end_t = int(self.current_run["end_time"]) if self.current_run["end_time"] is not None else int(self.node.timeline.now())
         next_start_t = min((start_t for start_t in self.scheduled_run_starts if start_t > current_start_t), default=None)
+        now_ps = int(self.node.timeline.now())
         if next_start_t is None:
-            cleanup_time = current_end_t
+            cleanup_time = max(now_ps, current_end_t)
         else:
-            cleanup_time = max(0, int(next_start_t) - 1)
+            cleanup_time = max(now_ps, int(next_start_t) - 1)
 
         process = Process(self, "reset_run", [])
         event = Event(cleanup_time, process, self.node.timeline.schedule_counter)

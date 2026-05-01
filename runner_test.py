@@ -5,7 +5,7 @@ import select
 from pathlib import Path
 from subprocess import PIPE, STDOUT, Popen
 
-LOG_ROOT = "log/runner_April30th"
+LOG_ROOT = "log/runner_May1st"
 
 CONFIG_FILES = [
         "config/standard_configs/line_2_2G.json",
@@ -17,7 +17,7 @@ CONFIG_FILES = [
 BASE_ARGS = [
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "0.8",
-        "--num_logical_pairs", "2000",
+        "--num_logical_pairs", "50000",
         "--link_distance_km", "0.001",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
@@ -245,7 +245,7 @@ def test_t2_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=20)
+    run_tasks(tasks, parallel=5)
 
 
 def test_graph_physical_bell_pair_fidelity_sweep() -> None:
