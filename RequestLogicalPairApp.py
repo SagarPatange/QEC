@@ -32,6 +32,7 @@ class RequestLogicalPairApp:
         node: Owner router node.
         css_code: CSS code label for this app instance.
         required_end_to_end_logical_fidelity: Default target fidelity.
+        debug: Whether to emit detailed debug logging.
         path_node_names: Ordered node names for this app's linear path view.
 
     Notes:
@@ -40,7 +41,20 @@ class RequestLogicalPairApp:
     """
 
 # ---------- Initialization and configuration ----------
-    def __init__(self, node: "QuantumRouter2ndGeneration", css_code: str = "[[7,1,3]]", required_end_to_end_logical_fidelity: float = 0.8, path_node_names: list[str] | None = None):
+    def __init__(self,node: "QuantumRouter2ndGeneration", css_code: str = "[[7,1,3]]", 
+                 required_end_to_end_logical_fidelity: float = 0.8, debug: bool = False, path_node_names: list[str] | None = None):
+        """Initialize the logical-pair request application.
+
+        Args:
+            node: Owner router node.
+            css_code: CSS code label for this app instance.
+            required_end_to_end_logical_fidelity: Default target fidelity.
+            debug: Whether to emit detailed debug logging.
+            path_node_names: Ordered node names for this app's linear path view.
+
+        Returns:
+            None.
+        """
         self.node = node
         self.node.set_app(self)
         self.node.request_logical_pair_app = self
@@ -49,6 +63,7 @@ class RequestLogicalPairApp:
         self.code = get_css_code(css_code)
         self.n = self.code.n
         self.required_end_to_end_logical_fidelity = float(required_end_to_end_logical_fidelity)
+        self.debug = bool(debug)
         self._path_node_names = list(path_node_names) if path_node_names else [self.node.name]
 
         # Precompute local path geometry so start() does minimal work.
@@ -305,15 +320,19 @@ class RequestLogicalPairApp:
             None.
         """
         final_corrected = self.current_run["final_end_to_end_fidelity_corrected"]
-        qm_stats = self.node.timeline.quantum_manager.get_error_statistics()
 
+        if not self.debug:
+            log.logger.critical(f"{final_corrected}, {latency_ps}")
+            return
+
+        qm_stats = self.node.timeline.quantum_manager.get_error_statistics()
         log.logger.critical(
-            f"critical_e2e run_id={run_id} latency_ps={latency_ps} "
-            f"fidelity_corrected={final_corrected} "
+            f"critical_e2e run_id={run_id} latency_ps={latency_ps} fidelity_corrected={final_corrected} "
             f"qm_gate_count=(1q:{qm_stats['gate_1q_count']},2q:{qm_stats['gate_2q_count']}) "
             f"qm_gate_error_count=(1q:{qm_stats['gate_1q_error_count']},2q:{qm_stats['gate_2q_error_count']}) "
             f"qm_measurement=(count:{qm_stats['measurement_count']},error_count:{qm_stats['measurement_error_count']})"
         )
+    
 
     def start(self, responder: str, start_t: int, end_t: int, fidelity: float, num_logical_pairs: int) -> None:
         """Schedule one or more logical-pair runs.
