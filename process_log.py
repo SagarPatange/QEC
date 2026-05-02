@@ -1,4 +1,6 @@
-"each line only has "
+"""
+reduce the logs into three numbers: average latency_ps, average fidelity_corrected, and number of rows processed
+"""
 
 import argparse
 import re
@@ -22,6 +24,8 @@ def default_output_dir(input_dir: Path) -> Path:
 def process_file(input_path: Path, output_path: Path) -> tuple[int, int]:
     processed = 0
     skipped = 0
+    latency_sum = 0.0
+    fidelity_sum = 0.0
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with input_path.open("r", encoding="utf-8", errors="replace") as src:
@@ -33,8 +37,12 @@ def process_file(input_path: Path, output_path: Path) -> tuple[int, int]:
                         skipped += 1
                     continue
 
-                dst.write(f"{match.group('latency')}, {match.group('fidelity')}\n")
+                latency_sum += float(match.group("latency"))
+                fidelity_sum += float(match.group("fidelity"))
                 processed += 1
+
+            if processed:
+                dst.write(f"{latency_sum / processed}, {fidelity_sum / processed}, {processed}\n")
 
     return processed, skipped
 
@@ -70,7 +78,7 @@ def main():
     print(f"Input: {input_dir}")
     print(f"Output: {output_dir}")
     print(f"Files processed: {files}")
-    print(f"Rows written: {rows}")
+    print(f"Rows processed: {rows}")
     if skipped:
         print(f"Non-matching non-empty lines skipped: {skipped}")
 

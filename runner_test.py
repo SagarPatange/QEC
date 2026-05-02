@@ -289,3 +289,38 @@ if __name__ == "__main__":
     # test_graph_measurement_fidelity_sweep()
     # test_graph_initialization_fidelity_sweep()
 
+
+"""
+
+plot 1: 6 thresholds
+(a) (b) (c)
+(d) (e) (f)
+
+plot 2:
+the z (6 node 5 link, 20km length)
+x axis the z
+y axis is the fidelity
+
+plot 3:
+x axis is the number of links (each link is 20km)
+y axis is the z
+
+pick a proper z, then do plot 4~6
+
+plot 4:
+fixed 100km, varying number of links
+
+plot 5:
+fix 20km length, then varying number of links
+
+plot 6:
+fix number of links, varying link length
+
+
+
+do not need the 2026 paramers and near-ideal parameter.
+
+
+
+
+"""
