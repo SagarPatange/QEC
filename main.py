@@ -65,6 +65,7 @@ def main() -> None:
     parser.add_argument("--idle_pauli_y", type=float)
     parser.add_argument("--idle_pauli_z", type=float)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--debug", action="store_true")
     parser.add_argument("--physical_bell_pair_fidelity", type=float, default=0.99)
     parser.add_argument("--seed_offset", type=int, default=0)
     args = parser.parse_args()
@@ -177,6 +178,7 @@ def main() -> None:
     tl.quantum_manager.base_seed = quantum_router_seed
     tl.quantum_manager._seed_counter = 0
     tl.quantum_manager.branch_rng = np.random.default_rng(quantum_router_seed)
+    tl.quantum_manager.track_error_statistics = bool(args.debug)
     if args.gate_error_channel is not None:
         tl.quantum_manager.gate_error_channel = args.gate_error_channel
     if args.idle_error_channel is not None:
@@ -200,7 +202,12 @@ def main() -> None:
     for router in routers:
         router.round_spacing_ps = round_spacing_ps
         router.correction_mode = args.correction_mode
-        app = RequestLogicalPairApp(router, css_code=args.css_code, path_node_names=node_names)
+        app = RequestLogicalPairApp(
+            router,
+            css_code=args.css_code,
+            debug=args.debug,
+            path_node_names=node_names,
+        )
         name_to_apps[router.name] = app
 
     # Launch logical-pair requests from each router to its right-hand neighbor along the path.
