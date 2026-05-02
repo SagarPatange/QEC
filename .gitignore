@@ -41,4 +41,6 @@ drafts/
 *log/*
 !log/runner_April30th/
 !log/runner_April30th/**
+!log/*_processed
+
 *plot_pngs/*

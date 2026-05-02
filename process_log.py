@@ -7,7 +7,9 @@ import re
 from pathlib import Path
 
 
-LINE_RE = re.compile(r"\blatency_ps=(?P<latency>\S+)\s+fidelity_corrected=(?P<fidelity>\S+)")
+# LINE_RE = re.compile(r"\blatency_ps=(?P<latency>\S+)\s+fidelity_corrected=(?P<fidelity>\S+)")
+
+LINE_RE = re.compile(r"RequestLogicalPairApp\s+(?P<fidelity>\d+(?:\.\d+)?)\s*,\s*(?P<latency>\d+)")
 
 
 def resolve_input_dir(dir_arg: str) -> Path:

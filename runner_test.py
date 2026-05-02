@@ -107,7 +107,6 @@ def test_graph_two_qubit_gate_sweep() -> None:
     # 20 data points
     two_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
                                  "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
-    # two_qubit_gate_fidelities = ["0.99", "0.995", "0.9993", "1"]
 
     for two_qubit_gate_fidelity in two_qubit_gate_fidelities:
         for config_file in CONFIG_FILES:
@@ -119,7 +118,8 @@ def test_graph_two_qubit_gate_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    parallel = len(two_qubit_gate_fidelities) * 3
+    run_tasks(tasks, parallel=parallel)
 
 
 def test_graph_one_qubit_gate_sweep() -> None:
@@ -139,7 +139,6 @@ def test_graph_one_qubit_gate_sweep() -> None:
     # 20 data points
     one_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
                                  "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1"]
-    # one_qubit_gate_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999","1"]
 
     for one_qubit_gate_fidelity in one_qubit_gate_fidelities:
         for config_file in CONFIG_FILES:
@@ -151,7 +150,8 @@ def test_graph_one_qubit_gate_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    parallel = len(one_qubit_gate_fidelities) * 3
+    run_tasks(tasks, parallel=parallel)
 
 
 def test_graph_measurement_fidelity_sweep() -> None:
@@ -171,7 +171,6 @@ def test_graph_measurement_fidelity_sweep() -> None:
     # 20 data points
     measurement_fidelities = ["0.99", "0.991", "0.992", "0.993", "0.994", "0.995", "0.996", "0.997", "0.998", "0.999",
                               "0.9991", "0.9992", "0.9993", "0.9994", "0.9995", "0.9996", "0.9997", "0.9998", "0.9999", "1.0"]
-    # measurement_fidelities = ["0.99", "0.991", "0.992", "0.993", ]
 
     for measurement_fidelity in measurement_fidelities:
         for config_file in CONFIG_FILES:
@@ -183,7 +182,8 @@ def test_graph_measurement_fidelity_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    parallel = len(measurement_fidelities) * 3
+    run_tasks(tasks, parallel=parallel)
 
 
 def test_graph_initialization_fidelity_sweep() -> None:
@@ -214,7 +214,8 @@ def test_graph_initialization_fidelity_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    parallel = min(len(initialization_fidelities) * 3, 40)
+    run_tasks(tasks, parallel=parallel)
 
 
 def test_t2_sweep() -> None:
@@ -245,7 +246,8 @@ def test_t2_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=5)
+    parallel = len(idle_t2_sec_list) * 3
+    run_tasks(tasks, parallel=parallel)
 
 
 def test_graph_physical_bell_pair_fidelity_sweep() -> None:
@@ -274,7 +276,8 @@ def test_graph_physical_bell_pair_fidelity_sweep() -> None:
                     "--seed_offset", str(secrets.randbelow(2**31 - 1))]
             tasks.append(command + BASE_ARGS + args)
 
-    run_tasks(tasks, parallel=40)
+    parallel = len(physical_bell_pair_fidelities) * 3
+    run_tasks(tasks, parallel=parallel)
 
 
 
@@ -282,12 +285,12 @@ if __name__ == "__main__":
 
     # Test sweeps
 
-    test_t2_sweep()
+    # test_t2_sweep()
     # test_graph_physical_bell_pair_fidelity_sweep()
     # test_graph_two_qubit_gate_sweep()
     # test_graph_one_qubit_gate_sweep()
     # test_graph_measurement_fidelity_sweep()
-    # test_graph_initialization_fidelity_sweep()
+    test_graph_initialization_fidelity_sweep()
 
 
 """
