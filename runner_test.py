@@ -22,13 +22,13 @@ Z_PARAM_GRID_FILE = "config/generated_configs/z_plot_param_grid.json"
 BASE_ARGS = [
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "0.8",
-        "--num_logical_pairs", "100000",
+        "--num_logical_pairs", "30000",
         "--link_distance_km", "20",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
         "--initialization_fidelity", "1",
         "--gate_error_channel", "depolarize",
-        "--idle_error_channel", "depolarize",
+        "--idle_error_channel", "pauli",
         "--idle_t1_sec", "100",
         "--idle_t2_sec", "10",
         "--ft_prep_mode", "minimal",
@@ -237,8 +237,9 @@ def test_t2_sweep() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
 
     # 18 data points
-    idle_t2_sec_list = ["0.01", "0.02", "0.05", "0.075", "0.1", "0.15", "0.2", "0.35", "0.5", "0.75", "1", "1.5", "2", "5", "10", "20", "50", "100"]
-    log_directory = f"{LOG_ROOT}/t2_sweep"
+    idle_t2_sec_list = ["0.01", "0.02", "0.05", "0.075", "0.1", "0.15", "0.2", "0.35", "0.5", "0.75", 
+                        "1", "1.5", "2", "5", "10", "20", "50", "100"]
+    log_directory = f"{LOG_ROOT}/t2_sweep_fixed"
 
     for idle_t2_sec in idle_t2_sec_list:
         for config_file in CONFIG_FILES:
@@ -251,7 +252,7 @@ def test_t2_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    parallel = len(idle_t2_sec_list) * 3
+    parallel = min(len(idle_t2_sec_list) * 3, 40)
     run_tasks(tasks, parallel=parallel)
 
 
