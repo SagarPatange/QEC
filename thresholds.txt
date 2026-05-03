@@ -1,0 +1,24 @@
+
+Line 2 topology
+ - 1 qubit gate threshold : 0.993
+ - 2 qubit gate threshold : 0.996
+ - Measurement threshold : < 0.99
+ - Idling decoherence threshold : 0.2 s
+ - Initalization Fidelity threshold : < 0.99
+ - Physical Bell Pair threshold : 0.92
+
+Line 3 topology
+ - 1 qubit gate threshold : 0.999
+ - 2 qubit gate threshold : 0.9991
+ - Measurement threshold :0.996
+ - Idling decoherence threshold : 
+ - Initalization Fidelity threshold : < 0.99
+ - Physical Bell Pair threshold : 0.965
+
+Line 6 topology
+ - 1 qubit gate threshold : 0.9995
+ - 2 qubit gate threshold : 0.9998
+ - Measurement threshold : 0.999
+ - Idling decoherence threshold : 
+ - Initalization Fidelity threshold : 0.992
+ - Physical Bell Pair threshold : 0.99
