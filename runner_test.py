@@ -6,11 +6,12 @@ import select
 from pathlib import Path
 from subprocess import PIPE, STDOUT, Popen
 
-LOG_ROOT = "log/runner_May3rd"
+# LOG_ROOT = "log/runner_May3rd"
+LOG_ROOT = "log/runner_May1st"
 
 CONFIG_FILE_BY_TOPOLOGY = {
-        "line_2": "config/standard_configs/line_2_2G.json",
-        "line_3": "config/standard_configs/line_3_2G.json",
+        # "line_2": "config/standard_configs/line_2_2G.json",
+        # "line_3": "config/standard_configs/line_3_2G.json",
         "line_6": "config/standard_configs/line_6_2G.json",
 }
 
@@ -22,7 +23,7 @@ Z_PARAM_GRID_FILE = "config/generated_configs/z_plot_param_grid.json"
 BASE_ARGS = [
         "--css_code", "[[7,1,3]]",
         "--target_fidelity", "0.8",
-        "--num_logical_pairs", "30000",
+        "--num_logical_pairs", "5000",
         "--link_distance_km", "20",
         "--gate_fidelity", "1",
         "--measurement_fidelity", "1",
@@ -219,7 +220,7 @@ def test_graph_initialization_fidelity_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    parallel = min(len(initialization_fidelities) * 3, 40)
+    parallel = min(len(tasks), 40)
     run_tasks(tasks, parallel=parallel)
 
 
@@ -252,7 +253,7 @@ def test_t2_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    parallel = min(len(idle_t2_sec_list) * 3, 40)
+    parallel = min(len(tasks), 40)
     run_tasks(tasks, parallel=parallel)
 
 
@@ -337,9 +338,9 @@ if __name__ == "__main__":
     # test_graph_two_qubit_gate_sweep()
     # test_graph_one_qubit_gate_sweep()
     # test_graph_measurement_fidelity_sweep()
-    # test_graph_initialization_fidelity_sweep()
+    test_graph_initialization_fidelity_sweep()
 
-    test_z_param_grid()
+    # test_z_param_grid()
 
 
 """
