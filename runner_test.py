@@ -323,7 +323,7 @@ def test_z_param_grid() -> None:
         ]
         tasks.append(command + BASE_ARGS + args)
 
-    parallel = min(len(tasks), 5)
+    parallel = min(len(tasks), 30)
     run_tasks(tasks, parallel=parallel)
 
 
