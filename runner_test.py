@@ -6,7 +6,7 @@ import select
 from pathlib import Path
 from subprocess import PIPE, STDOUT, Popen
 
-LOG_ROOT = "log/runner_May1st"
+LOG_ROOT = "log/runner_May3rd"
 
 CONFIG_FILE_BY_TOPOLOGY = {
         "line_2": "config/standard_configs/line_2_2G.json",
@@ -28,7 +28,7 @@ BASE_ARGS = [
         "--measurement_fidelity", "1",
         "--initialization_fidelity", "1",
         "--gate_error_channel", "depolarize",
-        "--idle_error_channel", "depolarize",
+        "--idle_error_channel", "pauli",
         "--idle_t1_sec", "100",
         "--idle_t2_sec", "10",
         "--ft_prep_mode", "minimal",
@@ -315,13 +315,14 @@ def test_z_param_grid() -> None:
             "--measurement_fidelity", str(param_row["measurement_fidelity"]),
             "--initialization_fidelity", str(param_row["initialization_fidelity"]),
             "--physical_bell_pair_fidelity", str(param_row["physical_bell_pair_fidelity"]),
+            "--idle_t2_sec", str(param_row["idle_t2_sec"]),
             "--config_file", config_file,
             "--log_directory", log_directory,
             "--seed_offset", str(secrets.randbelow(2**31 - 1)),
         ]
         tasks.append(command + BASE_ARGS + args)
 
-    parallel = min(len(tasks), 40)
+    parallel = min(len(tasks), 5)
     run_tasks(tasks, parallel=parallel)
 
 
