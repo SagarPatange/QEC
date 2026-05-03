@@ -20,7 +20,7 @@ Z_PARAM_GRID_FILE = "config/generated_configs/z_plot_param_grid.json"
 Z_BASE_ARGS = [
     "--css_code", "[[7,1,3]]",
     "--target_fidelity", "0.8",
-    "--num_logical_pairs", "5000",
+    "--num_logical_pairs", "10000",
     "--link_distance_km", "20",
     "--gate_error_channel", "depolarize",
     "--idle_error_channel", "pauli",
@@ -151,7 +151,7 @@ def run_z_param_grid() -> None:
         ]
         tasks.append(command + Z_BASE_ARGS + args)
 
-    parallel = min(len(tasks), 30)
+    parallel = len(tasks)
     run_tasks(tasks, parallel=parallel)
 
 

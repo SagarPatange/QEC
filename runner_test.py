@@ -9,15 +9,10 @@ from subprocess import PIPE, STDOUT, Popen
 # LOG_ROOT = "log/runner_May3rd"
 LOG_ROOT = "log/runner_May1st"
 
-CONFIG_FILE_BY_TOPOLOGY = {
-        # "line_2": "config/standard_configs/line_2_2G.json",
-        # "line_3": "config/standard_configs/line_3_2G.json",
-        "line_6": "config/standard_configs/line_6_2G.json",
-}
+CONFIG_FILES = ["config/standard_configs/line_2_2G.json",
+                "config/standard_configs/line_3_2G.json",
+                "config/standard_configs/line_6_2G.json"]
 
-CONFIG_FILES = list(CONFIG_FILE_BY_TOPOLOGY.values())
-
-Z_PARAM_GRID_FILE = "config/generated_configs/z_plot_param_grid.json"
 
 # ideal parameters
 BASE_ARGS = [
@@ -240,7 +235,7 @@ def test_t2_sweep() -> None:
     # 18 data points
     idle_t2_sec_list = ["0.01", "0.02", "0.05", "0.075", "0.1", "0.15", "0.2", "0.35", "0.5", "0.75", 
                         "1", "1.5", "2", "5", "10", "20", "50", "100"]
-    log_directory = f"{LOG_ROOT}/t2_sweep_fixed"
+    log_directory = f"{LOG_ROOT}/t2_sweep"
 
     for idle_t2_sec in idle_t2_sec_list:
         for config_file in CONFIG_FILES:
@@ -253,7 +248,7 @@ def test_t2_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    parallel = min(len(tasks), 40)
+    parallel = min(len(tasks), 14)
     run_tasks(tasks, parallel=parallel)
 
 
@@ -287,60 +282,17 @@ def test_graph_physical_bell_pair_fidelity_sweep() -> None:
     run_tasks(tasks, parallel=parallel)
 
 
-def test_z_param_grid() -> None:
-    """Run the combined parameter grid exported by z plot.
-
-    Args:
-        None.
-
-    Returns:
-        None.
-    """
-    tasks = []
-    base_dir = Path(__file__).resolve().parent
-    command = [sys.executable, str(base_dir / "main.py")]
-    log_directory = f"{LOG_ROOT}/z_param_grid"
-    grid_path = base_dir / Z_PARAM_GRID_FILE
-
-    if not grid_path.exists():
-        raise FileNotFoundError(f"Missing grid file: {grid_path}")
-
-    with open(grid_path, "r", encoding="utf-8") as file:
-        param_rows = json.load(file)
-
-    for param_row in param_rows:
-        topology = str(param_row["topology"])
-        config_file = CONFIG_FILE_BY_TOPOLOGY[topology]
-        args = [
-            "--gate_fidelity", str(param_row["gate_fidelity"]),
-            "--two_qubit_gate_fidelity", str(param_row["two_qubit_gate_fidelity"]),
-            "--measurement_fidelity", str(param_row["measurement_fidelity"]),
-            "--initialization_fidelity", str(param_row["initialization_fidelity"]),
-            "--physical_bell_pair_fidelity", str(param_row["physical_bell_pair_fidelity"]),
-            "--idle_t2_sec", str(param_row["idle_t2_sec"]),
-            "--config_file", config_file,
-            "--log_directory", log_directory,
-            "--seed_offset", str(secrets.randbelow(2**31 - 1)),
-        ]
-        tasks.append(command + BASE_ARGS + args)
-
-    parallel = min(len(tasks), 30)
-    run_tasks(tasks, parallel=parallel)
-
 
 
 if __name__ == "__main__":
 
-    # Test sweeps
-
-    # test_t2_sweep()
+    test_t2_sweep()
     # test_graph_physical_bell_pair_fidelity_sweep()
     # test_graph_two_qubit_gate_sweep()
     # test_graph_one_qubit_gate_sweep()
     # test_graph_measurement_fidelity_sweep()
-    test_graph_initialization_fidelity_sweep()
+    # test_graph_initialization_fidelity_sweep()
 
-    # test_z_param_grid()
 
 
 """
