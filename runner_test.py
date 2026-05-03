@@ -335,6 +335,8 @@ if __name__ == "__main__":
     # test_graph_two_qubit_gate_sweep()
     # test_graph_one_qubit_gate_sweep()
     # test_graph_measurement_fidelity_sweep()
+    # test_graph_initialization_fidelity_sweep()
+
     test_z_param_grid()
 
 
