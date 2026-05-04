@@ -171,7 +171,7 @@ def main_graph1_distance_sweep() -> None:
         topology = topology_from_config_file(config_file)
         base_args = BASE_ARGS + [
                 "--config_file", config_file,
-                "--log_directory", "log/runner-ideal/graph3_distance_sweep",
+                "--log_directory", "log/runner_final/graph1_distance_sweep",
                 "--num_logical_pairs", "500",
         ] + build_z_args(topology, z_value)
         for correction_mode in correction_modes:
