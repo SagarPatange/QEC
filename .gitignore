@@ -44,3 +44,4 @@ drafts/
 !log/*_processed
 
 *plot_pngs/*
+*.png
