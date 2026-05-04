@@ -22,7 +22,7 @@ BASE_ARGS = [
         "--idle_pauli_x", "0.05",
         "--idle_pauli_y", "0.05",
         "--idle_pauli_z", "0.9",
-        "--run_duration_ms", "1000",
+        "--run_duration_ms", "10000",
         "--round_spacing_ms", "1",
         "--two_qubit_gate_fidelity", "1",
         "--correction_mode", "cec",
@@ -149,7 +149,7 @@ def topology_from_config_file(config_file: str) -> str:
     return Path(config_file).stem.replace("_2G", "")
 
 def main_graph1_distance_sweep() -> None:
-    """Run the graph 1 distance sweep using the z=0.9 parameter set.
+    """Fixed 20km link, sweep the link number. Run the graph 1 distance sweep using the z=0.9 parameter set.
 
     Args:
         None.
@@ -160,25 +160,30 @@ def main_graph1_distance_sweep() -> None:
     tasks: list[list[str]] = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    correction_modes = ["cec"]
-    config_files = [
-            "config/standard_configs/line_51_2G.json",
-            "config/standard_configs/line_101_2G.json",
+    correction_modes = ["cec", "none"]
+    config_files_pairs = [
+            ("config/standard_configs/line_2_2G.json", "10000"),
+            ("config/standard_configs/line_3_2G.json", "5000"),
+            ("config/standard_configs/line_6_2G.json", "2500"),
+            ("config/standard_configs/line_11_2G.json", "2000"),
+            ("config/standard_configs/line_21_2G.json", "1000"),
+            ("config/standard_configs/line_26_2G.json", "1000"),
+            ("config/standard_configs/line_51_2G.json", "500"),
+            ("config/standard_configs/line_101_2G.json", "250")
     ]
     z_value = 0.9
 
-    for config_file in config_files:
-        topology = topology_from_config_file(config_file)
+    for config_file, pairs in config_files_pairs:
         base_args = BASE_ARGS + [
                 "--config_file", config_file,
                 "--log_directory", "log/runner_final/graph1_distance_sweep",
-                "--num_logical_pairs", "500",
+                "--num_logical_pairs", pairs,
         ] + build_z_args(z_value)
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=11)
+    run_tasks(tasks, parallel=16)
 
 def main_graph2_link_count_sweep() -> None:
     """Run the graph 2 link-count sweep using the z=0.9 parameter set.
@@ -192,21 +197,21 @@ def main_graph2_link_count_sweep() -> None:
     tasks: list[list[str]] = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    correction_modes = ["cec"]
+    correction_modes = ["cec", "none"]
     total_end_to_end_distance_km = 100.0
-    config_files = [
-            "config/standard_configs/line_2_2G.json",
-            "config/standard_configs/line_3_2G.json",
-            "config/standard_configs/line_6_2G.json",
-            "config/standard_configs/line_11_2G.json",
-            "config/standard_configs/line_21_2G.json",
-            "config/standard_configs/line_26_2G.json",
-            "config/standard_configs/line_51_2G.json",
-            "config/standard_configs/line_101_2G.json",
+    config_files_pairs = [
+            ("config/standard_configs/line_2_2G.json", "10000"),
+            ("config/standard_configs/line_3_2G.json", "5000"),
+            ("config/standard_configs/line_6_2G.json", "2500"),
+            ("config/standard_configs/line_11_2G.json", "2000"),
+            ("config/standard_configs/line_21_2G.json", "1000"),
+            ("config/standard_configs/line_26_2G.json", "1000"),
+            ("config/standard_configs/line_51_2G.json", "500"),
+            ("config/standard_configs/line_101_2G.json", "250")
     ]
     z_value = 0.9
 
-    for config_file in config_files:
+    for config_file, pairs in config_files_pairs:
         topology = topology_from_config_file(config_file)
         node_count = int(topology.split("_")[1])
         num_links = node_count - 1
@@ -215,12 +220,13 @@ def main_graph2_link_count_sweep() -> None:
                 "--config_file", config_file,
                 "--link_distance_km", str(inter_node_distance_km),
                 "--log_directory", "log/runner_final/graph2_link_count_sweep",
+                "--num_logical_pairs", pairs
         ] + build_z_args(z_value)
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=2)
+    run_tasks(tasks, parallel=16)
 
 def main_graph3_inter_node_distance_sweep() -> None:
     """Run the graph 3 inter-node-distance sweep using the z=0.9 parameter set.
@@ -234,26 +240,31 @@ def main_graph3_inter_node_distance_sweep() -> None:
     tasks: list[list[str]] = []
     base_dir = Path(__file__).resolve().parent
     command = [sys.executable, str(base_dir / "main.py")]
-    correction_modes = ["cec"]
-    inter_node_distances_km = ["1", "5", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"]
+    correction_modes = ["cec", "none"]
+    inter_node_distances_km_pairs = [("1", "5000"), ("5", "5000"), ("10", "5000"), ("20", "5000"), 
+                                     ("30", "2000"), ("40", "2000"), ("50", "1000"), ("60", "1000"), 
+                                     ("70", "750"), ("80", "750"), ("90", "500"), ("100", "500")]
     config_file = "config/standard_configs/line_6_2G.json"
     z_value = 0.9
 
-    for inter_node_distance_km in inter_node_distances_km:
+    for inter_node_distance_km, pairs in inter_node_distances_km_pairs:
         base_args = BASE_ARGS + [
                 "--config_file", config_file,
                 "--link_distance_km", inter_node_distance_km,
-                "--run_duration_ms", "20000.0",
                 "--log_directory", "log/runner_final/graph3_inter_node_distance_sweep",
-                "--num_logical_pairs", "500",
+                "--num_logical_pairs", pairs,
         ] + build_z_args(z_value)
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=11)
+    run_tasks(tasks, parallel=24)
+
 
 if __name__ == "__main__":
+
     # main_graph1_distance_sweep()
-    main_graph2_link_count_sweep()
-    # main_graph3_inter_node_distance_sweep()
+
+    # main_graph2_link_count_sweep()
+
+    main_graph3_inter_node_distance_sweep()
