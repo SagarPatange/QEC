@@ -16,8 +16,8 @@ BASE_ARGS = [
         "--initialization_fidelity", "1",
         "--gate_error_channel", "depolarize",
         "--idle_error_channel", "pauli",
-        "--idle_t1_sec", "1e12",
-        "--idle_t2_sec", "1e12",
+        "--idle_t1_sec", "100",
+        "--idle_t2_sec", "20",
         "--ft_prep_mode", "minimal",
         "--idle_pauli_x", "0.05",
         "--idle_pauli_y", "0.05",
@@ -117,17 +117,17 @@ def load_z_param_row(topology: str, z_value: float) -> dict[str, float | str]:
 
     raise RuntimeError(f"Missing z-grid row for topology={topology}, z={z_value}")
 
-def build_z_args(topology: str, z_value: float) -> list[str]:
-    """Build main.py args from one z-grid row.
+
+def build_z_args(z_value: float) -> list[str]:
+    """Build main.py args from the shared 3-node z-grid row.
 
     Args:
-        topology: Topology name such as line_2, line_3, or line_6.
         z_value: Target z value to match from the generated grid.
 
     Returns:
         list[str]: CLI args corresponding to the chosen z-grid row.
     """
-    param_row = load_z_param_row(topology, z_value)
+    param_row = load_z_param_row("line_3", z_value)
     return [
         "--gate_fidelity", str(param_row["gate_fidelity"]),
         "--two_qubit_gate_fidelity", str(param_row["two_qubit_gate_fidelity"]),
@@ -173,12 +173,12 @@ def main_graph1_distance_sweep() -> None:
                 "--config_file", config_file,
                 "--log_directory", "log/runner_final/graph1_distance_sweep",
                 "--num_logical_pairs", "500",
-        ] + build_z_args(topology, z_value)
+        ] + build_z_args(z_value)
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=2)
+    run_tasks(tasks, parallel=11)
 
 def main_graph2_link_count_sweep() -> None:
     """Run the graph 2 link-count sweep using the z=0.9 parameter set.
@@ -215,7 +215,7 @@ def main_graph2_link_count_sweep() -> None:
                 "--config_file", config_file,
                 "--link_distance_km", str(inter_node_distance_km),
                 "--log_directory", "log/runner_final/graph2_link_count_sweep",
-        ] + build_z_args(topology, z_value)
+        ] + build_z_args(z_value)
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
@@ -246,14 +246,14 @@ def main_graph3_inter_node_distance_sweep() -> None:
                 "--run_duration_ms", "20000.0",
                 "--log_directory", "log/runner_final/graph3_inter_node_distance_sweep",
                 "--num_logical_pairs", "500",
-        ] + build_z_args("line_6", z_value)
+        ] + build_z_args(z_value)
         for correction_mode in correction_modes:
             args = ["--correction_mode", correction_mode]
             tasks.append(command + base_args + args)
 
-    run_tasks(tasks, parallel=3)
+    run_tasks(tasks, parallel=11)
 
 if __name__ == "__main__":
     # main_graph1_distance_sweep()
-    # main_graph2_link_count_sweep()
-    main_graph3_inter_node_distance_sweep()
+    main_graph2_link_count_sweep()
+    # main_graph3_inter_node_distance_sweep()
