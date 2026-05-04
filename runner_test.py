@@ -7,7 +7,7 @@ from pathlib import Path
 from subprocess import PIPE, STDOUT, Popen
 
 # LOG_ROOT = "log/runner_May3rd"
-LOG_ROOT = "log/runner_May1st"
+LOG_ROOT = "log/runner_May4th"
 
 CONFIG_FILES = ["config/standard_configs/line_2_2G.json",
                 "config/standard_configs/line_3_2G.json",
@@ -31,7 +31,7 @@ BASE_ARGS = [
         "--idle_pauli_x", "0.05",
         "--idle_pauli_y", "0.05",
         "--idle_pauli_z", "0.9",
-        "--run_duration_ms", "1000",
+        "--run_duration_ms", "100000",
         "--round_spacing_ms", "1",
         "--two_qubit_gate_fidelity", "1",
         "--correction_mode", "cec",
@@ -282,11 +282,57 @@ def test_graph_physical_bell_pair_fidelity_sweep() -> None:
     run_tasks(tasks, parallel=parallel)
 
 
+def test_t2_inter_node_distance_sweep() -> None:
+    """Run a joint T2 and inter-node-distance sweep.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
+    tasks = []
+    base_dir = Path(__file__).resolve().parent
+    command = [sys.executable, str(base_dir / "main.py")]
+    log_directory = f"{LOG_ROOT}/t2_inter_node_distance_sweep"
+
+    # idle_t2_sec_list = [
+    #     "1e-1", "1e0", "5e0", "1e1", "5e1", "1e2", "5e2", "1e3", "5e3", "1e4",
+    # ]
+    # inter_node_distances_km = [
+    #     "1", "5", "10", "25", "50", "100", "250", "500",
+    # ]
+    remaining_t2_to_distances = {
+        "5e2": ["50", "100", "250", "500"],
+        "1e3": ["1", "5", "10", "25", "50", "100", "250", "500"],
+        "5e3": ["1", "5", "10", "25", "50", "100", "250", "500"],
+        "1e4": ["1", "5", "10", "25", "50", "100", "250", "500"],
+    }
+    config_file = "config/standard_configs/line_2_2G.json"
+
+    for idle_t2_sec, inter_node_distances_km in remaining_t2_to_distances.items():
+        for inter_node_distance_km in inter_node_distances_km:
+            args = [
+                "--num_logical_pairs", "1000",
+                "--idle_t1_sec", "1e12",
+                "--idle_t2_sec", idle_t2_sec,
+                "--link_distance_km", inter_node_distance_km,
+                "--config_file", config_file,
+                "--log_directory", log_directory,
+                "--seed_offset", str(secrets.randbelow(2**31 - 1)),
+            ]
+            tasks.append(command + BASE_ARGS + args)
+
+    parallel = min(len(tasks),10)
+    run_tasks(tasks, parallel=parallel)
+
+
 
 
 if __name__ == "__main__":
 
-    test_t2_sweep()
+    test_t2_inter_node_distance_sweep()
+    # test_t2_sweep()
     # test_graph_physical_bell_pair_fidelity_sweep()
     # test_graph_two_qubit_gate_sweep()
     # test_graph_one_qubit_gate_sweep()
