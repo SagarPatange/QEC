@@ -313,7 +313,7 @@ def test_t2_inter_node_distance_sweep() -> None:
     for idle_t2_sec, inter_node_distances_km in remaining_t2_to_distances.items():
         for inter_node_distance_km in inter_node_distances_km:
             args = [
-                "--num_logical_pairs", "1000",
+                "--num_logical_pairs", "50000",
                 "--idle_t1_sec", "1e12",
                 "--idle_t2_sec", idle_t2_sec,
                 "--link_distance_km", inter_node_distance_km,
@@ -323,7 +323,7 @@ def test_t2_inter_node_distance_sweep() -> None:
             ]
             tasks.append(command + BASE_ARGS + args)
 
-    parallel = min(len(tasks),10)
+    parallel = min(len(tasks), 40)
     run_tasks(tasks, parallel=parallel)
 
 

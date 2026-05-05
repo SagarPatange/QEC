@@ -157,14 +157,14 @@ def main_distance_and_link() -> None:
     command = [sys.executable, str(base_dir / "main.py")]
     total_end_to_end_distance_km = 100.0
     config_files_pairs = [
-            ("config/standard_configs/line_2_2G.json", "5000"),
+            # ("config/standard_configs/line_2_2G.json", "5000"),
             ("config/standard_configs/line_3_2G.json", "2500"),
-            ("config/standard_configs/line_6_2G.json", "2000"),
-            ("config/standard_configs/line_11_2G.json", "2000"),
-            ("config/standard_configs/line_21_2G.json", "1000"),
-            ("config/standard_configs/line_26_2G.json", "1000"),
-            ("config/standard_configs/line_51_2G.json", "400"),
-            ("config/standard_configs/line_101_2G.json", "200")
+            # ("config/standard_configs/line_6_2G.json", "2000"),
+            # ("config/standard_configs/line_11_2G.json", "2000"),
+            # ("config/standard_configs/line_21_2G.json", "1000"),
+            # ("config/standard_configs/line_26_2G.json", "1000"),
+            # ("config/standard_configs/line_51_2G.json", "400"),
+            # ("config/standard_configs/line_101_2G.json", "200")
     ]
     total_end_to_end_distance_km_list = [1, 5, 10, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200]
     z_value = 0.9
@@ -177,7 +177,7 @@ def main_distance_and_link() -> None:
 
         for total_end_to_end_distance_km in total_end_to_end_distance_km_list:
             inter_node_distance_km = total_end_to_end_distance_km / num_links
-            if topology in ["line_2", "line_3"] and total_end_to_end_distance_km > 100:
+            if topology in ["line_2", "line_3"] and total_end_to_end_distance_km <= 100:
                 continue
             args = BASE_ARGS + [
                     "--config_file", config_file,
