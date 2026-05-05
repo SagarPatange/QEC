@@ -162,8 +162,8 @@ def main_distance_and_link() -> None:
             # ("config/standard_configs/line_6_2G.json", "10000"),
             # ("config/standard_configs/line_11_2G.json", "10000"),
             # ("config/standard_configs/line_21_2G.json", "1000"),
-            ("config/standard_configs/line_26_2G.json", "2000"),
-            ("config/standard_configs/line_51_2G.json", "2000"),
+            ("config/standard_configs/line_26_2G.json", "1000"),
+            ("config/standard_configs/line_51_2G.json", "1000"),
             # ("config/standard_configs/line_101_2G.json", "200")
     ]
     total_end_to_end_distance_km_list = [1, 5, 10, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200]
